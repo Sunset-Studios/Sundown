@@ -226,22 +226,12 @@ function parse_bake_options(args) {
       options.irradiance_sample_count = Number(value);
     } else if (key === "tile" || key === "tile_size" || key === "world_tile_size") {
       options.world_tile_size = Number(value);
-    } else if (key === "radius" || key === "streaming_radius") {
-      options.streaming_radius = Number(value);
-    } else if (key === "hysteresis" || key === "streaming_hysteresis") {
-      options.streaming_hysteresis = Number(value);
-    } else if (key === "prefetch" || key === "streaming_prefetch_tiles") {
-      options.streaming_prefetch_tiles = Number(value);
-    } else if (key === "prediction" || key === "streaming_prediction_seconds") {
-      options.streaming_prediction_seconds = Number(value);
-    } else if (key === "prediction_max" || key === "streaming_prediction_max_tiles") {
-      options.streaming_prediction_max_tiles = Number(value);
-    } else if (key === "requests" || key === "streaming_max_requests") {
-      options.streaming_max_requests = Number(value);
+    } else if (key === "streaming" || key === "streaming_enabled") {
+      options.streaming_enabled = value;
     } else if (key === "budget" || key === "streaming_memory_budget_mb") {
       options.streaming_memory_budget_mb = Number(value);
-    } else if (key === "transition" || key === "streaming_transition_tiles") {
-      options.streaming_transition_tiles = Number(value);
+    } else if (key === "upload" || key === "streaming_upload_budget_mb") {
+      options.streaming_upload_budget_mb = Number(value);
     } else if (key === "fade" || key === "streaming_fade_seconds") {
       options.streaming_fade_seconds = Number(value);
     } else if (key === "coarse_min" || key === "coarse_min_lod") {
@@ -349,6 +339,14 @@ export class SVLMTool extends DevConsoleTool {
           source: "svlm",
         });
         break;
+      case "streaming":
+        const streaming_mode = String(args[1] ?? "").toLowerCase();
+        if (streaming_mode !== "on" && streaming_mode !== "off") {
+          log("svlm streaming [on|off]");
+          break;
+        }
+        svlm.set_streaming_enabled(streaming_mode === "on");
+        break;
       case "clear":
         this.bake_save_serial++;
         this.bake_status = "idle";
@@ -363,7 +361,7 @@ export class SVLMTool extends DevConsoleTool {
         break;
       default:
         log(
-          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [near=<factor>] [normal=<variation>] [layer=<factor>] [density=<triangles>] [rays=<count>] [batch=<count>] [samples=<count>] [tile=<meters>] [radius=<tiles>] [hysteresis=<tiles>] [prefetch=<tiles>] [requests=<count>] [budget=<mb>] [transition=<tiles>] [coarse_min=<lod>] [coarse_max=<lod>] [coarse_budget=<mb>] | preview | debug [bricks|probes|baked_probes] [on|off] [level=<n>|all] | clear | hide]"
+          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [near=<factor>] [normal=<variation>] [layer=<factor>] [density=<triangles>] [rays=<count>] [batch=<count>] [samples=<count>] [tile=<meters>] [streaming=<on|off>] [budget=<mb>] [upload=<mb>] [fade=<seconds>] [coarse_min=<lod>] [coarse_max=<lod>] [coarse_budget=<mb>] | streaming [on|off] | preview | debug [bricks|probes|baked_probes] [on|off] [level=<n>|all] | clear | hide]"
         );
         break;
     }
@@ -599,10 +597,8 @@ export class SVLMTool extends DevConsoleTool {
       metric_pair(
         "World tile size",
         `${Number(stats.config.world_tile_size).toFixed(1)} m`,
-        "Streaming radius",
-        `${format_number(stats.config.streaming_radius)} tiles / ${(
-          stats.config.streaming_radius * stats.config.world_tile_size
-        ).toFixed(1)} m`
+        "Residency mode",
+        stats.config.streaming_enabled ? "Camera frustum" : "Full set (budgeted)"
       );
       metric_pair(
         "Tile residency",
@@ -617,16 +613,28 @@ export class SVLMTool extends DevConsoleTool {
         `${bytes_to_mb(stats.streamed_gpu_bytes)} / ${bytes_to_mb(
           stats.streaming_memory_budget_bytes
         )} MB`,
-        "Coarse hierarchy",
-        `${format_number(stats.coarse_record_count)} records / ${bytes_to_mb(
-          stats.coarse_bytes
-        )} MB`
+        "Coarse fallback",
+        stats.coarse_fallback_available
+          ? `${format_number(stats.coarse_record_count)} records / ${bytes_to_mb(
+              stats.coarse_bytes
+            )} MB`
+          : "Missing — rebake required"
       );
       metric_pair(
-        "Retention ring",
-        `${format_number(stats.config.streaming_hysteresis)} tiles`,
-        "Motion prefetch",
-        `${format_number(stats.config.streaming_prefetch_tiles)} tiles`
+        "Tile fade",
+        `${Number(stats.config.streaming_fade_seconds).toFixed(2)} s`,
+        "Upload budget",
+        `${bytes_to_mb(stats.streaming_upload_bytes)} / ${bytes_to_mb(
+          stats.streaming_upload_budget_bytes
+        )} MB this frame`
+      );
+      metric_pair(
+        "Pending upload",
+        `${format_number(stats.streaming_pending_tile_count)} tiles / ${bytes_to_mb(
+          stats.streaming_pending_upload_bytes
+        )} MB`,
+        "Selection",
+        stats.config.streaming_enabled ? "Frustum, nearest first" : "All, within budget"
       );
 
       section_header("Bake output");

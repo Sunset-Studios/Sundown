@@ -15,6 +15,7 @@
 @group(1) @binding(4) var<storage, read_write> debug_depth: array<atomic<u32>>;
 @group(1) @binding(5) var<storage, read> debug_leaf_indices: array<u32>;
 @group(1) @binding(6) var<storage, read> irradiance_probes: array<u32>;
+@group(1) @binding(7) var<storage, read> streamed_probe_validity: array<u32>;
 
 const SVLM_DEBUG_MAX_RADIUS_PX = 18.0;
 const SVLM_PROBE_DEBUG_WORKGROUP_Y = 8u;
@@ -31,6 +32,28 @@ fn svlm_probe_debug_read_sh(probe_index: u32) -> SH_L1_RGB {
         packed.data[i] = irradiance_probes[base + i];
     }
     return sh_l1_rgb_unpack(packed);
+}
+
+fn svlm_probe_debug_streamed_index(
+    leaf_index: u32,
+    leaf: SVLMLeafBrick,
+    local_probe: u32
+) -> u32 {
+    let validity_base = leaf_index * 2u;
+    let word_index = local_probe >> 5u;
+    if (validity_base + word_index >= arrayLength(&streamed_probe_validity)) {
+        return INVALID_IDX;
+    }
+    let validity_word = streamed_probe_validity[validity_base + word_index];
+    let bit = 1u << (local_probe & 31u);
+    if ((validity_word & bit) == 0u) {
+        return INVALID_IDX;
+    }
+    var rank = countOneBits(validity_word & (bit - 1u));
+    if (word_index != 0u) {
+        rank += countOneBits(streamed_probe_validity[validity_base]);
+    }
+    return leaf.probe_base + rank;
 }
 
 fn svlm_probe_debug_pack_rgb565(color: vec3<f32>) -> u32 {
@@ -97,7 +120,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_position =
         leaf_origin + (vec3<f32>(local_coord) + vec3<f32>(0.5)) * probe_spacing;
     let radius = max(probe_spacing * 0.075, 0.025);
-    let probe_index = leaf.probe_base + local_probe;
+    let probe_index = select(
+        leaf.probe_base + local_probe,
+        svlm_probe_debug_streamed_index(leaf_index, leaf, local_probe),
+        svlm_params.tile_streaming_enabled > 0.5
+    );
+    if (probe_index == INVALID_IDX) {
+        return;
+    }
     let last_probe_word =
         probe_index * SVLM_SH_WORDS_PER_PROBE + (SVLM_SH_WORDS_PER_PROBE - 1u);
     if (last_probe_word >= arrayLength(&irradiance_probes)) {

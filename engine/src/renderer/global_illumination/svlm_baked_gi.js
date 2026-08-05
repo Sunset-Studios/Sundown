@@ -92,13 +92,17 @@ export class SVLMBakedGI {
       );
     }
 
+    this.svlm?.prepare_streamed_tiles();
+
     const artifact = this.svlm?.get_bake_artifact();
     if (
       draw_count <= 0 ||
       !artifact?.usable ||
       !artifact.buffers.params ||
       !artifact.buffers.nodes ||
+      !artifact.buffers.page_table ||
       !artifact.buffers.leaf_bricks ||
+      !artifact.buffers.probe_validity ||
       !artifact.buffers.irradiance ||
       !artifact.buffers.coarse
     ) {
@@ -127,7 +131,10 @@ export class SVLMBakedGI {
     const leaves = render_graph.register_buffer(artifact.buffers.leaf_bricks.config.name);
     const irradiance = render_graph.register_buffer(artifact.buffers.irradiance.config.name);
     const coarse = render_graph.register_buffer(artifact.buffers.coarse.config.name);
-
+    const page_table = render_graph.register_buffer(artifact.buffers.page_table.config.name);
+    const probe_validity = render_graph.register_buffer(
+      artifact.buffers.probe_validity.config.name
+    );
     render_graph.add_pass(
       "svlm_baked_resolve",
       RenderPassFlags.Compute,
@@ -140,6 +147,8 @@ export class SVLMBakedGI {
           leaves,
           irradiance,
           coarse,
+          page_table,
+          probe_validity,
           diffuse_sample_output,
           black_output,
         ],

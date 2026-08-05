@@ -154,12 +154,12 @@ fn cs(
         return;
     }
 
-    // A majority of backface hits means the probe lies inside closed geometry.
+    // Consider a probe valid if it doesn't have too many backface hits.
     // Keeping it as a valid black probe creates whole dark rows after
     // trilinear interpolation, so preserve a zero-valued validity marker
     // instead. This matches the established DDGI classification threshold.
     if (
-        sh_c0[0].w * 2.0 > f32(rays_per_probe) ||
+        sh_c0[0].w > f32(rays_per_probe) * 0.25 ||
         (sample_index > 0u && svlm_probe_was_invalid(probe_index))
     ) {
         svlm_write_invalid_probe(probe_index);

@@ -13,15 +13,18 @@
 @group(1) @binding(4) var<storage, read> leaf_bricks: array<SVLMLeafBrick>;
 @group(1) @binding(5) var<storage, read> irradiance_probes: array<u32>;
 @group(1) @binding(6) var<storage, read> coarse_lookup_data: array<u32>;
-@group(1) @binding(7) var output_diffuse: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(8) var output_black: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(7) var<storage, read> svlm_local_pages: array<u32>;
+@group(1) @binding(8) var<storage, read> streamed_probe_validity: array<u32>;
+@group(1) @binding(9) var output_diffuse: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(10) var output_black: texture_storage_2d<rgba16float, write>;
 
 const SVLM_NODE_WORD_STRIDE = 7u;
-const SVLM_TILED_LOOKUP_WORD_STRIDE = 9u;
-const SVLM_TILED_LOOKUP_MAX_PROBES = 16u;
+const SVLM_COVERAGE_DIRECTORY_WORD_STRIDE = 8u;
+const SVLM_LOCAL_PAGE_WORD_STRIDE = 5u;
+const SVLM_PAGE_TABLE_MAX_PROBES = 16u;
+const SVLM_DIRECTORY_TOMBSTONE = 0xfffffffeu;
 const SVLM_COARSE_LOOKUP_WORD_STRIDE = 10u;
 const SVLM_COARSE_LOOKUP_MAX_PROBES = 16u;
-const SVLM_LOOKUP_TOMBSTONE = 0xfffffffeu;
 
 struct SVLMTiledLeafLookup {
     leaf_index: u32,
@@ -121,21 +124,17 @@ fn svlm_find_monolithic_leaf(position: vec3<f32>) -> u32 {
     return INVALID_IDX;
 }
 
-fn svlm_hash_tiled_lookup_key(
-    tile_coord: vec3<i32>,
-    level: u32,
-    leaf_coord: vec3<u32>
+fn svlm_hash_lookup_words(
+    word_0: u32,
+    word_1: u32,
+    word_2: u32,
+    word_3: u32
 ) -> u32 {
     var hash = 0x811c9dc5u;
-    if (svlm_params.tile_leaf_ownership < 0.5) {
-        hash = (hash ^ bitcast<u32>(tile_coord.x)) * 0x01000193u;
-        hash = (hash ^ bitcast<u32>(tile_coord.y)) * 0x01000193u;
-        hash = (hash ^ bitcast<u32>(tile_coord.z)) * 0x01000193u;
-    }
-    hash = (hash ^ level) * 0x01000193u;
-    hash = (hash ^ leaf_coord.x) * 0x01000193u;
-    hash = (hash ^ leaf_coord.y) * 0x01000193u;
-    hash = (hash ^ leaf_coord.z) * 0x01000193u;
+    hash = (hash ^ word_0) * 0x01000193u;
+    hash = (hash ^ word_1) * 0x01000193u;
+    hash = (hash ^ word_2) * 0x01000193u;
+    hash = (hash ^ word_3) * 0x01000193u;
     hash ^= hash >> 16u;
     hash *= 0x7feb352du;
     hash ^= hash >> 15u;
@@ -143,60 +142,91 @@ fn svlm_hash_tiled_lookup_key(
     return hash ^ (hash >> 16u);
 }
 
+fn svlm_hash_coverage_coord(tile_coord: vec3<i32>) -> u32 {
+    return svlm_hash_lookup_words(
+        bitcast<u32>(tile_coord.x),
+        bitcast<u32>(tile_coord.y),
+        bitcast<u32>(tile_coord.z),
+        0u
+    );
+}
+
+fn svlm_hash_local_page_key(
+    level: u32,
+    leaf_coord: vec3<u32>
+) -> u32 {
+    return svlm_hash_lookup_words(level, leaf_coord.x, leaf_coord.y, leaf_coord.z);
+}
+
 fn svlm_lookup_tiled_leaf(
     tile_coord: vec3<i32>,
     level: u32,
     leaf_coord: vec3<u32>
 ) -> SVLMTiledLeafLookup {
-    // CPU packing guarantees that every resident leaf is reachable within this
-    // fixed probe budget. This bound is the critical difference from the old
-    // per-pixel linear scan over all leaves intersecting a world tile.
-    let entry_count =
+    let directory_entry_count =
         arrayLength(&svlm_lookup_data) /
-        SVLM_TILED_LOOKUP_WORD_STRIDE;
-    if (entry_count == 0u) {
+        SVLM_COVERAGE_DIRECTORY_WORD_STRIDE;
+    if (directory_entry_count == 0u) {
+        return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
+    }
+    let directory_mask = directory_entry_count - 1u;
+    var directory_index = svlm_hash_coverage_coord(tile_coord) & directory_mask;
+    var page_offset = INVALID_IDX;
+    var page_mask = 0u;
+    var fade_start_time = 0.0;
+    for (
+        var probe = 0u;
+        probe < SVLM_PAGE_TABLE_MAX_PROBES;
+        probe = probe + 1u
+    ) {
+        let base = directory_index * SVLM_COVERAGE_DIRECTORY_WORD_STRIDE;
+        let candidate_page_offset = svlm_lookup_data[base + 3u];
+        if (candidate_page_offset == INVALID_IDX) {
+            return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
+        }
+        if (
+            candidate_page_offset != SVLM_DIRECTORY_TOMBSTONE &&
+            bitcast<i32>(svlm_lookup_data[base]) == tile_coord.x &&
+            bitcast<i32>(svlm_lookup_data[base + 1u]) == tile_coord.y &&
+            bitcast<i32>(svlm_lookup_data[base + 2u]) == tile_coord.z
+        ) {
+            page_offset = candidate_page_offset;
+            page_mask = svlm_lookup_data[base + 4u];
+            fade_start_time = bitcast<f32>(svlm_lookup_data[base + 5u]);
+            break;
+        }
+        directory_index = (directory_index + 1u) & directory_mask;
+    }
+    if (page_offset == INVALID_IDX) {
         return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
     }
 
-    let entry_mask = entry_count - 1u;
-    var entry_index =
-        svlm_hash_tiled_lookup_key(tile_coord, level, leaf_coord) &
-        entry_mask;
+    var local_entry_index = svlm_hash_local_page_key(level, leaf_coord) & page_mask;
     for (
         var probe = 0u;
-        probe < SVLM_TILED_LOOKUP_MAX_PROBES;
+        probe < SVLM_PAGE_TABLE_MAX_PROBES;
         probe = probe + 1u
     ) {
-        let base = entry_index * SVLM_TILED_LOOKUP_WORD_STRIDE;
-        let leaf_index = svlm_lookup_data[base + 7u];
+        let entry_index = page_offset + local_entry_index;
+        let base = entry_index * SVLM_LOCAL_PAGE_WORD_STRIDE;
+        if (base + 4u >= arrayLength(&svlm_local_pages)) {
+            return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
+        }
+        let leaf_index = svlm_local_pages[base + 4u];
         if (leaf_index == INVALID_IDX) {
             return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
         }
-        let tile_matches =
-            svlm_params.tile_leaf_ownership > 0.5 ||
-            (
-                bitcast<i32>(svlm_lookup_data[base]) == tile_coord.x &&
-                bitcast<i32>(svlm_lookup_data[base + 1u]) == tile_coord.y &&
-                bitcast<i32>(svlm_lookup_data[base + 2u]) == tile_coord.z
-            );
         if (
-            leaf_index != SVLM_LOOKUP_TOMBSTONE &&
-            tile_matches &&
-            svlm_lookup_data[base + 3u] == level &&
-            all(
-                vec3<u32>(
-                    svlm_lookup_data[base + 4u],
-                    svlm_lookup_data[base + 5u],
-                    svlm_lookup_data[base + 6u]
-                ) == leaf_coord
-            )
+            svlm_local_pages[base] == level &&
+            all(vec3<u32>(
+                svlm_local_pages[base + 1u],
+                svlm_local_pages[base + 2u],
+                svlm_local_pages[base + 3u]
+            ) == leaf_coord)
         ) {
-            return SVLMTiledLeafLookup(
-                leaf_index,
-                bitcast<f32>(svlm_lookup_data[base + 8u])
-            );
+            return SVLMTiledLeafLookup(leaf_index, fade_start_time);
         }
-        entry_index = (entry_index + 1u) & entry_mask;
+        local_entry_index = (local_entry_index + 1u) & page_mask;
     }
     return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
 }
@@ -284,16 +314,62 @@ fn svlm_probe_is_valid(probe_index: u32) -> bool {
     );
 }
 
-struct SVLMCoarseSample {
-    irradiance: SH_L1_RGB,
-    validity: f32,
-    lod: u32,
-};
-
 struct SVLMFineSample {
     irradiance: SH_L1_RGB,
     validity: f32,
 };
+
+struct SVLMCoarseSample {
+    irradiance: SH_L1_RGB,
+    validity: f32,
+};
+
+fn svlm_sh_multiply_add(
+    accumulator: SH_L1_RGB,
+    value: SH_L1_RGB,
+    weight: f32
+) -> SH_L1_RGB {
+    var result: SH_L1_RGB;
+    result.c[0] = accumulator.c[0] + value.c[0] * weight;
+    result.c[1] = accumulator.c[1] + value.c[1] * weight;
+    result.c[2] = accumulator.c[2] + value.c[2] * weight;
+    result.c[3] = accumulator.c[3] + value.c[3] * weight;
+    return result;
+}
+
+fn svlm_streamed_probe_index(
+    leaf_index: u32,
+    leaf: SVLMLeafBrick,
+    local_probe_index: u32
+) -> u32 {
+    let validity_base = leaf_index * 2u;
+    let validity_word_index = local_probe_index >> 5u;
+    if (validity_base + validity_word_index >= arrayLength(&streamed_probe_validity)) {
+        return INVALID_IDX;
+    }
+    let validity_word = streamed_probe_validity[validity_base + validity_word_index];
+    let bit_index = local_probe_index & 31u;
+    let bit = 1u << bit_index;
+    if ((validity_word & bit) == 0u) {
+        return INVALID_IDX;
+    }
+    var rank = countOneBits(validity_word & (bit - 1u));
+    if (validity_word_index != 0u) {
+        rank += countOneBits(streamed_probe_validity[validity_base]);
+    }
+    return leaf.probe_base + rank;
+}
+
+fn svlm_leaf_probe_index(
+    leaf_index: u32,
+    leaf: SVLMLeafBrick,
+    local_probe_index: u32
+) -> u32 {
+    if (svlm_params.tile_streaming_enabled > 0.5) {
+        return svlm_streamed_probe_index(leaf_index, leaf, local_probe_index);
+    }
+    return leaf.probe_base + local_probe_index;
+}
 
 fn svlm_hash_coarse_lookup_key(tile_coord: vec3<i32>, lod: u32) -> u32 {
     var hash = 0x811c9dc5u;
@@ -315,7 +391,6 @@ fn svlm_lookup_coarse_entry(tile_coord: vec3<i32>, lod: u32) -> u32 {
     if (entry_count == 0u) {
         return INVALID_IDX;
     }
-
     let entry_mask = entry_count - 1u;
     var entry_index =
         svlm_hash_coarse_lookup_key(tile_coord, lod) & entry_mask;
@@ -362,7 +437,6 @@ fn svlm_sample_coarse_lod(position: vec3<f32>, lod: u32) -> SVLMCoarseSample {
     let fraction = fract(grid_position);
     var result = sh_l1_rgb_zero();
     var weight_sum = 0.0;
-
     for (var corner = 0u; corner < 8u; corner = corner + 1u) {
         let offset = vec3<i32>(
             i32(corner & 1u),
@@ -386,105 +460,25 @@ fn svlm_sample_coarse_lod(position: vec3<f32>, lod: u32) -> SVLMCoarseSample {
         );
         weight_sum += weight;
     }
-
     if (weight_sum <= 1e-6) {
-        return SVLMCoarseSample(sh_l1_rgb_zero(), 0.0, lod);
+        return SVLMCoarseSample(sh_l1_rgb_zero(), 0.0);
     }
     return SVLMCoarseSample(
         sh_l1_rgb_multiply_scalar(result, 1.0 / weight_sum),
-        1.0,
-        lod
+        1.0
     );
-}
-
-fn svlm_sample_coarse_from_lod(
-    position: vec3<f32>,
-    first_lod: u32,
-    max_lod: u32
-) -> SVLMCoarseSample {
-    for (var lod = first_lod; lod <= max_lod; lod = lod + 1u) {
-        let sample = svlm_sample_coarse_lod(position, lod);
-        if (sample.validity > 0.5 || lod == max_lod) {
-            return sample;
-        }
-    }
-    return SVLMCoarseSample(sh_l1_rgb_zero(), 0.0, max_lod);
 }
 
 fn svlm_sample_coarse(position: vec3<f32>) -> SVLMCoarseSample {
     let min_lod = u32(max(svlm_params.coarse_min_lod, 1.0));
     let max_lod = u32(max(svlm_params.coarse_max_lod, f32(min_lod)));
-    let camera_position =
-        view_buffer[u32(frame_info.view_index)].view_position.xyz;
-    let fine_extent = max(
-        svlm_params.world_tile_size * svlm_params.streaming_radius,
-        svlm_params.world_tile_size
-    );
-    let camera_distance = distance(position, camera_position);
-    let distance_lod = u32(max(
-        floor(log2(max(camera_distance / fine_extent, 1.0))),
-        0.0
-    ));
-    let desired_lod = min(min_lod + distance_lod, max_lod);
-    let fine_sample = svlm_sample_coarse_from_lod(
-        position,
-        desired_lod,
-        max_lod
-    );
-    if (
-        fine_sample.validity <= 0.5 ||
-        fine_sample.lod != desired_lod ||
-        desired_lod >= max_lod
-    ) {
-        return fine_sample;
+    for (var lod = min_lod; lod <= max_lod; lod = lod + 1u) {
+        let sample = svlm_sample_coarse_lod(position, lod);
+        if (sample.validity > 0.5 || lod == max_lod) {
+            return sample;
+        }
     }
-
-    let coarse_sample = svlm_sample_coarse_from_lod(
-        position,
-        desired_lod + 1u,
-        max_lod
-    );
-    if (coarse_sample.validity <= 0.5) {
-        return fine_sample;
-    }
-
-    // Every coarse shell doubles both its reach and its transition width. This
-    // extends the fine-to-coarse crossfade across the full hierarchy instead
-    // of snapping at the logarithmic distance boundaries after the first LOD.
-    let cascade_scale = exp2(f32(distance_lod + 1u));
-    let outer_distance = fine_extent * cascade_scale;
-    let transition_distance =
-        svlm_params.streaming_transition_tiles *
-        svlm_params.world_tile_size *
-        cascade_scale;
-    let inner_distance = max(outer_distance - transition_distance, 0.0);
-    let coarse_weight = smoothstep(
-        inner_distance,
-        max(outer_distance, inner_distance + 0.0001),
-        camera_distance
-    );
-    return SVLMCoarseSample(
-        sh_l1_rgb_lerp(
-            fine_sample.irradiance,
-            coarse_sample.irradiance,
-            coarse_weight
-        ),
-        1.0,
-        fine_sample.lod
-    );
-}
-
-fn svlm_sh_multiply_add(
-    accumulator: SH_L1_RGB,
-    value: SH_L1_RGB,
-    weight: f32
-) -> SH_L1_RGB {
-    var result: SH_L1_RGB;
-    result.c[0] = accumulator.c[0] + value.c[0] * weight;
-    result.c[1] = accumulator.c[1] + value.c[1] * weight;
-    result.c[2] = accumulator.c[2] + value.c[2] * weight;
-    result.c[3] = accumulator.c[3] + value.c[3] * weight;
-    return result;
+    return SVLMCoarseSample(sh_l1_rgb_zero(), 0.0);
 }
 
 fn svlm_leaf_contains(
@@ -519,6 +513,7 @@ fn svlm_probe_surface_weight(
 }
 
 fn svlm_sample_leaf_sh(
+    leaf_index: u32,
     leaf: SVLMLeafBrick,
     sample_position: vec3<f32>,
     surface_position: vec3<f32>,
@@ -531,6 +526,7 @@ fn svlm_sample_leaf_sh(
         return SVLMFineSample(sh_l1_rgb_zero(), 0.0);
     }
     if (
+        svlm_params.tile_streaming_enabled <= 0.5 &&
         available_probe_count - leaf.probe_base <
         SVLM_PROBES_PER_BRICK
     ) {
@@ -565,12 +561,13 @@ fn svlm_sample_leaf_sh(
             (corner >> 2u) & 1u
         );
         let coord = probe_base_coord + offset;
-        let probe_index =
-            leaf.probe_base +
-            coord.x +
-            coord.y * 4u +
-            coord.z * 16u;
-        if (!svlm_probe_is_valid(probe_index)) {
+        let local_probe_index = coord.x + coord.y * 4u + coord.z * 16u;
+        let probe_index = svlm_leaf_probe_index(leaf_index, leaf, local_probe_index);
+        if (
+            probe_index == INVALID_IDX ||
+            probe_index >= available_probe_count ||
+            (svlm_params.tile_streaming_enabled <= 0.5 && !svlm_probe_is_valid(probe_index))
+        ) {
             continue;
         }
         let weight_axis = select(
@@ -615,8 +612,12 @@ fn svlm_sample_leaf_sh(
             local_probe_index < SVLM_PROBES_PER_BRICK;
             local_probe_index = local_probe_index + 1u
         ) {
-            let probe_index = leaf.probe_base + local_probe_index;
-            if (!svlm_probe_is_valid(probe_index)) {
+            let probe_index = svlm_leaf_probe_index(leaf_index, leaf, local_probe_index);
+            if (
+                probe_index == INVALID_IDX ||
+                probe_index >= available_probe_count ||
+                (svlm_params.tile_streaming_enabled <= 0.5 && !svlm_probe_is_valid(probe_index))
+            ) {
                 continue;
             }
             let probe_position = svlm_probe_position(
@@ -738,6 +739,7 @@ fn svlm_sample_blended_sh(
     let neighbor_weight = vec3<f32>(blend_x.y, blend_y.y, blend_z.y);
     if (all(neighbor_weight <= vec3<f32>(1e-6))) {
         return svlm_sample_leaf_sh(
+            base_leaf_index,
             base_leaf,
             sample_position,
             surface_position,
@@ -786,6 +788,7 @@ fn svlm_sample_blended_sh(
             continue;
         }
         let leaf_sample = svlm_sample_leaf_sh(
+            leaf_index,
             leaf_bricks[leaf_index],
             sample_position,
             surface_position,
@@ -869,7 +872,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let surface_leaf_valid =
         surface_leaf_index != INVALID_IDX &&
         surface_leaf_index < arrayLength(&leaf_bricks);
-    var coarse_sample = SVLMCoarseSample(sh_l1_rgb_zero(), 0.0, 0u);
+    var coarse_sample = SVLMCoarseSample(sh_l1_rgb_zero(), 0.0);
     if (svlm_params.tile_streaming_enabled > 0.5) {
         coarse_sample = svlm_sample_coarse(position);
     }
@@ -922,33 +925,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    var irradiance = fine_irradiance;
+    var irradiance = fine_irradiance * tile_fade;
     if (coarse_sample.validity > 0.5) {
         let coarse_irradiance = svlm_evaluate_irradiance(
             coarse_sample.irradiance,
             normal
         );
-        let camera_position =
-            view_buffer[u32(frame_info.view_index)].view_position.xyz;
-        let outer_distance =
-            svlm_params.streaming_radius * svlm_params.world_tile_size;
-        let transition_distance =
-            svlm_params.streaming_transition_tiles *
-            svlm_params.world_tile_size;
-        let inner_distance = max(outer_distance - transition_distance, 0.0);
-        var fine_weight = select(
-            0.0,
-            1.0 - smoothstep(
-                inner_distance,
-                max(outer_distance, inner_distance + 0.0001),
-                distance(position, camera_position)
-            ),
-            fine_validity > 1e-6
-        );
-        // Valid fine probes remain authoritative near geometry. Blending by
-        // partial validity here admits the broad coarse field precisely where
-        // walls invalidate probes, which appears as light leaking at corners.
-        fine_weight *= tile_fade;
+        let fine_weight = select(0.0, tile_fade, fine_validity > 1e-6);
         irradiance = mix(coarse_irradiance, fine_irradiance, fine_weight);
     }
     textureStore(

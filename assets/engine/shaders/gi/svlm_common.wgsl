@@ -172,10 +172,10 @@ struct SVLMParams {
     tile_streaming_enabled: f32,
     coarse_min_lod: f32,
     coarse_max_lod: f32,
-    streaming_radius: f32,
+    streaming_padding_2: f32,
 
-    streaming_transition_tiles: f32,
-    tile_leaf_ownership: f32,
+    streaming_padding_3: f32,
+    streaming_padding_4: f32,
     streaming_fade_seconds: f32,
     triangle_density_threshold: f32,
 };

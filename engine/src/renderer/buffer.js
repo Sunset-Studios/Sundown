@@ -158,6 +158,56 @@ export class Buffer {
     }
   }
 
+  resize(required_element_count, preserve_contents = true) {
+    const required_size = Math.max(4, required_element_count * 4);
+    if (this.buffer && this.config.size >= required_size) {
+      return false;
+    }
+    if (this.config.cpu_readback) {
+      throw new Error(`Cannot resize CPU-readback buffer '${this.config.name}' in place.`);
+    }
+
+    const renderer = Renderer.get();
+    const old_buffer = this.buffer;
+    const old_size = this.config.size;
+    const new_buffer = renderer.device.createBuffer({
+      label: this.config.name,
+      size: required_size,
+      usage: this.config.usage,
+    });
+
+    if (preserve_contents && old_buffer && old_size > 0) {
+      if (
+        (this.config.usage & GPUBufferUsage.COPY_SRC) === 0 ||
+        (this.config.usage & GPUBufferUsage.COPY_DST) === 0
+      ) {
+        throw new Error(
+          `Buffer '${this.config.name}' requires COPY_SRC and COPY_DST to preserve data while resizing.`
+        );
+      }
+      const encoder = renderer.device.createCommandEncoder({
+        label: `${this.config.name}_resize`,
+      });
+      encoder.copyBufferToBuffer(old_buffer, 0, new_buffer, 0, old_size);
+      renderer.device.queue.submit([encoder.finish()]);
+    }
+
+    this.buffer = new_buffer;
+    this.config.size = required_size;
+    if (old_buffer) {
+      renderer.execution_queue.push_execution(
+        () => old_buffer.destroy(),
+        `buffer_resize_${this.physical_id}_${performance.now()}`,
+        MAX_BUFFERED_FRAMES + 1
+      );
+    }
+    renderer.mark_bind_groups_dirty(true);
+    if (this.config.dispatch) {
+      global_dispatcher.dispatch(this.config.name, this);
+    }
+    return true;
+  }
+
   write_cpu(data, offset = 0, size = null, data_offset = 0, data_type = Float32Array) {
     const renderer = Renderer.get();
     const is_array_buffer = ArrayBuffer.isView(data);

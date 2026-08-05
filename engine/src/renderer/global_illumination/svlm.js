@@ -5,20 +5,18 @@ import { draw_quad } from "../draw_helpers.js";
 import { npot, clamp, ceil_div } from "../../utility/math.js";
 import { StreamingSystem } from "../../streaming/streaming_system.js";
 import {
-  create_svlm_coarse_hierarchy,
   create_svlm_coarse_coverage_samples,
+  create_svlm_coarse_hierarchy,
   create_svlm_tile_manifest,
   decode_svlm_storage_payload,
   deserialize_svlm_coarse_hierarchy,
   encode_svlm_storage_payload,
-  enumerate_svlm_tile_radius,
   is_svlm_tile_format_version_supported,
   partition_svlm_leaf_tiles,
   resolve_svlm_payload_source,
   serialize_svlm_coarse_hierarchy,
   serialize_svlm_tile,
   svlm_coarse_record_words,
-  svlm_tile_format_version,
   svlm_tile_key,
   svlm_tile_leaf_words,
   svlm_tile_irradiance_words_per_probe,
@@ -31,16 +29,23 @@ import {
   register_scene_lighting_data,
   register_texture_pools,
 } from "../render_graph_utils.js";
+import { warn } from "../../utility/logging.js";
+import {
+  SVLM_COVERAGE_DIRECTORY_WORD_STRIDE,
+  SVLM_LOCAL_PAGE_WORD_STRIDE,
+  SVLM_PROBE_VALIDITY_WORDS_PER_LEAF,
+  SVLMStreamedPageTable,
+  estimate_svlm_local_page_byte_length,
+} from "./svlm_streamed_page_table.js";
 
 const PROBES_PER_BRICK = 64;
 const SH_WORDS_PER_PROBE = 6;
 const PROBE_RAY_U32_STRIDE = 16;
 const NODE_U32_STRIDE = 7;
 const LEAF_U32_STRIDE = 6;
-const TILED_LOOKUP_U32_STRIDE = 9;
-const TILED_LOOKUP_MAX_PROBES = 16;
 const COARSE_LOOKUP_U32_STRIDE = svlm_coarse_record_words;
 const COARSE_LOOKUP_MAX_PROBES = 16;
+const STREAMING_VIEW_STATE_FLOAT_COUNT = 30;
 const LINE_FLOAT_STRIDE = 20;
 const LINES_PER_BOX = 12;
 const PARAM_WORD_COUNT = 44;
@@ -92,14 +97,10 @@ const PARAM_RESIDENT_TILE_COUNT = 35;
 const PARAM_TILE_STREAMING_ENABLED = 36;
 const PARAM_COARSE_MIN_LOD = 37;
 const PARAM_COARSE_MAX_LOD = 38;
-const PARAM_STREAMING_RADIUS = 39;
-const PARAM_STREAMING_TRANSITION_TILES = 40;
-const PARAM_TILE_LEAF_OWNERSHIP = 41;
 const PARAM_STREAMING_FADE_SECONDS = 42;
 const PARAM_TRIANGLE_DENSITY_THRESHOLD = 43;
 
 const INVALID_IDX = 0xffffffff;
-const TOMBSTONE_IDX = 0xfffffffe;
 const COUNTER_NODE_COUNT = 0;
 const COUNTER_LEAF_COUNT = 3;
 const COUNTER_PROBE_COUNT = 4;
@@ -119,7 +120,10 @@ const IRRADIANCE_STATUS_CHUNK_GENERATION_SHIFT = 8;
 const IRRADIANCE_STATUS_CHUNK_GENERATION_MASK = 0x00ffffff;
 
 const MAX_COMPUTE_WORKGROUPS = 65535;
-const MAX_STORAGE_BINDING_SIZE = 128 * 1024 * 1024;
+const MAX_STORAGE_BINDING_SIZE_MB = 128;
+const MAX_STORAGE_BINDING_SIZE = MAX_STORAGE_BINDING_SIZE_MB * 1024 * 1024;
+const DEFAULT_STREAMING_UPLOAD_BUDGET_MB = 8;
+const MAX_STREAMING_WRITE_BYTES = 2 * 1024 * 1024;
 const MAX_IRRADIANCE_PROBES_PER_CHUNK = Math.floor(
   MAX_STORAGE_BINDING_SIZE / (SH_WORDS_PER_PROBE * Uint32Array.BYTES_PER_ELEMENT)
 );
@@ -135,106 +139,6 @@ const svlm_uint_word_view = new Uint32Array(svlm_float_word_buffer);
 function svlm_float_to_word(value) {
   svlm_float_word_view[0] = value;
   return svlm_uint_word_view[0];
-}
-
-// Streamed tiles intentionally omit the monolithic octree. Rebuild a compact
-// spatial hash only when residency changes so runtime lookup stays bounded
-// instead of scanning every leaf in a tile for every shaded pixel.
-function hash_svlm_tiled_lookup_key(
-  tile_x,
-  tile_y,
-  tile_z,
-  level,
-  leaf_x,
-  leaf_y,
-  leaf_z,
-  global_leaf_key = false
-) {
-  let hash = 0x811c9dc5;
-  if (!global_leaf_key) {
-    hash = Math.imul((hash ^ (tile_x >>> 0)) >>> 0, 0x01000193) >>> 0;
-    hash = Math.imul((hash ^ (tile_y >>> 0)) >>> 0, 0x01000193) >>> 0;
-    hash = Math.imul((hash ^ (tile_z >>> 0)) >>> 0, 0x01000193) >>> 0;
-  }
-  hash = Math.imul((hash ^ (level >>> 0)) >>> 0, 0x01000193) >>> 0;
-  hash = Math.imul((hash ^ (leaf_x >>> 0)) >>> 0, 0x01000193) >>> 0;
-  hash = Math.imul((hash ^ (leaf_y >>> 0)) >>> 0, 0x01000193) >>> 0;
-  hash = Math.imul((hash ^ (leaf_z >>> 0)) >>> 0, 0x01000193) >>> 0;
-  hash ^= hash >>> 16;
-  hash = Math.imul(hash, 0x7feb352d) >>> 0;
-  hash ^= hash >>> 15;
-  hash = Math.imul(hash, 0x846ca68b) >>> 0;
-  return (hash ^ (hash >>> 16)) >>> 0;
-}
-
-function build_svlm_tiled_lookup_hash(
-  records,
-  record_count,
-  minimum_entry_count = 0,
-  global_leaf_keys = false
-) {
-  let entry_count = npot(Math.max(2, record_count * 2, minimum_entry_count));
-  const max_entry_count = Math.floor(
-    MAX_STORAGE_BINDING_SIZE / (TILED_LOOKUP_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT)
-  );
-
-  for (;;) {
-    if (entry_count > max_entry_count) {
-      throw new Error("SVLM tiled lookup hash exceeds the storage-buffer binding limit.");
-    }
-    const table = new Uint32Array(entry_count * TILED_LOOKUP_U32_STRIDE);
-    table.fill(INVALID_IDX);
-    const entry_mask = entry_count - 1;
-    let complete = true;
-
-    for (let record_index = 0; record_index < record_count; record_index++) {
-      const record_base = record_index * TILED_LOOKUP_U32_STRIDE;
-      let entry_index =
-        hash_svlm_tiled_lookup_key(
-          records[record_base],
-          records[record_base + 1],
-          records[record_base + 2],
-          records[record_base + 3],
-          records[record_base + 4],
-          records[record_base + 5],
-          records[record_base + 6],
-          global_leaf_keys
-        ) & entry_mask;
-      let inserted = false;
-
-      for (let probe = 0; probe < TILED_LOOKUP_MAX_PROBES; probe++) {
-        const entry_base = entry_index * TILED_LOOKUP_U32_STRIDE;
-        if (table[entry_base + 7] === INVALID_IDX) {
-          table.set(
-            records.subarray(record_base, record_base + TILED_LOOKUP_U32_STRIDE),
-            entry_base
-          );
-          inserted = true;
-          break;
-        }
-        if (
-          global_leaf_keys &&
-          table[entry_base + 3] === records[record_base + 3] &&
-          table[entry_base + 4] === records[record_base + 4] &&
-          table[entry_base + 5] === records[record_base + 5] &&
-          table[entry_base + 6] === records[record_base + 6]
-        ) {
-          throw new Error("SVLM owner tiles contain a duplicate global leaf key.");
-        }
-        entry_index = (entry_index + 1) & entry_mask;
-      }
-
-      if (!inserted) {
-        complete = false;
-        break;
-      }
-    }
-
-    if (complete) {
-      return table;
-    }
-    entry_count *= 2;
-  }
 }
 
 function hash_svlm_coarse_lookup_key(tile_x, tile_y, tile_z, lod) {
@@ -255,7 +159,6 @@ function build_svlm_coarse_lookup_hash(records, record_count, minimum_entry_coun
   const max_entry_count = Math.floor(
     MAX_STORAGE_BINDING_SIZE / (COARSE_LOOKUP_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT)
   );
-
   for (;;) {
     if (entry_count > max_entry_count) {
       throw new Error("SVLM coarse lookup hash exceeds the storage-buffer binding limit.");
@@ -264,7 +167,6 @@ function build_svlm_coarse_lookup_hash(records, record_count, minimum_entry_coun
     table.fill(INVALID_IDX);
     const entry_mask = entry_count - 1;
     let complete = true;
-
     for (let record_index = 0; record_index < record_count; record_index++) {
       const source_base = record_index * COARSE_LOOKUP_U32_STRIDE;
       let entry_index =
@@ -275,7 +177,6 @@ function build_svlm_coarse_lookup_hash(records, record_count, minimum_entry_coun
           records[source_base + 3]
         ) & entry_mask;
       let inserted = false;
-
       for (let probe = 0; probe < COARSE_LOOKUP_MAX_PROBES; probe++) {
         const target_base = entry_index * COARSE_LOOKUP_U32_STRIDE;
         if (table[target_base + 3] === INVALID_IDX) {
@@ -288,23 +189,14 @@ function build_svlm_coarse_lookup_hash(records, record_count, minimum_entry_coun
         }
         entry_index = (entry_index + 1) & entry_mask;
       }
-
       if (!inserted) {
         complete = false;
         break;
       }
     }
-
     if (complete) return table;
     entry_count *= 2;
   }
-}
-
-function distance_squared_between_tile_coords(a, b) {
-  const x = a[0] - b[0];
-  const y = a[1] - b[1];
-  const z = a[2] - b[2];
-  return x * x + y * y + z * z;
 }
 
 function svlm_tile_intersects_frustum(coord, tile_size, frustum) {
@@ -334,6 +226,108 @@ function svlm_tile_intersects_frustum(coord, tile_size, frustum) {
     }
   }
   return true;
+}
+
+function svlm_tile_view_priority(coord, tile_size, camera_position, camera_forward, was_desired) {
+  const min_x = coord[0] * tile_size;
+  const min_y = coord[1] * tile_size;
+  const min_z = coord[2] * tile_size;
+  const max_x = min_x + tile_size;
+  const max_y = min_y + tile_size;
+  const max_z = min_z + tile_size;
+  const nearest_x = clamp(camera_position[0], min_x, max_x) - camera_position[0];
+  const nearest_y = clamp(camera_position[1], min_y, max_y) - camera_position[1];
+  const nearest_z = clamp(camera_position[2], min_z, max_z) - camera_position[2];
+  const distance_to_tile_squared =
+    nearest_x * nearest_x + nearest_y * nearest_y + nearest_z * nearest_z;
+
+  const center_x = (coord[0] + 0.5) * tile_size - camera_position[0];
+  const center_y = (coord[1] + 0.5) * tile_size - camera_position[1];
+  const center_z = (coord[2] + 0.5) * tile_size - camera_position[2];
+  const center_distance_squared = center_x * center_x + center_y * center_y + center_z * center_z;
+  const hysteresis = was_desired ? 0.8 : 1;
+  if (!camera_forward) return distance_to_tile_squared * hysteresis;
+
+  const forward_distance =
+    center_x * camera_forward[0] + center_y * camera_forward[1] + center_z * camera_forward[2];
+  const perpendicular_distance_squared = Math.max(
+    0,
+    center_distance_squared - forward_distance * forward_distance
+  );
+  const half_size = tile_size * 0.5;
+  const minimum_corner_axis_projection = Math.min(
+    Math.abs(camera_forward[0] + camera_forward[1] + camera_forward[2]),
+    Math.abs(camera_forward[0] + camera_forward[1] - camera_forward[2]),
+    Math.abs(camera_forward[0] - camera_forward[1] + camera_forward[2]),
+    Math.abs(-camera_forward[0] + camera_forward[1] + camera_forward[2])
+  );
+  const projected_radius =
+    half_size * Math.sqrt(Math.max(0, 3 - minimum_corner_axis_projection ** 2));
+  const lateral_clearance = Math.max(
+    0,
+    Math.sqrt(perpendicular_distance_squared) - projected_radius
+  );
+  const view_depth = Math.max(half_size, forward_distance);
+  let angular_distance_squared =
+    (lateral_clearance * lateral_clearance) / (view_depth * view_depth);
+  if (forward_distance < -half_size && distance_to_tile_squared > 0) {
+    const behind_distance = (-forward_distance - half_size) / tile_size;
+    angular_distance_squared += 4 + behind_distance * behind_distance;
+  }
+
+  // Angular relevance is deliberately the primary key. This guarantees that
+  // coverage intersecting the forward view corridor is admitted before a
+  // nearer tile that only clips a fringe of the camera frustum. Hysteresis is
+  // bounded, so it cannot permanently pin an off-axis page.
+  return angular_distance_squared * hysteresis;
+}
+
+function svlm_streaming_view_matches(view_data, state) {
+  const view_matrix = view_data?.view_matrix;
+  const projection_matrix = view_data?.projection_matrix;
+  if (!state || view_matrix?.length < 16 || projection_matrix?.length < 16) {
+    return false;
+  }
+
+  for (let index = 0; index < 16; index++) {
+    if (state[index] !== view_matrix[index]) return false;
+  }
+  let state_index = 16;
+  for (let index = 0; index < 16; index++) {
+    // Temporal projection jitter only changes these two perspective terms.
+    if (index === 8 || index === 9) continue;
+    if (state[state_index++] !== projection_matrix[index]) return false;
+  }
+  return true;
+}
+
+function copy_svlm_streaming_view_state(view_data, state) {
+  state.set(view_data.view_matrix, 0);
+  let state_index = 16;
+  for (let index = 0; index < 16; index++) {
+    if (index === 8 || index === 9) continue;
+    state[state_index++] = view_data.projection_matrix[index];
+  }
+}
+
+function parse_boolean_option(value, fallback) {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string") return Boolean(value);
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "false" || normalized === "off" || normalized === "0") return false;
+  if (normalized === "true" || normalized === "on" || normalized === "1") return true;
+  return fallback;
+}
+
+function compare_svlm_streaming_coverage(a, b) {
+  const priority_delta = a.streaming_priority - b.streaming_priority;
+  if (priority_delta !== 0) return priority_delta;
+  const distance_delta = a.streaming_distance_squared - b.streaming_distance_squared;
+  if (distance_delta !== 0) return distance_delta;
+  if (a.streaming_was_desired !== b.streaming_was_desired) {
+    return a.streaming_was_desired ? -1 : 1;
+  }
+  return a.key.localeCompare(b.key);
 }
 
 function allocate_streamed_range(free_ranges, count, high_water_mark) {
@@ -370,6 +364,16 @@ function release_streamed_range(free_ranges, offset, count) {
     previous.count += current.count;
     free_ranges.splice(index, 1);
   }
+}
+
+function trim_streamed_high_water_mark(free_ranges, high_water_mark) {
+  while (free_ranges.length > 0) {
+    const range = free_ranges[free_ranges.length - 1];
+    if (range.offset + range.count !== high_water_mark) break;
+    high_water_mark = range.offset;
+    free_ranges.pop();
+  }
+  return high_water_mark;
 }
 
 // The SVLM pipeline is split into small compute passes.
@@ -504,14 +508,9 @@ export class SparseVolumetricLightmapper {
     irradiance_max_ray_distance: 128.0,
     max_emissive_lights: 32768,
     world_tile_size: 50.0,
-    streaming_radius: 6,
-    streaming_hysteresis: 1,
-    streaming_prefetch_tiles: 1,
-    streaming_prediction_seconds: 2.0,
-    streaming_prediction_max_tiles: 16,
-    streaming_max_requests: 32,
-    streaming_memory_budget_mb: 128,
-    streaming_transition_tiles: 1,
+    streaming_enabled: true,
+    streaming_memory_budget_mb: 256,
+    streaming_upload_budget_mb: DEFAULT_STREAMING_UPLOAD_BUDGET_MB,
     streaming_fade_seconds: 0.35,
     coarse_min_lod: 1,
     coarse_max_lod: 8,
@@ -568,8 +567,15 @@ export class SparseVolumetricLightmapper {
     resident_tile_bytes: 0,
     streamed_gpu_bytes: 0,
     streaming_memory_budget_bytes: 0,
+    streaming_upload_budget_bytes: DEFAULT_STREAMING_UPLOAD_BUDGET_MB * 1024 * 1024,
+    streaming_upload_bytes: 0,
+    streaming_pending_upload_bytes: 0,
+    streaming_pending_tile_count: 0,
+    streaming_lookup_patch_bytes: 0,
+    streaming_lookup_rebuild_count: 0,
     coarse_record_count: 0,
     coarse_bytes: 0,
+    coarse_fallback_available: false,
     tile_streaming_enabled: false,
     tile_serialization_in_progress: false,
     tile_serialization_error: null,
@@ -608,29 +614,26 @@ export class SparseVolumetricLightmapper {
   tile_manifest = null;
   tile_entries = new Map();
   tile_coverage_entries = new Map();
+  tile_owner_coverage_keys = new Map();
   tile_leaf_ownership_enabled = false;
   tile_sources = new Map();
   tile_source_resolver = null;
   resident_tiles = new Map();
   tile_requests = new Map();
   failed_tile_keys = new Set();
-  resident_tile_usage = new Map();
   tile_streaming_enabled = false;
   tile_buffers_dirty = false;
   tile_serialization_error = null;
   serialized_bake_serial = -1;
-  last_tile_streaming_signature = null;
-  last_streaming_center_coord = null;
-  last_streaming_camera_position = null;
-  last_streaming_time = null;
+  last_streaming_view_state = null;
+  streaming_selection_dirty = true;
   streaming_time = 0;
-  streaming_velocity = [0, 0, 0];
-  streaming_prefetch_direction = [0, 0, 0];
-  streaming_update_serial = 0;
+  streaming_prepared_frame = -1;
   desired_tile_keys = new Set();
   desired_coverage_keys = new Set();
-  core_tile_keys = new Set();
-  retained_tile_keys = new Set();
+  next_desired_tile_keys = new Set();
+  next_desired_coverage_keys = new Set();
+  streaming_candidate_coverage = [];
 
   coarse_hierarchy = null;
   coarse_hierarchy_payload = null;
@@ -658,17 +661,10 @@ export class SparseVolumetricLightmapper {
 
   streamed_params_data = new Float32Array(PARAM_WORD_COUNT);
   streamed_params_buffer = null;
-  streamed_lookup_buffer = null;
-  streamed_lookup_data = null;
-  streamed_lookup_tile_entries = new Map();
-  streamed_lookup_tile_records = new Map();
-  streamed_lookup_dirty_entries = new Set();
-  streamed_lookup_record_count = 0;
-  streamed_lookup_tombstone_count = 0;
-  streamed_complete_coverage_keys = new Set();
-  streamed_coverage_fade_start_times = new Map();
   streamed_leaf_brick_buffer = null;
   streamed_irradiance_buffer = null;
+  streamed_probe_validity_buffer = null;
+  streamed_page_table = new SVLMStreamedPageTable();
   streamed_leaf_count = 0;
   streamed_probe_count = 0;
   streamed_allocations = new Map();
@@ -677,6 +673,7 @@ export class SparseVolumetricLightmapper {
   streamed_irradiance_free_ranges = [];
   streamed_leaf_high_water_mark = 0;
   streamed_irradiance_high_water_mark = 0;
+  streamed_allocation_generation = 0;
   baked_probe_debug_counter_buffer = null;
   baked_probe_debug_leaf_indices_buffer = null;
 
@@ -745,6 +742,13 @@ export class SparseVolumetricLightmapper {
     }
 
     const storage_manifest = JSON.parse(JSON.stringify(serialized_tiles.manifest));
+    storage_manifest.streaming = {
+      streaming_enabled: this.config.streaming_enabled,
+      streaming_memory_budget_mb: this.config.streaming_memory_budget_mb,
+      streaming_upload_budget_mb: this.config.streaming_upload_budget_mb,
+      streaming_fade_seconds: this.config.streaming_fade_seconds,
+      coarse_memory_budget_mb: this.config.coarse_memory_budget_mb,
+    };
     const storage_tile_entries = new Map(
       storage_manifest.tiles.map((entry) => [entry.key ?? svlm_tile_key(entry.coord), entry])
     );
@@ -769,7 +773,7 @@ export class SparseVolumetricLightmapper {
         },
       });
     }
-    if (serialized_tiles.coarse_payload && serialized_tiles.manifest.coarse?.entry) {
+    if (serialized_tiles.coarse_payload && storage_manifest.coarse?.entry) {
       const coarse_entry = storage_manifest.coarse;
       const coarse_payload = await resolve_svlm_payload_source(
         serialized_tiles.coarse_payload,
@@ -792,7 +796,6 @@ export class SparseVolumetricLightmapper {
         },
       });
     }
-
     return {
       metadata: {
         manifest: storage_manifest,
@@ -808,8 +811,10 @@ export class SparseVolumetricLightmapper {
   _has_valid_streamed_buffers() {
     return !!(
       this.streamed_params_buffer?.buffer &&
-      this.streamed_lookup_buffer?.buffer &&
+      this.streamed_page_table.directory_buffer?.buffer &&
+      this.streamed_page_table.page_buffer?.buffer &&
       this.streamed_leaf_brick_buffer?.buffer &&
+      this.streamed_probe_validity_buffer?.buffer &&
       this.streamed_irradiance_buffer?.buffer
     );
   }
@@ -821,12 +826,12 @@ export class SparseVolumetricLightmapper {
    */
   get_bake_artifact() {
     if (this.tile_streaming_enabled) {
-      this._flush_streamed_tiles();
-      const resident_tile_count = this.resident_tiles.size;
+      const resident_tile_count = this._get_active_streamed_tile_count();
       const streamed_buffers_ready = this._has_valid_streamed_buffers();
+      const lookup_bytes = this.streamed_page_table.gpu_byte_length;
       const coarse_ready = (this.coarse_hierarchy?.record_count ?? 0) > 0;
-      const lookup_bytes = this.streamed_lookup_buffer?.config?.size ?? 0;
-      const usable = streamed_buffers_ready && (resident_tile_count > 0 || coarse_ready);
+      const usable =
+        streamed_buffers_ready && (this.streamed_page_table.active_page_count > 0 || coarse_ready);
       return {
         format: "sundown-svlm-tiled",
         version: BAKE_FORMAT_VERSION,
@@ -834,10 +839,13 @@ export class SparseVolumetricLightmapper {
         ready: usable,
         layout: {
           params_word_count: PARAM_WORD_COUNT,
-          lookup_kind: "tile-leaf-hash",
-          lookup_words_per_record: TILED_LOOKUP_U32_STRIDE,
+          lookup_kind: "coverage-directory-local-page",
+          directory_words_per_record: SVLM_COVERAGE_DIRECTORY_WORD_STRIDE,
+          page_words_per_record: SVLM_LOCAL_PAGE_WORD_STRIDE,
           leaf_words_per_record: LEAF_U32_STRIDE,
           probes_per_leaf: PROBES_PER_BRICK,
+          validity_words_per_leaf: SVLM_PROBE_VALIDITY_WORDS_PER_LEAF,
+          probe_storage: "sparse-valid-only",
           irradiance_encoding: "sh-l1-rgb-f16",
           irradiance_words_per_probe: SH_WORDS_PER_PROBE,
         },
@@ -848,8 +856,11 @@ export class SparseVolumetricLightmapper {
           coverage_tile_count: this.tile_coverage_entries.size,
           leaf_count: this.streamed_leaf_count,
           probe_count: this.streamed_probe_count,
-          lookup_entry_count:
-            lookup_bytes / (TILED_LOOKUP_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT),
+          directory_entry_count:
+            (this.streamed_page_table.directory_data?.length ?? 0) /
+            SVLM_COVERAGE_DIRECTORY_WORD_STRIDE,
+          active_page_count: this.streamed_page_table.active_page_count,
+          page_entry_capacity: this.streamed_page_table.high_water_mark,
           lookup_bytes,
           coarse_record_count: this.coarse_hierarchy?.record_count ?? 0,
           coarse_min_lod: this.coarse_hierarchy?.min_lod ?? 0,
@@ -860,9 +871,11 @@ export class SparseVolumetricLightmapper {
         },
         buffers: {
           params: this.streamed_params_buffer,
-          nodes: this.streamed_lookup_buffer,
-          tiled_lookup: this.streamed_lookup_buffer,
+          nodes: this.streamed_page_table.directory_buffer,
+          tiled_lookup: this.streamed_page_table.directory_buffer,
+          page_table: this.streamed_page_table.page_buffer,
           leaf_bricks: this.streamed_leaf_brick_buffer,
+          probe_validity: this.streamed_probe_validity_buffer,
           irradiance: this.streamed_irradiance_buffer,
           coarse: this.coarse_lookup_buffer,
         },
@@ -896,11 +909,29 @@ export class SparseVolumetricLightmapper {
       buffers: {
         params: this.params_buffer,
         nodes: this.node_buffer,
+        page_table: this.node_buffer,
         leaf_bricks: this.leaf_brick_buffer,
+        probe_validity: this.irradiance_buffer,
         irradiance: this.irradiance_buffer,
         coarse: this.irradiance_buffer,
       },
     };
+  }
+
+  prepare_streamed_tiles() {
+    if (!this.tile_streaming_enabled) return;
+    const frame_number = Renderer.get().get_frame_number();
+    if (this.streaming_prepared_frame === frame_number) return;
+    this.streaming_prepared_frame = frame_number;
+    this._flush_sparse_streamed_tiles(this._get_streaming_upload_budget_bytes());
+  }
+
+  _get_active_streamed_tile_count() {
+    let count = 0;
+    for (const key of this.resident_tiles.keys()) {
+      if (this.streamed_allocations.get(key)?.upload_complete) count++;
+    }
+    return count;
   }
 
   async serialize_bake_tiles(options = {}) {
@@ -952,9 +983,9 @@ export class SparseVolumetricLightmapper {
 
   release_serialized_tile_payloads() {
     this._clear_streamed_residency();
+    this._clear_coarse_hierarchy();
     this.tile_sources.clear();
     this.tile_source_resolver = null;
-    this._clear_coarse_hierarchy();
   }
 
   configure_tile_streaming(manifest, options = {}) {
@@ -986,6 +1017,7 @@ export class SparseVolumetricLightmapper {
     );
     this.tile_leaf_ownership_enabled = manifest.layout?.leaf_ownership === "owner-tile";
     this.tile_coverage_entries.clear();
+    this.tile_owner_coverage_keys.clear();
     if (this.tile_leaf_ownership_enabled) {
       if (!Array.isArray(manifest.coverage) || manifest.coverage.length === 0) {
         throw new Error("SVLM owner-tile manifests require coverage dependencies.");
@@ -1004,7 +1036,20 @@ export class SparseVolumetricLightmapper {
         if (owners.length === 0 || owners.some((owner_key) => !this.tile_entries.has(owner_key))) {
           throw new Error(`SVLM tile coverage '${key}' references an invalid owner tile.`);
         }
-        this.tile_coverage_entries.set(key, { key, coord, owners });
+        this.tile_coverage_entries.set(key, {
+          key,
+          coord,
+          owners,
+          page_record_count: Math.max(0, Number(coverage_entry.page_record_count) || 0),
+        });
+        for (const owner_key of owners) {
+          let coverage_keys = this.tile_owner_coverage_keys.get(owner_key);
+          if (!coverage_keys) {
+            coverage_keys = [];
+            this.tile_owner_coverage_keys.set(owner_key, coverage_keys);
+          }
+          coverage_keys.push(key);
+        }
       }
     } else {
       for (const entry of this.tile_entries.values()) {
@@ -1012,7 +1057,12 @@ export class SparseVolumetricLightmapper {
           key: entry.key,
           coord: [...entry.coord],
           owners: [entry.key],
+          page_record_count: Math.max(
+            0,
+            Number(entry.lookup_record_count) || entry.leaf_count || 0
+          ),
         });
+        this.tile_owner_coverage_keys.set(entry.key, [entry.key]);
       }
     }
     this.tile_sources =
@@ -1023,63 +1073,23 @@ export class SparseVolumetricLightmapper {
     this.tile_streaming_enabled = true;
     this.config.world_tile_size = tile_size;
     const streaming_config = { ...(manifest.streaming ?? {}), ...options };
-    this.config.streaming_radius = clamp(
-      Math.floor(Number(streaming_config.streaming_radius ?? this.config.streaming_radius) || 0),
-      0,
-      16
-    );
-    this.config.streaming_hysteresis = clamp(
-      Math.floor(
-        Number(streaming_config.streaming_hysteresis ?? this.config.streaming_hysteresis) || 0
-      ),
-      0,
-      8
-    );
-    this.config.streaming_prefetch_tiles = clamp(
-      Math.floor(
-        Number(streaming_config.streaming_prefetch_tiles ?? this.config.streaming_prefetch_tiles) ||
-          0
-      ),
-      0,
-      8
-    );
-    this.config.streaming_prediction_seconds = clamp(
-      Number(
-        streaming_config.streaming_prediction_seconds ?? this.config.streaming_prediction_seconds
-      ) || 0,
-      0,
-      5
-    );
-    this.config.streaming_prediction_max_tiles = clamp(
-      Math.floor(
-        Number(
-          streaming_config.streaming_prediction_max_tiles ??
-            this.config.streaming_prediction_max_tiles
-        ) || 0
-      ),
-      0,
-      32
-    );
-    this.config.streaming_max_requests = clamp(
-      Math.floor(
-        Number(streaming_config.streaming_max_requests ?? this.config.streaming_max_requests) || 1
-      ),
-      1,
-      256
+    this.config.streaming_enabled = parse_boolean_option(
+      streaming_config.streaming_enabled,
+      this.config.streaming_enabled
     );
     this.config.streaming_memory_budget_mb = clamp(
       Number(
         streaming_config.streaming_memory_budget_mb ?? this.config.streaming_memory_budget_mb
       ) || 1,
       1,
-      1024
+      MAX_STORAGE_BINDING_SIZE / (1024 * 1024)
     );
-    this.config.streaming_transition_tiles = clamp(
+    this.config.streaming_upload_budget_mb = clamp(
       Number(
-        streaming_config.streaming_transition_tiles ?? this.config.streaming_transition_tiles
-      ) || 0,
-      0,
-      4
+        streaming_config.streaming_upload_budget_mb ?? this.config.streaming_upload_budget_mb
+      ) || DEFAULT_STREAMING_UPLOAD_BUDGET_MB,
+      0.25,
+      MAX_STORAGE_BINDING_SIZE_MB
     );
     this.config.streaming_fade_seconds = clamp(
       Number(streaming_config.streaming_fade_seconds ?? this.config.streaming_fade_seconds) || 0,
@@ -1089,7 +1099,7 @@ export class SparseVolumetricLightmapper {
     this.config.coarse_memory_budget_mb = clamp(
       Number(streaming_config.coarse_memory_budget_mb ?? this.config.coarse_memory_budget_mb) || 1,
       1,
-      128
+      MAX_STORAGE_BINDING_SIZE_MB
     );
     this.config.coarse_min_lod = clamp(
       Math.floor(Number(manifest.coarse?.min_lod ?? this.config.coarse_min_lod) || 1),
@@ -1104,6 +1114,11 @@ export class SparseVolumetricLightmapper {
     this._clear_coarse_hierarchy();
     if (options.coarse_payload) {
       this._install_coarse_hierarchy(options.coarse_payload);
+    } else {
+      warn(
+        "SVLM tile set has no coarse irradiance fallback. Fine tiles outside the " +
+          "residency budget will have no baked irradiance; rebake this SVLM asset."
+      );
     }
     this.serialized_bake_serial = manifest.bake_serial ?? -1;
     this.stats.serialized_tile_count = this.tile_entries.size;
@@ -1114,31 +1129,34 @@ export class SparseVolumetricLightmapper {
     this.stats.resident_tile_count = 0;
     this.stats.requested_tile_count = 0;
     this.stats.streaming_memory_budget_bytes = this._get_streaming_memory_budget_bytes();
+    this.stats.streaming_upload_budget_bytes = this._get_streaming_upload_budget_bytes();
     this.stats.tile_streaming_enabled = true;
     this.stats.tile_serialization_error = null;
     this.stats.config = { ...this.config };
+    if (!this.config.streaming_enabled) {
+      this.update_tile_streaming(null, null, 0);
+    }
     return manifest;
   }
 
   _install_coarse_hierarchy(payload) {
     const hierarchy = deserialize_svlm_coarse_hierarchy(payload);
     if (
-      Math.abs(hierarchy.tile_size - this.config.world_tile_size) >
-      this.config.world_tile_size * 1e-5
+      Math.abs(hierarchy.tile_size - this.tile_manifest.tile_size) >
+      this.tile_manifest.tile_size * 1e-5
     ) {
       throw new Error(
         `SVLM coarse hierarchy uses tile size ${hierarchy.tile_size}; ` +
-          `${this.config.world_tile_size} was expected.`
+          `${this.tile_manifest.tile_size} was expected.`
       );
     }
-    const existing_entry_count = Math.floor(
+    const current_entry_count =
       (this.coarse_lookup_buffer?.config?.size ?? 0) /
-        (COARSE_LOOKUP_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT)
-    );
+      (COARSE_LOOKUP_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT);
     const lookup = build_svlm_coarse_lookup_hash(
       hierarchy.records,
       hierarchy.record_count,
-      existing_entry_count
+      current_entry_count
     );
     this.coarse_hierarchy = hierarchy;
     this.coarse_hierarchy_payload =
@@ -1155,6 +1173,7 @@ export class SparseVolumetricLightmapper {
     this.coarse_lookup_buffer.write_raw(lookup);
     this.stats.coarse_record_count = hierarchy.record_count;
     this.stats.coarse_bytes = lookup.byteLength;
+    this.stats.coarse_fallback_available = true;
   }
 
   _clear_coarse_hierarchy() {
@@ -1164,10 +1183,21 @@ export class SparseVolumetricLightmapper {
     this.coarse_hierarchy_payload = null;
     this.stats.coarse_record_count = 0;
     this.stats.coarse_bytes = 0;
+    this.stats.coarse_fallback_available = false;
   }
 
   _get_streaming_memory_budget_bytes() {
-    return Math.floor(this.config.streaming_memory_budget_mb * 1024 * 1024);
+    return Math.min(
+      MAX_STORAGE_BINDING_SIZE,
+      Math.floor(this.config.streaming_memory_budget_mb * 1024 * 1024)
+    );
+  }
+
+  _get_streaming_upload_budget_bytes() {
+    return Math.max(
+      Uint32Array.BYTES_PER_ELEMENT,
+      Math.floor(this.config.streaming_upload_budget_mb * 1024 * 1024)
+    );
   }
 
   resolve_svlm_tile_source(entry, key) {
@@ -1180,281 +1210,178 @@ export class SparseVolumetricLightmapper {
     return entry?.payload ?? entry?.path ?? entry?.url ?? null;
   }
 
+  set_streaming_enabled(enabled) {
+    const next_enabled = parse_boolean_option(enabled, this.config.streaming_enabled);
+    if (next_enabled === this.config.streaming_enabled) return;
+
+    this.config.streaming_enabled = next_enabled;
+    this.stats.config = { ...this.config };
+    this.last_streaming_view_state = null;
+    this.streaming_selection_dirty = true;
+    if (!next_enabled && this.tile_manifest) {
+      this.update_tile_streaming(null, null, this.streaming_time);
+    }
+  }
+
   update_tile_streaming(camera_position, view_data = null, frame_time = null) {
     if (!this.tile_streaming_enabled || !this.tile_manifest) {
       return;
     }
 
+    if (Number.isFinite(frame_time)) {
+      this.streaming_time = Number(frame_time);
+    }
+
+    const streaming_enabled = this.config.streaming_enabled;
+    const frustum = streaming_enabled ? view_data?.frustum : null;
+    if (streaming_enabled) {
+      if (!frustum || frustum.length < 24) return;
+      if (svlm_streaming_view_matches(view_data, this.last_streaming_view_state)) return;
+
+      this.last_streaming_view_state ??= new Float32Array(STREAMING_VIEW_STATE_FLOAT_COUNT);
+      copy_svlm_streaming_view_state(view_data, this.last_streaming_view_state);
+    } else {
+      this.last_streaming_view_state = null;
+      if (!this.streaming_selection_dirty) return;
+    }
+    this.streaming_selection_dirty = false;
+
+    const desired_coverage_keys = this.next_desired_coverage_keys;
+    const desired_tile_keys = this.next_desired_tile_keys;
+    desired_coverage_keys.clear();
+    desired_tile_keys.clear();
+    const candidates = this.streaming_candidate_coverage;
+    candidates.length = 0;
+    for (const coverage of this.tile_coverage_entries.values()) {
+      coverage.streaming_visible =
+        !streaming_enabled ||
+        svlm_tile_intersects_frustum(coverage.coord, this.tile_manifest.tile_size, frustum);
+      if (!coverage.streaming_visible) continue;
+      candidates.push(coverage);
+    }
+    const has_camera_position =
+      camera_position?.length >= 3 &&
+      Number.isFinite(camera_position[0]) &&
+      Number.isFinite(camera_position[1]) &&
+      Number.isFinite(camera_position[2]);
+    const camera_forward = view_data?.forward;
+    const has_camera_forward =
+      camera_forward?.length >= 3 &&
+      Number.isFinite(camera_forward[0]) &&
+      Number.isFinite(camera_forward[1]) &&
+      Number.isFinite(camera_forward[2]);
     const tile_size = this.tile_manifest.tile_size;
-    const center_coord = svlm_world_to_tile_coord(camera_position, tile_size);
-    const radius = Math.max(0, Math.floor(Number(this.config.streaming_radius) || 0));
-    const hysteresis = Math.max(0, Math.floor(Number(this.config.streaming_hysteresis) || 0));
-    const base_prefetch_tiles = Math.max(
-      0,
-      Math.floor(Number(this.config.streaming_prefetch_tiles) || 0)
-    );
-    const prediction_seconds = Math.max(0, Number(this.config.streaming_prediction_seconds) || 0);
-    const prediction_max_tiles = Math.max(
-      base_prefetch_tiles,
-      Math.floor(Number(this.config.streaming_prediction_max_tiles) || 0)
-    );
-    // Predict in world space so async reads and decompression overlap camera
-    // travel. The tile cap bounds both request churn and candidate enumeration.
-    const has_frame_time = Number.isFinite(frame_time);
-    const current_time = has_frame_time ? Number(frame_time) : this.streaming_time;
-    const previous_position = this.last_streaming_camera_position;
-    if (previous_position) {
-      const delta_x = Number(camera_position[0]) - previous_position[0];
-      const delta_y = Number(camera_position[1]) - previous_position[1];
-      const delta_z = Number(camera_position[2]) - previous_position[2];
-      const elapsed = has_frame_time ? current_time - this.last_streaming_time : 1 / 60;
-      if (elapsed > 1e-4 && elapsed <= 0.25) {
-        const inverse_elapsed = 1 / elapsed;
-        this.streaming_velocity[0] = delta_x * inverse_elapsed;
-        this.streaming_velocity[1] = delta_y * inverse_elapsed;
-        this.streaming_velocity[2] = delta_z * inverse_elapsed;
-      } else {
-        this.streaming_velocity[0] = 0;
-        this.streaming_velocity[1] = 0;
-        this.streaming_velocity[2] = 0;
+    for (const coverage of candidates) {
+      coverage.streaming_was_desired = this.desired_coverage_keys.has(coverage.key);
+      if (!has_camera_position) {
+        coverage.streaming_distance_squared = 0;
+        coverage.streaming_priority = coverage.streaming_was_desired ? 0 : 1;
+        continue;
       }
-    } else if (view_data?.velocity?.length >= 3) {
-      // SharedViewBuffer velocity is a per-frame displacement. It gives the
-      // predictor a useful first-frame heading before local history exists.
-      this.streaming_velocity[0] = Number(view_data.velocity[0]) * 60 || 0;
-      this.streaming_velocity[1] = Number(view_data.velocity[1]) * 60 || 0;
-      this.streaming_velocity[2] = Number(view_data.velocity[2]) * 60 || 0;
-    }
-    if (!this.last_streaming_camera_position) {
-      this.last_streaming_camera_position = [0, 0, 0];
-    }
-    this.last_streaming_camera_position[0] = Number(camera_position[0]);
-    this.last_streaming_camera_position[1] = Number(camera_position[1]);
-    this.last_streaming_camera_position[2] = Number(camera_position[2]);
-    this.last_streaming_time = current_time;
-    this.streaming_time = current_time;
-
-    const velocity_x = this.streaming_velocity[0];
-    const velocity_y = this.streaming_velocity[1];
-    const velocity_z = this.streaming_velocity[2];
-    const streaming_speed = Math.hypot(velocity_x, velocity_y, velocity_z);
-    if (streaming_speed > 1e-4) {
-      const inverse_speed = 1 / streaming_speed;
-      this.streaming_prefetch_direction[0] = velocity_x * inverse_speed;
-      this.streaming_prefetch_direction[1] = velocity_y * inverse_speed;
-      this.streaming_prefetch_direction[2] = velocity_z * inverse_speed;
-    }
-    const velocity_prefetch_tiles = Math.ceil((streaming_speed * prediction_seconds) / tile_size);
-    const prefetch_tiles = clamp(
-      Math.max(base_prefetch_tiles, velocity_prefetch_tiles),
-      0,
-      prediction_max_tiles
-    );
-    const prefetch_position = [
-      Number(camera_position[0]) +
-        this.streaming_prefetch_direction[0] * prefetch_tiles * tile_size,
-      Number(camera_position[1]) +
-        this.streaming_prefetch_direction[1] * prefetch_tiles * tile_size,
-      Number(camera_position[2]) +
-        this.streaming_prefetch_direction[2] * prefetch_tiles * tile_size,
-    ];
-    const prefetch_coord = svlm_world_to_tile_coord(prefetch_position, tile_size);
-    const view_direction = view_data?.forward;
-    const direction_signature = view_direction
-      ? `${Math.round(view_direction[0] * 8)}:${Math.round(view_direction[1] * 8)}:${Math.round(
-          view_direction[2] * 8
-        )}`
-      : "none";
-    const signature =
-      `${svlm_tile_key(center_coord)}|${svlm_tile_key(prefetch_coord)}|` +
-      `${radius}|${hysteresis}|${this.config.streaming_memory_budget_mb}|` +
-      `${prediction_seconds}|${prediction_max_tiles}|${direction_signature}`;
-    if (signature === this.last_tile_streaming_signature) {
-      return;
-    }
-    this.last_tile_streaming_signature = signature;
-    this.last_streaming_center_coord = center_coord;
-    this.streaming_update_serial++;
-
-    const coverage_candidates = new Map();
-    const add_candidates = (streaming_center, is_core, prediction_distance = Infinity) => {
-      for (const coord of enumerate_svlm_tile_radius(streaming_center, radius)) {
-        const key = svlm_tile_key(coord);
-        const coverage = this.tile_coverage_entries.get(key);
-        if (!coverage) continue;
-        const distance_squared = distance_squared_between_tile_coords(coord, center_coord);
-        const visible = svlm_tile_intersects_frustum(
-          coord,
-          this.tile_manifest.tile_size,
-          view_data?.frustum
-        );
-        const existing = coverage_candidates.get(key);
-        if (!existing) {
-          coverage_candidates.set(key, {
-            key,
-            coord,
-            coverage,
-            is_core,
-            prediction_distance,
-            distance_squared,
-            visible,
-          });
-          continue;
-        }
-        existing.is_core ||= is_core;
-        existing.prediction_distance = Math.min(existing.prediction_distance, prediction_distance);
-        existing.visible ||= visible;
-        existing.distance_squared = Math.min(existing.distance_squared, distance_squared);
-      }
-    };
-    add_candidates(center_coord, true);
-    if (prefetch_tiles > 0 && svlm_tile_key(prefetch_coord) !== svlm_tile_key(center_coord)) {
-      const prediction_delta_x = prefetch_coord[0] - center_coord[0];
-      const prediction_delta_y = prefetch_coord[1] - center_coord[1];
-      const prediction_delta_z = prefetch_coord[2] - center_coord[2];
-      const prediction_steps = Math.max(
-        Math.abs(prediction_delta_x),
-        Math.abs(prediction_delta_y),
-        Math.abs(prediction_delta_z)
+      const x = (coverage.coord[0] + 0.5) * tile_size - camera_position[0];
+      const y = (coverage.coord[1] + 0.5) * tile_size - camera_position[1];
+      const z = (coverage.coord[2] + 0.5) * tile_size - camera_position[2];
+      coverage.streaming_distance_squared = x * x + y * y + z * z;
+      coverage.streaming_priority = svlm_tile_view_priority(
+        coverage.coord,
+        tile_size,
+        camera_position,
+        has_camera_forward ? camera_forward : null,
+        coverage.streaming_was_desired
       );
-      const prediction_stride = Math.max(1, radius);
-      for (
-        let prediction_distance = prediction_stride;
-        prediction_distance < prediction_steps;
-        prediction_distance += prediction_stride
-      ) {
-        const prediction_fraction = prediction_distance / prediction_steps;
-        add_candidates(
-          [
-            Math.round(center_coord[0] + prediction_delta_x * prediction_fraction),
-            Math.round(center_coord[1] + prediction_delta_y * prediction_fraction),
-            Math.round(center_coord[2] + prediction_delta_z * prediction_fraction),
-          ],
-          false,
-          prediction_distance
-        );
-      }
-      add_candidates(prefetch_coord, false, prediction_steps);
     }
+    candidates.sort(compare_svlm_streaming_coverage);
 
-    const immediate_radius_squared = Math.min(radius, 2) ** 2;
-    const compare_streaming_candidates = (a, b) => {
-      const a_immediate = a.is_core && a.distance_squared <= immediate_radius_squared;
-      const b_immediate = b.is_core && b.distance_squared <= immediate_radius_squared;
-      return (
-        Number(b_immediate) - Number(a_immediate) ||
-        a.prediction_distance - b.prediction_distance ||
-        Number(b.visible) - Number(a.visible) ||
-        Number(b.is_core) - Number(a.is_core) ||
-        a.distance_squared - b.distance_squared ||
-        a.key.localeCompare(b.key)
-      );
-    };
-    const prioritized_coverage = Array.from(coverage_candidates.values()).sort(
-      compare_streaming_candidates
-    );
-    const memory_budget = this._get_streaming_memory_budget_bytes();
-    let selected_bytes = 0;
-    const desired_keys = new Set();
-    const desired_coverage_keys = new Set();
-    const core_keys = new Set();
-    for (const candidate of prioritized_coverage) {
-      let incremental_bytes = 0;
-      for (const owner_key of candidate.coverage.owners) {
-        if (desired_keys.has(owner_key)) continue;
-        incremental_bytes += this._estimate_streamed_tile_gpu_bytes(
-          this.tile_entries.get(owner_key)
-        );
-      }
-      if (selected_bytes + incremental_bytes > memory_budget) continue;
-
-      // An owner tile can contain leaves for several coverage cells. Admit the
-      // complete owner set as one unit so a cell never sees a partial hierarchy.
-      desired_coverage_keys.add(candidate.key);
-      selected_bytes += incremental_bytes;
-      for (const owner_key of candidate.coverage.owners) {
-        desired_keys.add(owner_key);
-        if (candidate.is_core) core_keys.add(owner_key);
-      }
-    }
-    let desired_coverage_changed = desired_coverage_keys.size !== this.desired_coverage_keys.size;
-    if (!desired_coverage_changed) {
-      for (const coverage_key of desired_coverage_keys) {
-        if (this.desired_coverage_keys.has(coverage_key)) continue;
-        desired_coverage_changed = true;
+    let has_unpublished_visible_coverage = false;
+    for (const coverage of candidates) {
+      if (!this.streamed_page_table.pages.get(coverage.key)?.active) {
+        has_unpublished_visible_coverage = true;
         break;
       }
     }
-    this.desired_tile_keys = desired_keys;
-    this.desired_coverage_keys = desired_coverage_keys;
-    this.core_tile_keys = core_keys;
-    this.tile_buffers_dirty ||= desired_coverage_changed;
-
-    const candidates = new Map();
-    for (const coverage_candidate of prioritized_coverage) {
-      if (!desired_coverage_keys.has(coverage_candidate.key)) continue;
-      for (const key of coverage_candidate.coverage.owners) {
-        const existing = candidates.get(key);
-        if (!existing) {
-          const entry = this.tile_entries.get(key);
-          candidates.set(key, {
-            key,
-            coord: entry.coord,
-            entry,
-            is_core: coverage_candidate.is_core,
-            prediction_distance: coverage_candidate.prediction_distance,
-            distance_squared: coverage_candidate.distance_squared,
-            visible: coverage_candidate.visible,
-          });
+    if (!has_unpublished_visible_coverage) {
+      // Treat offscreen fine data as a cache, never as competition for current
+      // visibility. Caching pauses whenever a visible page is missing so its
+      // owner allocations can reclaim all available fragmented capacity.
+      for (const key of this.desired_coverage_keys) {
+        const coverage = this.tile_coverage_entries.get(key);
+        if (coverage?.streaming_visible) continue;
+        const page = this.streamed_page_table.pages.get(key);
+        if (
+          !page?.active ||
+          coverage.owners.some((owner_key) => !this.resident_tiles.has(owner_key))
+        ) {
           continue;
         }
-        existing.is_core ||= coverage_candidate.is_core;
-        existing.prediction_distance = Math.min(
-          existing.prediction_distance,
-          coverage_candidate.prediction_distance
-        );
-        existing.visible ||= coverage_candidate.visible;
-        existing.distance_squared = Math.min(
-          existing.distance_squared,
-          coverage_candidate.distance_squared
-        );
+        candidates.push(coverage);
       }
     }
-    const prioritized_candidates = Array.from(candidates.values()).sort(
-      compare_streaming_candidates
-    );
 
-    const retained_keys = new Set(desired_keys);
-    for (const coord of enumerate_svlm_tile_radius(center_coord, radius + hysteresis)) {
-      const coverage = this.tile_coverage_entries.get(svlm_tile_key(coord));
-      if (!coverage) continue;
-      for (const owner_key of coverage.owners) retained_keys.add(owner_key);
+    const memory_budget = this._get_streaming_memory_budget_bytes();
+    let selected_leaf_count = 0;
+    let selected_valid_probe_count = 0;
+    let selected_lookup_record_count = 0;
+    for (const coverage of candidates) {
+      let added_leaf_count = 0;
+      let added_valid_probe_count = 0;
+      const added_lookup_record_count = Math.max(
+        0,
+        Number(coverage.page_record_count) ||
+          coverage.owners.reduce(
+            (sum, owner_key) =>
+              sum + this._get_tile_lookup_record_count(this.tile_entries.get(owner_key)),
+            0
+          )
+      );
+      for (const owner_key of coverage.owners) {
+        if (desired_tile_keys.has(owner_key)) continue;
+        const entry = this.tile_entries.get(owner_key);
+        const leaf_count = Math.max(0, Number(entry?.leaf_count) || 0);
+        added_leaf_count += leaf_count;
+        added_valid_probe_count += this._get_tile_valid_probe_count(entry);
+      }
+      const projected_bytes = this._estimate_streamed_pool_bytes(
+        selected_leaf_count + added_leaf_count,
+        selected_valid_probe_count + added_valid_probe_count,
+        selected_lookup_record_count + added_lookup_record_count,
+        desired_coverage_keys.size + 1
+      );
+      if (projected_bytes > memory_budget) continue;
+
+      desired_coverage_keys.add(coverage.key);
+      for (const owner_key of coverage.owners) desired_tile_keys.add(owner_key);
+      selected_leaf_count += added_leaf_count;
+      selected_valid_probe_count += added_valid_probe_count;
+      selected_lookup_record_count += added_lookup_record_count;
     }
-    this.retained_tile_keys = retained_keys;
 
-    for (const key of desired_keys) {
-      if (this.resident_tiles.has(key)) {
-        this.resident_tile_usage.set(key, this.streaming_update_serial);
+    let coverage_changed = desired_coverage_keys.size !== this.desired_coverage_keys.size;
+    if (!coverage_changed) {
+      for (const key of desired_coverage_keys) {
+        if (this.desired_coverage_keys.has(key)) continue;
+        coverage_changed = true;
+        break;
       }
     }
+    this.next_desired_tile_keys = this.desired_tile_keys;
+    this.next_desired_coverage_keys = this.desired_coverage_keys;
+    this.desired_tile_keys = desired_tile_keys;
+    this.desired_coverage_keys = desired_coverage_keys;
+    this.tile_buffers_dirty ||= coverage_changed;
 
     for (const key of this.failed_tile_keys) {
-      if (!desired_keys.has(key)) {
-        this.failed_tile_keys.delete(key);
-      }
+      if (!desired_tile_keys.has(key)) this.failed_tile_keys.delete(key);
     }
     for (const [key, request] of this.tile_requests) {
-      if (!desired_keys.has(key)) {
-        request.cancel(`SVLM tile '${key}' left the streaming request set.`);
-        this.tile_requests.delete(key);
-      }
+      if (desired_tile_keys.has(key)) continue;
+      request.cancel(`SVLM tile '${key}' left the fine-residency selection.`);
+      this.tile_requests.delete(key);
+    }
+    for (const key of this.resident_tiles.keys()) {
+      if (!desired_tile_keys.has(key)) this.remove_streamed_svlm_tile(key);
     }
 
-    this._evict_streamed_tiles_outside_retention();
-
-    for (const { key } of prioritized_candidates) {
-      if (!desired_keys.has(key)) continue;
-      if (this.tile_requests.size >= this.config.streaming_max_requests) break;
+    for (const key of desired_tile_keys) {
       if (
         this.resident_tiles.has(key) ||
         this.tile_requests.has(key) ||
@@ -1479,7 +1406,6 @@ export class SparseVolumetricLightmapper {
           this.tile_serialization_error = request.error;
           this.stats.tile_serialization_error = request.error.message;
         }
-        this.last_tile_streaming_signature = null;
         this.stats.requested_tile_count = this.tile_requests.size;
       });
     }
@@ -1488,77 +1414,77 @@ export class SparseVolumetricLightmapper {
     this.stats.streaming_memory_budget_bytes = memory_budget;
   }
 
-  _evict_streamed_tiles_outside_retention() {
-    const core_ready = Array.from(this.core_tile_keys).every((key) => this.resident_tiles.has(key));
-    if (!core_ready) return;
-    for (const key of Array.from(this.resident_tiles.keys())) {
-      if (!this.retained_tile_keys.has(key)) this.remove_streamed_svlm_tile(key);
+  _get_tile_lookup_record_count(entry) {
+    const explicit_count = Number(entry?.lookup_record_count);
+    if (Number.isFinite(explicit_count) && explicit_count >= 0) {
+      return Math.ceil(explicit_count);
     }
+    const leaf_count = Math.max(0, Number(entry?.leaf_count) || 0);
+    const duplication_factor = this.tile_leaf_ownership_enabled
+      ? Math.max(1, Number(this.tile_manifest?.ownership?.duplication_factor) || 1)
+      : 1;
+    return Math.ceil(leaf_count * duplication_factor);
   }
 
-  _make_room_for_streamed_tile(tile) {
-    const memory_budget = this._get_streaming_memory_budget_bytes();
-    const incoming_bytes = this._estimate_streamed_tile_gpu_bytes(tile);
-    if (incoming_bytes > memory_budget) {
-      throw new Error(
-        `SVLM tile '${tile.key}' requires ${incoming_bytes} bytes, exceeding the ` +
-          `${memory_budget}-byte streaming budget.`
-      );
+  _get_tile_valid_probe_count(entry) {
+    const explicit_count = Number(entry?.valid_probe_count);
+    if (Number.isFinite(explicit_count) && explicit_count >= 0) {
+      return Math.ceil(explicit_count);
     }
+    return Math.max(0, Number(entry?.leaf_count) || 0) * PROBES_PER_BRICK;
+  }
 
-    let resident_bytes = this._get_resident_tile_bytes();
-    if (this.resident_tiles.has(tile.key)) {
-      resident_bytes -= this._estimate_streamed_tile_gpu_bytes(this.resident_tiles.get(tile.key));
-    }
-    if (resident_bytes + incoming_bytes <= memory_budget) return;
-
-    const candidates = Array.from(this.resident_tiles.values())
-      .filter((resident_tile) => resident_tile.key !== tile.key)
-      .sort((a, b) => {
-        const a_desired = this.desired_tile_keys.has(a.key);
-        const b_desired = this.desired_tile_keys.has(b.key);
-        if (a_desired !== b_desired) return Number(a_desired) - Number(b_desired);
-        const a_core = this.core_tile_keys.has(a.key);
-        const b_core = this.core_tile_keys.has(b.key);
-        if (a_core !== b_core) return Number(a_core) - Number(b_core);
-        const usage_delta =
-          (this.resident_tile_usage.get(a.key) ?? 0) - (this.resident_tile_usage.get(b.key) ?? 0);
-        if (usage_delta !== 0) return usage_delta;
-        const center = this.last_streaming_center_coord ?? tile.coord;
-        return (
-          distance_squared_between_tile_coords(b.coord, center) -
-          distance_squared_between_tile_coords(a.coord, center)
-        );
-      });
-
-    for (const candidate of candidates) {
-      this.remove_streamed_svlm_tile(candidate.key);
-      resident_bytes -= this._estimate_streamed_tile_gpu_bytes(candidate);
-      if (resident_bytes + incoming_bytes <= memory_budget) return;
-    }
-
-    throw new Error(`SVLM could not make room for tile '${tile.key}' within its streaming budget.`);
+  _estimate_streamed_pool_bytes(
+    leaf_count,
+    valid_probe_count,
+    lookup_record_count,
+    coverage_count = 1
+  ) {
+    const leaf_bytes = leaf_count * svlm_tile_leaf_words * Uint32Array.BYTES_PER_ELEMENT;
+    const irradiance_bytes =
+      valid_probe_count * svlm_tile_irradiance_words_per_probe * Uint32Array.BYTES_PER_ELEMENT;
+    const validity_bytes =
+      leaf_count * SVLM_PROBE_VALIDITY_WORDS_PER_LEAF * Uint32Array.BYTES_PER_ELEMENT;
+    // Each coverage cell owns a compact 50%-loaded local hash page. The small
+    // top-level directory scales with resident coverage, not referenced leaves.
+    const page_bytes =
+      npot(Math.max(2, lookup_record_count * 2)) *
+      SVLM_LOCAL_PAGE_WORD_STRIDE *
+      Uint32Array.BYTES_PER_ELEMENT;
+    const directory_bytes =
+      npot(Math.max(2, coverage_count * 2)) *
+      SVLM_COVERAGE_DIRECTORY_WORD_STRIDE *
+      Uint32Array.BYTES_PER_ELEMENT;
+    return (
+      leaf_bytes +
+      validity_bytes +
+      irradiance_bytes +
+      page_bytes +
+      directory_bytes +
+      PARAM_WORD_COUNT * 4
+    );
   }
 
   _get_resident_tile_bytes() {
     let total = 0;
     for (const tile of this.resident_tiles.values()) {
+      if (!this.streamed_allocations.get(tile.key)?.upload_complete) continue;
       total += this._estimate_streamed_tile_gpu_bytes(tile);
     }
     return total;
   }
 
   _estimate_streamed_tile_gpu_bytes(tile_or_entry) {
-    // Disk compression and sparse probe records do not reduce the expanded GPU
-    // allocation. Reserve against explicit resident bytes when available, then
-    // add 10% for the bounded-load lookup hash and allocator fragmentation.
     let gpu_bytes = Number(tile_or_entry?.gpu_byte_length);
     if (
       (!Number.isFinite(gpu_bytes) || gpu_bytes <= 0) &&
       tile_or_entry?.leaves &&
       tile_or_entry?.irradiance
     ) {
-      gpu_bytes = tile_or_entry.leaves.byteLength + tile_or_entry.irradiance.byteLength;
+      gpu_bytes =
+        tile_or_entry.leaves.byteLength +
+        (tile_or_entry.validity?.byteLength ?? 0) +
+        tile_or_entry.irradiance.byteLength;
     }
     if (!Number.isFinite(gpu_bytes) || gpu_bytes <= 0) {
       gpu_bytes =
@@ -1568,11 +1494,14 @@ export class SparseVolumetricLightmapper {
             tile_or_entry?.byte_length
         ) || 1;
     }
-    return Math.max(1, Math.ceil(gpu_bytes * 1.1));
+    return Math.max(1, Math.ceil(gpu_bytes));
   }
 
   install_streamed_svlm_tile(tile) {
     if (!this.tile_streaming_enabled || !this.tile_manifest) {
+      return;
+    }
+    if (!this.desired_tile_keys.has(tile.key)) {
       return;
     }
     if (tile.version !== this.tile_manifest.version) {
@@ -1600,25 +1529,26 @@ export class SparseVolumetricLightmapper {
       );
     }
 
-    if (this.resident_tiles.has(tile.key)) {
-      this.remove_streamed_svlm_tile(tile.key);
-    }
-    this._make_room_for_streamed_tile(tile);
-    tile.streaming_fade_start_time = this.streaming_time;
+    // Cancelled and superseded requests may still resolve after a newer copy
+    // became resident. Installation is intentionally idempotent so a late
+    // completion cannot evict the allocation or restart its coverage fade.
+    if (this.resident_tiles.has(tile.key)) return;
+    tile.streaming_fade_start_time = null;
+    tile.streaming_deferred_allocation_generation = -1;
     this.resident_tiles.set(tile.key, tile);
-    this.resident_tile_usage.set(tile.key, this.streaming_update_serial);
     this.streamed_pending_uploads.add(tile.key);
     this.tile_buffers_dirty = true;
     this.stats.resident_tile_count = this.resident_tiles.size;
     this.stats.resident_tile_bytes = this._get_resident_tile_bytes();
-    this._evict_streamed_tiles_outside_retention();
   }
 
   remove_streamed_svlm_tile(key) {
     if (!this.resident_tiles.delete(key)) {
       return false;
     }
-    this._remove_streamed_lookup_tile(key);
+    for (const coverage_key of this.tile_owner_coverage_keys.get(key) ?? []) {
+      this.streamed_page_table.deactivate(coverage_key);
+    }
     const allocation = this.streamed_allocations.get(key);
     if (allocation) {
       release_streamed_range(
@@ -1632,30 +1562,181 @@ export class SparseVolumetricLightmapper {
         allocation.irradiance_word_count
       );
       this.streamed_allocations.delete(key);
+      this.streamed_leaf_high_water_mark = trim_streamed_high_water_mark(
+        this.streamed_leaf_free_ranges,
+        this.streamed_leaf_high_water_mark
+      );
+      this.streamed_irradiance_high_water_mark = trim_streamed_high_water_mark(
+        this.streamed_irradiance_free_ranges,
+        this.streamed_irradiance_high_water_mark
+      );
+      this.streamed_allocation_generation++;
     }
     this.streamed_pending_uploads.delete(key);
-    this.resident_tile_usage.delete(key);
     this.tile_buffers_dirty = true;
     this.stats.resident_tile_count = this.resident_tiles.size;
     this.stats.resident_tile_bytes = this._get_resident_tile_bytes();
     return true;
   }
 
-  _flush_streamed_tiles() {
-    if (!this.tile_buffers_dirty && this._has_valid_streamed_buffers()) {
-      return;
+  _get_streamed_world_bounds() {
+    const manifest_world_min = this.tile_manifest?.world_min;
+    const world_min =
+      Array.isArray(manifest_world_min) &&
+      manifest_world_min.length === 3 &&
+      manifest_world_min.every(Number.isFinite)
+        ? manifest_world_min
+        : [
+            this.params_data[PARAM_WORLD_MIN_X],
+            this.params_data[PARAM_WORLD_MIN_Y],
+            this.params_data[PARAM_WORLD_MIN_Z],
+          ];
+    const manifest_world_max = this.tile_manifest?.world_max;
+    const world_max =
+      Array.isArray(manifest_world_max) &&
+      manifest_world_max.length === 3 &&
+      manifest_world_max.every(Number.isFinite)
+        ? manifest_world_max
+        : [
+            world_min[0] + this.params_data[PARAM_ROOT_DIM_X] * this.params_data[PARAM_ROOT_SIZE],
+            world_min[1] + this.params_data[PARAM_ROOT_DIM_Y] * this.params_data[PARAM_ROOT_SIZE],
+            world_min[2] + this.params_data[PARAM_ROOT_DIM_Z] * this.params_data[PARAM_ROOT_SIZE],
+          ];
+    return { world_min, world_max };
+  }
+
+  _read_streamed_tile_spatial_metadata(tile, world_min) {
+    const float_words = new Float32Array(
+      tile.leaves.buffer,
+      tile.leaves.byteOffset,
+      tile.leaves.length
+    );
+    let root_size = 0;
+    let max_leaf_level = 0;
+    for (let leaf_index = 0; leaf_index < tile.leaf_count; leaf_index++) {
+      const base = leaf_index * svlm_tile_leaf_words;
+      const level = tile.leaves[base];
+      const size = float_words[base + 5];
+      const origin_x = float_words[base + 2];
+      const origin_y = float_words[base + 3];
+      const origin_z = float_words[base + 4];
+      if (
+        level > 8 ||
+        !Number.isFinite(size) ||
+        size <= 0 ||
+        !Number.isFinite(origin_x) ||
+        !Number.isFinite(origin_y) ||
+        !Number.isFinite(origin_z)
+      ) {
+        throw new Error(`SVLM tile '${tile.key}' leaf ${leaf_index} has invalid spatial metadata.`);
+      }
+      const leaf_root_size = size * 2 ** level;
+      if (root_size === 0) root_size = leaf_root_size;
+      if (Math.abs(leaf_root_size - root_size) > root_size * 1e-4) {
+        throw new Error(`SVLM tile '${tile.key}' does not match the baked root scale.`);
+      }
+      for (const [origin, minimum] of [
+        [origin_x, world_min[0]],
+        [origin_y, world_min[1]],
+        [origin_z, world_min[2]],
+      ]) {
+        const coord = Math.round((origin - minimum) / size);
+        if (coord < 0 || !Number.isSafeInteger(coord)) {
+          throw new Error(`SVLM tile '${tile.key}' contains a leaf outside the baked hierarchy.`);
+        }
+      }
+      max_leaf_level = Math.max(max_leaf_level, level);
     }
+    return { root_size, max_leaf_level };
+  }
+
+  _build_streamed_coverage_records(coverage, world_min) {
+    const words = [];
+    const tile_size = this.tile_manifest.tile_size;
+    const epsilon = tile_size * 1e-6;
+    for (const owner_key of coverage.owners) {
+      const tile = this.resident_tiles.get(owner_key);
+      const allocation = this.streamed_allocations.get(owner_key);
+      if (!tile || !allocation?.upload_complete) {
+        throw new Error(`SVLM coverage '${coverage.key}' was activated before its owners.`);
+      }
+      const float_words = new Float32Array(
+        tile.leaves.buffer,
+        tile.leaves.byteOffset,
+        tile.leaves.length
+      );
+      for (let local_leaf_index = 0; local_leaf_index < tile.leaf_count; local_leaf_index++) {
+        const base = local_leaf_index * svlm_tile_leaf_words;
+        const level = tile.leaves[base];
+        const origin = [float_words[base + 2], float_words[base + 3], float_words[base + 4]];
+        const size = float_words[base + 5];
+        const min_coverage = svlm_world_to_tile_coord(origin, tile_size);
+        const max_coverage = svlm_world_to_tile_coord(
+          origin.map((component) => component + Math.max(0, size - epsilon)),
+          tile_size
+        );
+        if (
+          coverage.coord[0] < min_coverage[0] ||
+          coverage.coord[0] > max_coverage[0] ||
+          coverage.coord[1] < min_coverage[1] ||
+          coverage.coord[1] > max_coverage[1] ||
+          coverage.coord[2] < min_coverage[2] ||
+          coverage.coord[2] > max_coverage[2]
+        ) {
+          continue;
+        }
+        words.push(
+          level,
+          Math.round((origin[0] - world_min[0]) / size),
+          Math.round((origin[1] - world_min[1]) / size),
+          Math.round((origin[2] - world_min[2]) / size),
+          allocation.leaf_offset + local_leaf_index
+        );
+      }
+    }
+    return new Uint32Array(words);
+  }
+
+  _compact_sparse_streamed_allocations(tiles) {
+    let leaf_offset = 0;
+    let irradiance_word_offset = 0;
+    for (const tile of tiles) {
+      const allocation = this.streamed_allocations.get(tile.key);
+      allocation.leaf_offset = leaf_offset;
+      allocation.irradiance_word_offset = irradiance_word_offset;
+      leaf_offset += allocation.leaf_count;
+      irradiance_word_offset += allocation.irradiance_word_count;
+      this._reset_streamed_tile_upload(allocation);
+      allocation.upload_validity_word_cursor = 0;
+      this.streamed_pending_uploads.add(tile.key);
+    }
+    this.streamed_leaf_high_water_mark = leaf_offset;
+    this.streamed_irradiance_high_water_mark = irradiance_word_offset;
+    this.streamed_leaf_free_ranges.length = 0;
+    this.streamed_irradiance_free_ranges.length = 0;
+    this.streamed_page_table.destroy();
+  }
+
+  _flush_sparse_streamed_tiles(upload_budget_bytes) {
+    if (!this.tile_buffers_dirty && this._has_valid_streamed_buffers()) return;
+
     const tiles = Array.from(this.resident_tiles.values()).sort((a, b) =>
       a.key.localeCompare(b.key)
     );
-    let total_leaf_count = 0;
-    let total_irradiance_words = 0;
-    const lookup_changed_tile_keys = new Set();
+    const { world_min, world_max } = this._get_streamed_world_bounds();
+    const new_allocation_keys = [];
     for (const tile of tiles) {
-      total_leaf_count += tile.leaf_count;
-      total_irradiance_words += tile.irradiance.length;
       if (this.streamed_allocations.has(tile.key)) continue;
-
+      if (tile.streaming_deferred_allocation_generation === this.streamed_allocation_generation) {
+        continue;
+      }
+      if (
+        !(tile.validity instanceof Uint32Array) ||
+        tile.validity.length !== tile.leaf_count * SVLM_PROBE_VALIDITY_WORDS_PER_LEAF ||
+        tile.irradiance.length !== tile.valid_probe_count * svlm_tile_irradiance_words_per_probe
+      ) {
+        throw new Error(`SVLM tile '${tile.key}' is not a compact sparse runtime payload.`);
+      }
       const leaf_allocation = allocate_streamed_range(
         this.streamed_leaf_free_ranges,
         tile.leaf_count,
@@ -1673,323 +1754,181 @@ export class SparseVolumetricLightmapper {
         leaf_count: tile.leaf_count,
         irradiance_word_offset: irradiance_allocation.offset,
         irradiance_word_count: tile.irradiance.length,
+        upload_leaf_word_cursor: 0,
+        upload_validity_word_cursor: 0,
+        upload_irradiance_word_cursor: 0,
+        upload_complete: false,
+        adjusted_leaves: null,
+        ...this._read_streamed_tile_spatial_metadata(tile, world_min),
       });
+      tile.streaming_deferred_allocation_generation = -1;
+      new_allocation_keys.push(tile.key);
       this.streamed_pending_uploads.add(tile.key);
-      lookup_changed_tile_keys.add(tile.key);
-    }
-
-    if (this.tile_leaf_ownership_enabled) {
-      let desired_residency_complete = true;
-      for (const owner_key of this.desired_tile_keys) {
-        if (this.resident_tiles.has(owner_key)) continue;
-        desired_residency_complete = false;
-        break;
-      }
-      let complete_coverage_keys;
-      if (desired_residency_complete) {
-        complete_coverage_keys = new Set(this.desired_coverage_keys);
-      } else {
-        complete_coverage_keys = new Set();
-        for (const coverage_key of this.streamed_complete_coverage_keys) {
-          if (!this.desired_coverage_keys.has(coverage_key)) continue;
-          const coverage = this.tile_coverage_entries.get(coverage_key);
-          if (!coverage?.owners.every((owner_key) => this.resident_tiles.has(owner_key))) continue;
-          complete_coverage_keys.add(coverage_key);
-        }
-        // Preserve only the still-resident intersection of the old and new
-        // snapshots. Newly arriving coverage remains hidden until the complete
-        // replacement is ready, while the stable neighborhood never blinks out.
-      }
-
-      const changed_coverage_keys = new Set(this.streamed_complete_coverage_keys);
-      for (const coverage_key of complete_coverage_keys) {
-        if (changed_coverage_keys.has(coverage_key)) {
-          changed_coverage_keys.delete(coverage_key);
-        } else {
-          changed_coverage_keys.add(coverage_key);
-        }
-      }
-      for (const coverage_key of changed_coverage_keys) {
-        if (complete_coverage_keys.has(coverage_key)) {
-          this.streamed_coverage_fade_start_times.set(coverage_key, this.streaming_time);
-        } else {
-          this.streamed_coverage_fade_start_times.delete(coverage_key);
-        }
-        const coverage = this.tile_coverage_entries.get(coverage_key);
-        for (const owner_key of coverage?.owners ?? []) {
-          if (!this.resident_tiles.has(owner_key)) continue;
-          this._remove_streamed_lookup_tile(owner_key);
-          lookup_changed_tile_keys.add(owner_key);
-        }
-      }
-      this.streamed_complete_coverage_keys = complete_coverage_keys;
     }
 
     let desired_leaf_capacity = 0;
+    let desired_valid_probe_capacity = 0;
+    let desired_lookup_record_count = 0;
     for (const key of this.desired_tile_keys) {
-      desired_leaf_capacity += Number(this.tile_entries.get(key)?.leaf_count) || 0;
+      const entry = this.tile_entries.get(key);
+      const leaf_count = Math.max(0, Number(entry?.leaf_count) || 0);
+      desired_leaf_capacity += leaf_count;
+      desired_valid_probe_capacity += this._get_tile_valid_probe_count(entry);
     }
-    let reserved_leaf_capacity = Math.max(
-      this.streamed_leaf_high_water_mark,
-      desired_leaf_capacity
-    );
-    let reserved_irradiance_word_capacity = Math.max(
-      this.streamed_irradiance_high_water_mark,
-      desired_leaf_capacity * PROBES_PER_BRICK * svlm_tile_irradiance_words_per_probe
-    );
-    const lookup_duplication_factor = this.tile_leaf_ownership_enabled
-      ? Math.max(1, Number(this.tile_manifest.ownership?.duplication_factor) || 1)
-      : 1;
-    const projected_lookup_record_count = Math.ceil(total_leaf_count * lookup_duplication_factor);
-    const reserved_lookup_record_count = Math.max(
-      projected_lookup_record_count,
-      Math.ceil(desired_leaf_capacity * lookup_duplication_factor)
-    );
-    const projected_lookup_entries = npot(Math.max(2, reserved_lookup_record_count * 2));
-    const projected_pool_bytes =
-      reserved_leaf_capacity * svlm_tile_leaf_words * Uint32Array.BYTES_PER_ELEMENT +
-      reserved_irradiance_word_capacity * Uint32Array.BYTES_PER_ELEMENT +
-      projected_lookup_entries * TILED_LOOKUP_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT +
-      PARAM_WORD_COUNT * Uint32Array.BYTES_PER_ELEMENT;
-    if (projected_pool_bytes > this._get_streaming_memory_budget_bytes()) {
-      this._compact_streamed_allocations(tiles);
-      lookup_changed_tile_keys.clear();
-      for (const tile of tiles) lookup_changed_tile_keys.add(tile.key);
-      reserved_leaf_capacity = Math.max(this.streamed_leaf_high_water_mark, desired_leaf_capacity);
-      reserved_irradiance_word_capacity = Math.max(
-        this.streamed_irradiance_high_water_mark,
-        desired_leaf_capacity * PROBES_PER_BRICK * svlm_tile_irradiance_words_per_probe
+    for (const key of this.desired_coverage_keys) {
+      const coverage = this.tile_coverage_entries.get(key);
+      desired_lookup_record_count += Math.max(
+        0,
+        Number(coverage?.page_record_count) ||
+          (coverage?.owners ?? []).reduce(
+            (sum, owner_key) =>
+              sum + this._get_tile_lookup_record_count(this.tile_entries.get(owner_key)),
+            0
+          )
       );
-      const compacted_pool_bytes =
-        reserved_leaf_capacity * svlm_tile_leaf_words * Uint32Array.BYTES_PER_ELEMENT +
-        reserved_irradiance_word_capacity * Uint32Array.BYTES_PER_ELEMENT +
-        projected_lookup_entries * TILED_LOOKUP_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT +
-        PARAM_WORD_COUNT * Uint32Array.BYTES_PER_ELEMENT;
-      if (compacted_pool_bytes > this._get_streaming_memory_budget_bytes()) {
-        throw new Error(
-          `SVLM resident pages require ${compacted_pool_bytes} bytes, exceeding the ` +
-            `${this._get_streaming_memory_budget_bytes()}-byte streaming budget.`
+    }
+    const projected_bytes = this._estimate_streamed_pool_bytes(
+      Math.max(this.streamed_leaf_high_water_mark, desired_leaf_capacity),
+      Math.max(
+        Math.ceil(this.streamed_irradiance_high_water_mark / SH_WORDS_PER_PROBE),
+        desired_valid_probe_capacity
+      ),
+      desired_lookup_record_count,
+      this.desired_coverage_keys.size
+    );
+    if (projected_bytes > this._get_streaming_memory_budget_bytes()) {
+      if (this.streamed_page_table.active_page_count === 0) {
+        this._compact_sparse_streamed_allocations(tiles);
+      } else {
+        // Never invalidate published pages to make room for a newcomer. Keep
+        // the decoded tile resident on the CPU and retry its allocation after
+        // normal frustum eviction releases a suitable range.
+        for (const key of new_allocation_keys) {
+          const allocation = this.streamed_allocations.get(key);
+          if (!allocation) continue;
+          release_streamed_range(
+            this.streamed_leaf_free_ranges,
+            allocation.leaf_offset,
+            allocation.leaf_count
+          );
+          release_streamed_range(
+            this.streamed_irradiance_free_ranges,
+            allocation.irradiance_word_offset,
+            allocation.irradiance_word_count
+          );
+          this.streamed_allocations.delete(key);
+          const tile = this.resident_tiles.get(key);
+          if (tile) {
+            tile.streaming_deferred_allocation_generation = this.streamed_allocation_generation;
+          }
+        }
+        this.streamed_leaf_high_water_mark = trim_streamed_high_water_mark(
+          this.streamed_leaf_free_ranges,
+          this.streamed_leaf_high_water_mark
+        );
+        this.streamed_irradiance_high_water_mark = trim_streamed_high_water_mark(
+          this.streamed_irradiance_free_ranges,
+          this.streamed_irradiance_high_water_mark
         );
       }
     }
 
     const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-    const leaf_buffer_grew = this._ensure_streamed_buffer(
+    const reserved_leaf_capacity = Math.max(
+      this.streamed_leaf_high_water_mark,
+      desired_leaf_capacity
+    );
+    const reserved_irradiance_word_capacity = Math.max(
+      this.streamed_irradiance_high_water_mark,
+      desired_valid_probe_capacity * SH_WORDS_PER_PROBE
+    );
+    this._ensure_streamed_buffer(
       "streamed_leaf_brick_buffer",
       "svlm_streamed_leaf_bricks",
       Math.max(svlm_tile_leaf_words, reserved_leaf_capacity * svlm_tile_leaf_words),
       usage
     );
-    const irradiance_buffer_grew = this._ensure_streamed_buffer(
+    this._ensure_streamed_buffer(
+      "streamed_probe_validity_buffer",
+      "svlm_streamed_probe_validity",
+      Math.max(
+        SVLM_PROBE_VALIDITY_WORDS_PER_LEAF,
+        reserved_leaf_capacity * SVLM_PROBE_VALIDITY_WORDS_PER_LEAF
+      ),
+      usage
+    );
+    this._ensure_streamed_buffer(
       "streamed_irradiance_buffer",
       "svlm_streamed_probe_irradiance",
       Math.max(svlm_tile_irradiance_words_per_probe, reserved_irradiance_word_capacity),
       usage
     );
-    if (leaf_buffer_grew || irradiance_buffer_grew) {
-      for (const tile of tiles) this.streamed_pending_uploads.add(tile.key);
-    }
+    this.streamed_page_table.reserve(npot(Math.max(2, desired_lookup_record_count * 2)));
+    const payload_upload_bytes = this._upload_sparse_streamed_tile_chunks(upload_budget_bytes);
 
-    for (const key of this.streamed_pending_uploads) {
-      const tile = this.resident_tiles.get(key);
-      const allocation = this.streamed_allocations.get(key);
-      if (!tile || !allocation) continue;
-
-      const probe_offset = allocation.irradiance_word_offset / svlm_tile_irradiance_words_per_probe;
-      const adjusted_leaves = tile.leaves.slice();
-      for (let local_leaf_index = 0; local_leaf_index < tile.leaf_count; local_leaf_index++) {
-        adjusted_leaves[local_leaf_index * svlm_tile_leaf_words + 1] += probe_offset;
+    const complete_coverage_keys = new Set();
+    for (const coverage_key of this.desired_coverage_keys) {
+      const coverage = this.tile_coverage_entries.get(coverage_key);
+      if (
+        coverage?.owners.every(
+          (owner_key) => this.streamed_allocations.get(owner_key)?.upload_complete
+        )
+      ) {
+        complete_coverage_keys.add(coverage_key);
       }
-      this.streamed_leaf_brick_buffer.write_raw(
-        adjusted_leaves,
-        allocation.leaf_offset * svlm_tile_leaf_words * Uint32Array.BYTES_PER_ELEMENT
-      );
-      this.streamed_irradiance_buffer.write_raw(
-        tile.irradiance,
-        allocation.irradiance_word_offset * Uint32Array.BYTES_PER_ELEMENT
-      );
     }
-    this.streamed_pending_uploads.clear();
-
-    const lookup_records_by_tile = new Map();
-    const manifest_world_min = this.tile_manifest?.world_min;
-    const manifest_world_max = this.tile_manifest?.world_max;
-    const world_min =
-      Array.isArray(manifest_world_min) &&
-      manifest_world_min.length === 3 &&
-      manifest_world_min.every(Number.isFinite)
-        ? manifest_world_min
-        : [
-            this.params_data[PARAM_WORLD_MIN_X],
-            this.params_data[PARAM_WORLD_MIN_Y],
-            this.params_data[PARAM_WORLD_MIN_Z],
-          ];
-    const world_max =
-      Array.isArray(manifest_world_max) &&
-      manifest_world_max.length === 3 &&
-      manifest_world_max.every(Number.isFinite)
-        ? manifest_world_max
-        : [
-            world_min[0] + this.params_data[PARAM_ROOT_DIM_X] * this.params_data[PARAM_ROOT_SIZE],
-            world_min[1] + this.params_data[PARAM_ROOT_DIM_Y] * this.params_data[PARAM_ROOT_SIZE],
-            world_min[2] + this.params_data[PARAM_ROOT_DIM_Z] * this.params_data[PARAM_ROOT_SIZE],
-          ];
+    for (const key of Array.from(this.streamed_page_table.pages.keys())) {
+      if (!complete_coverage_keys.has(key)) this.streamed_page_table.deactivate(key);
+    }
+    const page_upload_budget = Math.max(0, upload_budget_bytes - payload_upload_bytes);
+    let remaining_page_queue_bytes = page_upload_budget;
+    let staged_page = false;
+    for (const key of complete_coverage_keys) {
+      if (this.streamed_page_table.pages.has(key)) continue;
+      const coverage = this.tile_coverage_entries.get(key);
+      const records = this._build_streamed_coverage_records(coverage, world_min);
+      const page_upload_bytes = estimate_svlm_local_page_byte_length(
+        records.length / SVLM_LOCAL_PAGE_WORD_STRIDE
+      );
+      if (staged_page && page_upload_bytes > remaining_page_queue_bytes) continue;
+      let fade_start_time = 0;
+      for (const owner_key of coverage.owners) {
+        fade_start_time = Math.max(
+          fade_start_time,
+          Number(this.resident_tiles.get(owner_key)?.streaming_fade_start_time) || 0
+        );
+      }
+      this.streamed_page_table.stage(
+        key,
+        coverage.coord,
+        records,
+        svlm_float_to_word(fade_start_time)
+      );
+      remaining_page_queue_bytes = Math.max(0, remaining_page_queue_bytes - page_upload_bytes);
+      staged_page = true;
+    }
+    this.streamed_page_table.upload(page_upload_budget);
+    this.streamed_page_table.publish();
+    const published_coverage_count = this.streamed_page_table.active_page_count;
     let root_size = 0;
     let max_leaf_level = 0;
-    let total_lookup_record_count = 0;
-    const tile_size = this.tile_manifest.tile_size;
-    const coverage_epsilon = tile_size * 1e-6;
+    let total_leaf_count = 0;
+    let total_probe_count = 0;
     for (const tile of tiles) {
       const allocation = this.streamed_allocations.get(tile.key);
-      // Activation time rides with the lookup record, avoiding per-frame CPU
-      // uploads while the shader crossfades newly resident fine irradiance.
-      const tile_fade_start_word = svlm_float_to_word(Number(tile.streaming_fade_start_time) || 0);
-      const cached_lookup_records = this.streamed_lookup_tile_records.get(tile.key);
-      if (cached_lookup_records) {
-        const tile_root_size = allocation.root_size;
-        if (root_size === 0) {
-          root_size = tile_root_size;
-        } else if (Math.abs(tile_root_size - root_size) > root_size * 1e-4) {
-          throw new Error(`SVLM tile '${tile.key}' does not match the baked root scale.`);
-        }
-        max_leaf_level = Math.max(max_leaf_level, allocation.max_leaf_level);
-        lookup_records_by_tile.set(tile.key, cached_lookup_records);
-        total_lookup_record_count += cached_lookup_records.length / TILED_LOOKUP_U32_STRIDE;
-        continue;
+      if (!allocation?.upload_complete) continue;
+      if (root_size === 0) root_size = allocation.root_size;
+      if (
+        allocation.root_size > 0 &&
+        Math.abs(allocation.root_size - root_size) > root_size * 1e-4
+      ) {
+        throw new Error(`SVLM tile '${tile.key}' does not match the baked root scale.`);
       }
-      const tile_lookup_record_words = [];
-      const tile_float_words = new Float32Array(
-        tile.leaves.buffer,
-        tile.leaves.byteOffset,
-        tile.leaves.length
-      );
-      for (let local_leaf_index = 0; local_leaf_index < tile.leaf_count; local_leaf_index++) {
-        const source_leaf_base = local_leaf_index * svlm_tile_leaf_words;
-        const target_leaf_index = allocation.leaf_offset + local_leaf_index;
-
-        const source_probe_base = tile.leaves[source_leaf_base + 1];
-        const source_irradiance_base = source_probe_base * svlm_tile_irradiance_words_per_probe;
-        const leaf_irradiance_word_count = PROBES_PER_BRICK * svlm_tile_irradiance_words_per_probe;
-        const source_irradiance_end = source_irradiance_base + leaf_irradiance_word_count;
-        if (source_irradiance_end > tile.irradiance.length) {
-          throw new Error(
-            `SVLM tile '${tile.key}' leaf ${local_leaf_index} references irradiance outside its payload.`
-          );
-        }
-
-        const level = tile.leaves[source_leaf_base];
-        const leaf_origin_x = tile_float_words[source_leaf_base + 2];
-        const leaf_origin_y = tile_float_words[source_leaf_base + 3];
-        const leaf_origin_z = tile_float_words[source_leaf_base + 4];
-        const leaf_size = tile_float_words[source_leaf_base + 5];
-        if (
-          level > 8 ||
-          !Number.isFinite(leaf_size) ||
-          leaf_size <= 0 ||
-          !Number.isFinite(leaf_origin_x) ||
-          !Number.isFinite(leaf_origin_y) ||
-          !Number.isFinite(leaf_origin_z)
-        ) {
-          throw new Error(
-            `SVLM tile '${tile.key}' leaf ${local_leaf_index} has invalid spatial metadata.`
-          );
-        }
-        const leaf_root_size = leaf_size * 2 ** level;
-        if (root_size === 0) {
-          root_size = leaf_root_size;
-        } else if (Math.abs(leaf_root_size - root_size) > root_size * 1e-4) {
-          throw new Error(
-            `SVLM tile '${tile.key}' leaf ${local_leaf_index} does not match the baked root scale.`
-          );
-        }
-        max_leaf_level = Math.max(max_leaf_level, level);
-        const leaf_coord_x = Math.round((leaf_origin_x - world_min[0]) / leaf_size);
-        const leaf_coord_y = Math.round((leaf_origin_y - world_min[1]) / leaf_size);
-        const leaf_coord_z = Math.round((leaf_origin_z - world_min[2]) / leaf_size);
-        if (
-          leaf_coord_x < 0 ||
-          leaf_coord_y < 0 ||
-          leaf_coord_z < 0 ||
-          !Number.isSafeInteger(leaf_coord_x) ||
-          !Number.isSafeInteger(leaf_coord_y) ||
-          !Number.isSafeInteger(leaf_coord_z)
-        ) {
-          throw new Error(
-            `SVLM tile '${tile.key}' leaf ${local_leaf_index} lies outside the baked hierarchy.`
-          );
-        }
-
-        if (this.tile_leaf_ownership_enabled) {
-          const min_coverage_coord = svlm_world_to_tile_coord(
-            [leaf_origin_x, leaf_origin_y, leaf_origin_z],
-            tile_size
-          );
-          const max_coverage_coord = svlm_world_to_tile_coord(
-            [
-              leaf_origin_x + Math.max(0, leaf_size - coverage_epsilon),
-              leaf_origin_y + Math.max(0, leaf_size - coverage_epsilon),
-              leaf_origin_z + Math.max(0, leaf_size - coverage_epsilon),
-            ],
-            tile_size
-          );
-          for (let z = min_coverage_coord[2]; z <= max_coverage_coord[2]; z++) {
-            for (let y = min_coverage_coord[1]; y <= max_coverage_coord[1]; y++) {
-              for (let x = min_coverage_coord[0]; x <= max_coverage_coord[0]; x++) {
-                const coverage_key = svlm_tile_key([x, y, z]);
-                if (!this.streamed_complete_coverage_keys.has(coverage_key)) {
-                  continue;
-                }
-                const fade_start_time =
-                  this.streamed_coverage_fade_start_times.get(coverage_key) ?? this.streaming_time;
-                tile_lookup_record_words.push(
-                  x >>> 0,
-                  y >>> 0,
-                  z >>> 0,
-                  level,
-                  leaf_coord_x,
-                  leaf_coord_y,
-                  leaf_coord_z,
-                  target_leaf_index,
-                  svlm_float_to_word(fade_start_time)
-                );
-              }
-            }
-          }
-        } else {
-          tile_lookup_record_words.push(
-            tile.coord[0] >>> 0,
-            tile.coord[1] >>> 0,
-            tile.coord[2] >>> 0,
-            level,
-            leaf_coord_x,
-            leaf_coord_y,
-            leaf_coord_z,
-            target_leaf_index,
-            tile_fade_start_word
-          );
-        }
-      }
-      const tile_lookup_records = new Uint32Array(tile_lookup_record_words);
-      lookup_records_by_tile.set(tile.key, tile_lookup_records);
-      this.streamed_lookup_tile_records.set(tile.key, tile_lookup_records);
-      total_lookup_record_count += tile_lookup_records.length / TILED_LOOKUP_U32_STRIDE;
-      allocation.root_size = root_size;
-      allocation.max_leaf_level = max_leaf_level;
+      max_leaf_level = Math.max(max_leaf_level, allocation.max_leaf_level);
+      total_leaf_count += tile.leaf_count;
+      total_probe_count += tile.valid_probe_count;
     }
-    this._update_streamed_lookup_hash(
-      lookup_records_by_tile,
-      total_lookup_record_count,
-      lookup_changed_tile_keys,
-      usage,
-      projected_lookup_entries
-    );
 
-    this._ensure_streamed_buffer(
-      "streamed_params_buffer",
-      "svlm_streamed_params",
-      PARAM_WORD_COUNT,
-      usage
-    );
     if (!this.coarse_lookup_buffer?.buffer) {
       const empty_coarse_lookup = new Uint32Array(COARSE_LOOKUP_U32_STRIDE * 2);
       empty_coarse_lookup.fill(INVALID_IDX);
@@ -2001,12 +1940,17 @@ export class SparseVolumetricLightmapper {
       );
       this.coarse_lookup_buffer.write_raw(empty_coarse_lookup);
     }
-
+    this._ensure_streamed_buffer(
+      "streamed_params_buffer",
+      "svlm_streamed_params",
+      PARAM_WORD_COUNT,
+      usage
+    );
     this.streamed_params_data.set(this.params_data);
     this.streamed_params_data[PARAM_WORLD_MIN_X] = world_min[0];
     this.streamed_params_data[PARAM_WORLD_MIN_Y] = world_min[1];
     this.streamed_params_data[PARAM_WORLD_MIN_Z] = world_min[2];
-    root_size = Math.max(root_size, 0.0001);
+    root_size = Math.max(root_size, this.params_data[PARAM_ROOT_SIZE], 0.0001);
     this.streamed_params_data[PARAM_ROOT_SIZE] = root_size;
     this.streamed_params_data[PARAM_ROOT_DIM_X] = Math.max(
       1,
@@ -2022,266 +1966,156 @@ export class SparseVolumetricLightmapper {
     );
     this.streamed_params_data[PARAM_MAX_LEVEL] = max_leaf_level;
     this.streamed_params_data[PARAM_WORLD_TILE_SIZE] = this.tile_manifest.tile_size;
-    this.streamed_params_data[PARAM_RESIDENT_TILE_COUNT] = tiles.length;
+    this.streamed_params_data[PARAM_RESIDENT_TILE_COUNT] = published_coverage_count;
     this.streamed_params_data[PARAM_IRRADIANCE_FORMAT_VERSION] = BAKE_FORMAT_VERSION;
     this.streamed_params_data[PARAM_IRRADIANCE_SH_WORDS_PER_PROBE] = SH_WORDS_PER_PROBE;
     this.streamed_params_data[PARAM_TILE_STREAMING_ENABLED] = 1;
     this.streamed_params_data[PARAM_COARSE_MIN_LOD] = this.coarse_hierarchy?.min_lod ?? 0;
     this.streamed_params_data[PARAM_COARSE_MAX_LOD] = this.coarse_hierarchy?.max_lod ?? 0;
-    this.streamed_params_data[PARAM_STREAMING_RADIUS] = this.config.streaming_radius;
-    this.streamed_params_data[PARAM_STREAMING_TRANSITION_TILES] =
-      this.config.streaming_transition_tiles;
-    // Owner tiles deduplicate payloads only. GPU lookup remains coverage-local
-    // so incomplete dependency groups fall back to coarse irradiance atomically.
-    this.streamed_params_data[PARAM_TILE_LEAF_OWNERSHIP] = 0;
     this.streamed_params_data[PARAM_STREAMING_FADE_SECONDS] = this.config.streaming_fade_seconds;
     this.streamed_params_buffer.write_raw(this.streamed_params_data);
 
     this.streamed_leaf_count = total_leaf_count;
-    this.streamed_probe_count = total_irradiance_words / SH_WORDS_PER_PROBE;
+    this.streamed_probe_count = total_probe_count;
+    this.stats.streaming_upload_bytes =
+      payload_upload_bytes + this.streamed_page_table.upload_bytes;
+    this.stats.streaming_lookup_patch_bytes = this.streamed_page_table.upload_bytes;
+    this.stats.streaming_lookup_rebuild_count = this.streamed_page_table.rebuild_count;
     this.stats.streamed_gpu_bytes =
       (this.streamed_params_buffer?.config?.size ?? 0) +
-      (this.streamed_lookup_buffer?.config?.size ?? 0) +
+      this.streamed_page_table.gpu_byte_length +
       (this.streamed_leaf_brick_buffer?.config?.size ?? 0) +
+      (this.streamed_probe_validity_buffer?.config?.size ?? 0) +
       (this.streamed_irradiance_buffer?.config?.size ?? 0);
-    this.tile_buffers_dirty = false;
-  }
-
-  _remove_streamed_lookup_tile(key) {
-    this.streamed_lookup_tile_records.delete(key);
-    const entry_indices = this.streamed_lookup_tile_entries.get(key);
-    if (!entry_indices || !this.streamed_lookup_data) return;
-    for (const entry_index of entry_indices) {
-      const entry_base = entry_index * TILED_LOOKUP_U32_STRIDE;
-      this.streamed_lookup_data[entry_base + 7] = TOMBSTONE_IDX;
-      this.streamed_lookup_dirty_entries.add(entry_index);
-    }
-    this.streamed_lookup_tile_entries.delete(key);
-    this.streamed_lookup_record_count = Math.max(
-      0,
-      this.streamed_lookup_record_count - entry_indices.length
-    );
-    this.streamed_lookup_tombstone_count += entry_indices.length;
-  }
-
-  _compact_streamed_allocations(tiles) {
-    let leaf_offset = 0;
-    let irradiance_word_offset = 0;
-    for (const tile of tiles) {
-      const allocation = this.streamed_allocations.get(tile.key);
-      allocation.leaf_offset = leaf_offset;
-      allocation.irradiance_word_offset = irradiance_word_offset;
-      leaf_offset += allocation.leaf_count;
-      irradiance_word_offset += allocation.irradiance_word_count;
-      this.streamed_pending_uploads.add(tile.key);
-    }
-    this.streamed_leaf_high_water_mark = leaf_offset;
-    this.streamed_irradiance_high_water_mark = irradiance_word_offset;
-    this.streamed_leaf_free_ranges.length = 0;
-    this.streamed_irradiance_free_ranges.length = 0;
-    this.streamed_lookup_data = null;
-    this.streamed_lookup_tile_entries.clear();
-    this.streamed_lookup_tile_records.clear();
-    this.streamed_lookup_dirty_entries.clear();
-    this.streamed_lookup_record_count = 0;
-    this.streamed_lookup_tombstone_count = 0;
-  }
-
-  _insert_streamed_lookup_tile(key, records) {
-    if (!this.streamed_lookup_data) return false;
-    this._remove_streamed_lookup_tile(key);
-    const entry_count = this.streamed_lookup_data.length / TILED_LOOKUP_U32_STRIDE;
-    const entry_mask = entry_count - 1;
-    const inserted_entries = [];
-
-    for (
-      let record_index = 0;
-      record_index < records.length / TILED_LOOKUP_U32_STRIDE;
-      record_index++
-    ) {
-      const record_base = record_index * TILED_LOOKUP_U32_STRIDE;
-      let entry_index =
-        hash_svlm_tiled_lookup_key(
-          records[record_base],
-          records[record_base + 1],
-          records[record_base + 2],
-          records[record_base + 3],
-          records[record_base + 4],
-          records[record_base + 5],
-          records[record_base + 6],
-          false
-        ) & entry_mask;
-      let inserted = false;
-      for (let probe = 0; probe < TILED_LOOKUP_MAX_PROBES; probe++) {
-        const entry_base = entry_index * TILED_LOOKUP_U32_STRIDE;
-        const leaf_index = this.streamed_lookup_data[entry_base + 7];
-        if (leaf_index === INVALID_IDX || leaf_index === TOMBSTONE_IDX) {
-          if (leaf_index === TOMBSTONE_IDX) this.streamed_lookup_tombstone_count--;
-          this.streamed_lookup_data.set(
-            records.subarray(record_base, record_base + TILED_LOOKUP_U32_STRIDE),
-            entry_base
-          );
-          this.streamed_lookup_dirty_entries.add(entry_index);
-          inserted_entries.push(entry_index);
-          inserted = true;
-          break;
-        }
-        entry_index = (entry_index + 1) & entry_mask;
-      }
-      if (inserted) continue;
-
-      for (const inserted_entry of inserted_entries) {
-        const inserted_base = inserted_entry * TILED_LOOKUP_U32_STRIDE;
-        this.streamed_lookup_data[inserted_base + 7] = TOMBSTONE_IDX;
-        this.streamed_lookup_dirty_entries.add(inserted_entry);
-        this.streamed_lookup_tombstone_count++;
-      }
-      return false;
-    }
-
-    this.streamed_lookup_tile_entries.set(key, inserted_entries);
-    this.streamed_lookup_record_count += inserted_entries.length;
-    return true;
-  }
-
-  _rebuild_streamed_lookup_hash(records_by_tile, record_count, minimum_entry_count = 0) {
-    const records = new Uint32Array(record_count * TILED_LOOKUP_U32_STRIDE);
-    let record_offset = 0;
-    for (const tile_records of records_by_tile.values()) {
-      records.set(tile_records, record_offset);
-      record_offset += tile_records.length;
-    }
-    this.streamed_lookup_data = build_svlm_tiled_lookup_hash(
-      records,
-      record_count,
-      minimum_entry_count,
-      false
-    );
-    this.streamed_lookup_tile_entries.clear();
-    const entry_count = this.streamed_lookup_data.length / TILED_LOOKUP_U32_STRIDE;
-    const entry_mask = entry_count - 1;
-    for (const [key, tile_records] of records_by_tile) {
-      const tile_entries = [];
-      for (
-        let record_index = 0;
-        record_index < tile_records.length / TILED_LOOKUP_U32_STRIDE;
-        record_index++
+    this.streamed_page_table.reset_upload_bytes();
+    this._update_streamed_upload_stats();
+    let has_actionable_pending_upload = false;
+    for (const key of this.streamed_pending_uploads) {
+      const tile = this.resident_tiles.get(key);
+      if (
+        this.streamed_allocations.has(key) ||
+        tile?.streaming_deferred_allocation_generation !== this.streamed_allocation_generation
       ) {
-        const record_base = record_index * TILED_LOOKUP_U32_STRIDE;
-        let entry_index =
-          hash_svlm_tiled_lookup_key(
-            tile_records[record_base],
-            tile_records[record_base + 1],
-            tile_records[record_base + 2],
-            tile_records[record_base + 3],
-            tile_records[record_base + 4],
-            tile_records[record_base + 5],
-            tile_records[record_base + 6],
-            false
-          ) & entry_mask;
-        let found = false;
-        for (let probe = 0; probe < TILED_LOOKUP_MAX_PROBES; probe++) {
-          const entry_base = entry_index * TILED_LOOKUP_U32_STRIDE;
-          let matches = true;
-          for (let word = 0; word < TILED_LOOKUP_U32_STRIDE; word++) {
-            if (this.streamed_lookup_data[entry_base + word] === tile_records[record_base + word]) {
-              continue;
-            }
-            matches = false;
-            break;
-          }
-          if (matches) {
-            tile_entries.push(entry_index);
-            found = true;
-            break;
-          }
-          if (this.streamed_lookup_data[entry_base + 7] === INVALID_IDX) break;
-          entry_index = (entry_index + 1) & entry_mask;
-        }
-        if (!found) {
-          throw new Error(`SVLM failed to index lookup records for owner tile '${key}'.`);
-        }
-      }
-      this.streamed_lookup_tile_entries.set(key, tile_entries);
-    }
-    this.streamed_lookup_record_count = record_count;
-    this.streamed_lookup_tombstone_count = 0;
-    this.streamed_lookup_dirty_entries.clear();
-  }
-
-  _update_streamed_lookup_hash(
-    records_by_tile,
-    record_count,
-    changed_tile_keys,
-    usage,
-    minimum_entry_count = 0
-  ) {
-    const required_entry_count = npot(Math.max(2, record_count * 2, minimum_entry_count));
-    const current_entry_count = this.streamed_lookup_data
-      ? this.streamed_lookup_data.length / TILED_LOOKUP_U32_STRIDE
-      : 0;
-    let full_upload = false;
-    if (
-      !this.streamed_lookup_data ||
-      current_entry_count < required_entry_count ||
-      this.streamed_lookup_tombstone_count > current_entry_count / 4
-    ) {
-      this._rebuild_streamed_lookup_hash(
-        records_by_tile,
-        record_count,
-        Math.max(current_entry_count, required_entry_count)
-      );
-      full_upload = true;
-    } else {
-      for (const key of changed_tile_keys) {
-        const records = records_by_tile.get(key);
-        if (!records || this._insert_streamed_lookup_tile(key, records)) continue;
-        this._rebuild_streamed_lookup_hash(
-          records_by_tile,
-          record_count,
-          Math.max(required_entry_count, current_entry_count * 2)
-        );
-        full_upload = true;
+        has_actionable_pending_upload = true;
         break;
       }
     }
+    this.tile_buffers_dirty =
+      has_actionable_pending_upload || published_coverage_count < complete_coverage_keys.size;
+  }
 
-    const buffer_grew = this._ensure_streamed_buffer(
-      "streamed_lookup_buffer",
-      "svlm_streamed_tiled_lookup",
-      this.streamed_lookup_data.length,
-      usage
+  _upload_sparse_streamed_tile_chunks(upload_budget_bytes) {
+    let remaining_words = Math.max(
+      1,
+      Math.floor(upload_budget_bytes / Uint32Array.BYTES_PER_ELEMENT)
     );
-    full_upload ||= buffer_grew || this.streamed_lookup_dirty_entries.size > 64;
-    if (full_upload) {
-      this.streamed_lookup_buffer.write_raw(this.streamed_lookup_data);
-      this.streamed_lookup_dirty_entries.clear();
-      return;
-    }
-
-    const dirty_entries = Array.from(this.streamed_lookup_dirty_entries).sort((a, b) => a - b);
-    let range_start = dirty_entries[0];
-    let range_end = range_start;
-    const upload_range = () => {
-      const word_start = range_start * TILED_LOOKUP_U32_STRIDE;
-      const word_end = (range_end + 1) * TILED_LOOKUP_U32_STRIDE;
-      this.streamed_lookup_buffer.write_raw(
-        this.streamed_lookup_data.subarray(word_start, word_end),
-        word_start * Uint32Array.BYTES_PER_ELEMENT
-      );
-    };
-    for (let index = 1; index < dirty_entries.length; index++) {
-      const entry_index = dirty_entries[index];
-      if (entry_index === range_end + 1) {
-        range_end = entry_index;
+    const max_write_words = MAX_STREAMING_WRITE_BYTES / Uint32Array.BYTES_PER_ELEMENT;
+    let uploaded_words = 0;
+    for (const key of this.streamed_pending_uploads) {
+      const tile = this.resident_tiles.get(key);
+      const allocation = this.streamed_allocations.get(key);
+      if (!tile) {
+        this.streamed_pending_uploads.delete(key);
         continue;
       }
-      upload_range();
-      range_start = entry_index;
-      range_end = entry_index;
+      // A decoded tile can remain pending without a GPU allocation when the
+      // current pools are fragmented. Preserve that request until ordinary
+      // frustum eviction releases space; dropping it here would strand the
+      // tile in CPU residency and prevent a later allocation retry.
+      if (!allocation) continue;
+      if (!allocation.adjusted_leaves) {
+        const probe_offset = allocation.irradiance_word_offset / SH_WORDS_PER_PROBE;
+        allocation.adjusted_leaves = tile.leaves.slice();
+        for (let leaf_index = 0; leaf_index < tile.leaf_count; leaf_index++) {
+          allocation.adjusted_leaves[leaf_index * svlm_tile_leaf_words + 1] += probe_offset;
+        }
+      }
+      const uploads = [
+        {
+          data: allocation.adjusted_leaves,
+          cursor: "upload_leaf_word_cursor",
+          buffer: this.streamed_leaf_brick_buffer,
+          target: allocation.leaf_offset * svlm_tile_leaf_words,
+        },
+        {
+          data: tile.validity,
+          cursor: "upload_validity_word_cursor",
+          buffer: this.streamed_probe_validity_buffer,
+          target: allocation.leaf_offset * SVLM_PROBE_VALIDITY_WORDS_PER_LEAF,
+        },
+        {
+          data: tile.irradiance,
+          cursor: "upload_irradiance_word_cursor",
+          buffer: this.streamed_irradiance_buffer,
+          target: allocation.irradiance_word_offset,
+        },
+      ];
+      for (const upload of uploads) {
+        while (remaining_words > 0 && allocation[upload.cursor] < upload.data.length) {
+          const word_count = Math.min(
+            remaining_words,
+            max_write_words,
+            upload.data.length - allocation[upload.cursor]
+          );
+          upload.buffer.write_raw(
+            upload.data,
+            (upload.target + allocation[upload.cursor]) * Uint32Array.BYTES_PER_ELEMENT,
+            word_count,
+            allocation[upload.cursor]
+          );
+          allocation[upload.cursor] += word_count;
+          remaining_words -= word_count;
+          uploaded_words += word_count;
+        }
+      }
+      if (
+        allocation.upload_leaf_word_cursor >= allocation.adjusted_leaves.length &&
+        allocation.upload_validity_word_cursor >= tile.validity.length &&
+        allocation.upload_irradiance_word_cursor >= tile.irradiance.length
+      ) {
+        allocation.upload_complete = true;
+        allocation.adjusted_leaves = null;
+        tile.streaming_fade_start_time ??= this.streaming_time;
+        this.streamed_pending_uploads.delete(key);
+      }
+      if (remaining_words <= 0) break;
     }
-    if (range_start !== undefined) upload_range();
-    this.streamed_lookup_dirty_entries.clear();
+    return uploaded_words * Uint32Array.BYTES_PER_ELEMENT;
+  }
+
+  _reset_streamed_tile_upload(allocation) {
+    if (!allocation) return;
+    allocation.upload_leaf_word_cursor = 0;
+    allocation.upload_validity_word_cursor = 0;
+    allocation.upload_irradiance_word_cursor = 0;
+    allocation.upload_complete = false;
+    allocation.adjusted_leaves = null;
+  }
+
+  _update_streamed_upload_stats() {
+    let pending_bytes = 0;
+    for (const key of this.streamed_pending_uploads) {
+      const tile = this.resident_tiles.get(key);
+      const allocation = this.streamed_allocations.get(key);
+      if (!tile) continue;
+      if (!allocation) {
+        pending_bytes +=
+          tile.leaves.byteLength + tile.validity.byteLength + tile.irradiance.byteLength;
+        continue;
+      }
+      pending_bytes +=
+        Math.max(0, tile.leaves.length - allocation.upload_leaf_word_cursor) *
+          Uint32Array.BYTES_PER_ELEMENT +
+        Math.max(0, tile.validity.length - allocation.upload_validity_word_cursor) *
+          Uint32Array.BYTES_PER_ELEMENT +
+        Math.max(0, tile.irradiance.length - allocation.upload_irradiance_word_cursor) *
+          Uint32Array.BYTES_PER_ELEMENT;
+    }
+    this.stats.streaming_upload_budget_bytes = this._get_streaming_upload_budget_bytes();
+    this.stats.streaming_pending_upload_bytes = pending_bytes;
+    this.stats.streaming_pending_tile_count = this.streamed_pending_uploads.size;
+    this.stats.resident_tile_count = this._get_active_streamed_tile_count();
+    this.stats.resident_tile_bytes = this._get_resident_tile_bytes();
   }
 
   _ensure_streamed_buffer(field, name, required_word_count, usage) {
@@ -2294,10 +2128,16 @@ export class SparseVolumetricLightmapper {
     const existing = this[field];
     if (existing?.buffer && existing.config.size >= required_bytes) return false;
 
-    const current_words = Math.floor((existing?.config?.size ?? 0) / Uint32Array.BYTES_PER_ELEMENT);
+    if (existing?.buffer) {
+      const preserve_contents =
+        (usage & GPUBufferUsage.COPY_SRC) !== 0 && (usage & GPUBufferUsage.COPY_DST) !== 0;
+      existing.resize(required_word_count, preserve_contents);
+      return true;
+    }
+
     const capacity_words = Math.min(
       Math.floor(MAX_STORAGE_BINDING_SIZE / Uint32Array.BYTES_PER_ELEMENT),
-      Math.max(required_word_count, current_words, 1)
+      Math.max(required_word_count, 1)
     );
     this[field] = Buffer.create({
       name,
@@ -2377,6 +2217,7 @@ export class SparseVolumetricLightmapper {
 
         const words_per_leaf_irradiance = PROBES_PER_BRICK * SH_WORDS_PER_PROBE;
         this.tile_bake_tiles = tiles;
+        this.tile_bake_coarse_samples = [];
         this.tile_bake_payloads.clear();
         this.tile_bake_tile_index = 0;
         this.tile_bake_leaf_offset = 0;
@@ -2542,9 +2383,8 @@ export class SparseVolumetricLightmapper {
       tile_size: this.config.world_tile_size,
       min_lod: this.config.coarse_min_lod,
       max_lod: this.config.coarse_max_lod,
-      // The runtime hash keeps a <= 0.5 load factor and rounds to a power of
-      // two. Reserve the worst-case 4x dense-record footprint so the fallback
-      // remains a deliberately small, always-resident mip tail.
+      // Reserve the worst-case power-of-two hash footprint so the coarse tail
+      // stays within its own small, always-resident allocation.
       max_records: Math.floor(
         (this.config.coarse_memory_budget_mb * 1024 * 1024) /
           (COARSE_LOOKUP_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT * 4)
@@ -2565,14 +2405,9 @@ export class SparseVolumetricLightmapper {
         record_count: coarse_hierarchy.records.length,
       },
       streaming: {
-        streaming_radius: this.config.streaming_radius,
-        streaming_hysteresis: this.config.streaming_hysteresis,
-        streaming_prefetch_tiles: this.config.streaming_prefetch_tiles,
-        streaming_prediction_seconds: this.config.streaming_prediction_seconds,
-        streaming_prediction_max_tiles: this.config.streaming_prediction_max_tiles,
-        streaming_max_requests: this.config.streaming_max_requests,
+        streaming_enabled: this.config.streaming_enabled,
         streaming_memory_budget_mb: this.config.streaming_memory_budget_mb,
-        streaming_transition_tiles: this.config.streaming_transition_tiles,
+        streaming_upload_budget_mb: this.config.streaming_upload_budget_mb,
         streaming_fade_seconds: this.config.streaming_fade_seconds,
         coarse_memory_budget_mb: this.config.coarse_memory_budget_mb,
       },
@@ -2668,43 +2503,37 @@ export class SparseVolumetricLightmapper {
     this.tile_requests.clear();
     this.resident_tiles.clear();
     this.failed_tile_keys.clear();
-    this.resident_tile_usage.clear();
     this.desired_tile_keys.clear();
     this.desired_coverage_keys.clear();
-    this.core_tile_keys.clear();
-    this.retained_tile_keys.clear();
-    this.last_tile_streaming_signature = null;
-    this.last_streaming_center_coord = null;
-    this.last_streaming_camera_position = null;
-    this.last_streaming_time = null;
+    this.next_desired_tile_keys.clear();
+    this.next_desired_coverage_keys.clear();
+    this.streaming_candidate_coverage.length = 0;
+    this.last_streaming_view_state = null;
+    this.streaming_selection_dirty = true;
     this.streaming_time = 0;
-    this.streaming_velocity = [0, 0, 0];
-    this.streaming_prefetch_direction = [0, 0, 0];
-    this.streaming_update_serial = 0;
+    this.streaming_prepared_frame = -1;
     this.tile_buffers_dirty = false;
     this.streamed_leaf_count = 0;
     this.streamed_probe_count = 0;
     this.streamed_allocations.clear();
     this.streamed_pending_uploads.clear();
-    this.streamed_lookup_data = null;
-    this.streamed_lookup_tile_entries.clear();
-    this.streamed_lookup_tile_records.clear();
-    this.streamed_lookup_dirty_entries.clear();
-    this.streamed_lookup_record_count = 0;
-    this.streamed_lookup_tombstone_count = 0;
-    this.streamed_complete_coverage_keys.clear();
-    this.streamed_coverage_fade_start_times.clear();
+    this.streamed_page_table.clear();
     this.streamed_leaf_free_ranges.length = 0;
     this.streamed_irradiance_free_ranges.length = 0;
     this.streamed_leaf_high_water_mark = 0;
     this.streamed_irradiance_high_water_mark = 0;
+    this.streamed_allocation_generation = 0;
     this.stats.resident_tile_count = 0;
     this.stats.requested_tile_count = 0;
     this.stats.resident_tile_bytes = 0;
     this.stats.streamed_gpu_bytes = 0;
     this.stats.streaming_memory_budget_bytes = this._get_streaming_memory_budget_bytes();
-    this.stats.coarse_record_count = 0;
-    this.stats.coarse_bytes = 0;
+    this.stats.streaming_upload_budget_bytes = this._get_streaming_upload_budget_bytes();
+    this.stats.streaming_upload_bytes = 0;
+    this.stats.streaming_pending_upload_bytes = 0;
+    this.stats.streaming_pending_tile_count = 0;
+    this.stats.streaming_lookup_patch_bytes = 0;
+    this.stats.streaming_lookup_rebuild_count = 0;
     this._release_streamed_buffers();
   }
 
@@ -2715,6 +2544,7 @@ export class SparseVolumetricLightmapper {
     this.tile_manifest = null;
     this.tile_entries.clear();
     this.tile_coverage_entries.clear();
+    this.tile_owner_coverage_keys.clear();
     this.tile_leaf_ownership_enabled = false;
     this.tile_sources.clear();
     this.tile_source_resolver = null;
@@ -2732,17 +2562,18 @@ export class SparseVolumetricLightmapper {
 
   _release_streamed_buffers() {
     this.streamed_params_buffer?.destroy();
-    this.streamed_lookup_buffer?.destroy();
     this.streamed_leaf_brick_buffer?.destroy();
+    this.streamed_probe_validity_buffer?.destroy();
     this.streamed_irradiance_buffer?.destroy();
     this.baked_probe_debug_counter_buffer?.destroy();
     this.baked_probe_debug_leaf_indices_buffer?.destroy();
     this.streamed_params_buffer = null;
-    this.streamed_lookup_buffer = null;
     this.streamed_leaf_brick_buffer = null;
+    this.streamed_probe_validity_buffer = null;
     this.streamed_irradiance_buffer = null;
     this.baked_probe_debug_counter_buffer = null;
     this.baked_probe_debug_leaf_indices_buffer = null;
+    this.streamed_page_table.destroy();
   }
 
   bake(options = {}) {
@@ -3397,6 +3228,7 @@ export class SparseVolumetricLightmapper {
           debug_depth,
           debug_leaf_indices,
           irradiance,
+          irradiance,
         ],
         outputs: [debug_depth],
         shader_setup: svlm_probe_debug_splat_shader_setup,
@@ -3447,37 +3279,26 @@ export class SparseVolumetricLightmapper {
     }
 
     this.debug_texture = null;
-    this._flush_streamed_tiles();
+    this.prepare_streamed_tiles();
     if (
       !this.streamed_params_buffer?.buffer ||
+      !this.streamed_page_table.directory_buffer?.buffer ||
       !this.streamed_leaf_brick_buffer?.buffer ||
+      !this.streamed_probe_validity_buffer?.buffer ||
       !this.streamed_irradiance_buffer?.buffer
     ) {
       return;
     }
-
     // Streamed pools may contain holes and stale payload after tile eviction.
     // Build the compact debug list from active lookup records so incomplete
     // coverage and unaddressable resident payload are not visualized as probes.
-    const addressable_leaf_indices = new Set();
-    for (const lookup_records of this.streamed_lookup_tile_records.values()) {
-      for (
-        let record_base = 0;
-        record_base < lookup_records.length;
-        record_base += TILED_LOOKUP_U32_STRIDE
-      ) {
-        const leaf_index = lookup_records[record_base + 7];
-        if (leaf_index !== INVALID_IDX && leaf_index !== TOMBSTONE_IDX) {
-          addressable_leaf_indices.add(leaf_index);
-        }
-      }
-    }
+    const addressable_leaf_indices = this.streamed_page_table.get_addressable_leaf_indices();
 
     const selected_leaf_indices = [];
     const debug_level = this.debug_config.debug_level ?? -1;
     for (const tile of this.resident_tiles.values()) {
       const allocation = this.streamed_allocations.get(tile.key);
-      if (!allocation) continue;
+      if (!allocation?.upload_complete) continue;
 
       for (let local_leaf_index = 0; local_leaf_index < tile.leaf_count; local_leaf_index++) {
         const leaf_index = allocation.leaf_offset + local_leaf_index;
@@ -3529,6 +3350,9 @@ export class SparseVolumetricLightmapper {
     );
     const leaves = render_graph.register_buffer(this.streamed_leaf_brick_buffer.config.name);
     const irradiance = render_graph.register_buffer(this.streamed_irradiance_buffer.config.name);
+    const probe_validity = render_graph.register_buffer(
+      this.streamed_probe_validity_buffer.config.name
+    );
     const debug_leaf_indices = render_graph.register_buffer(
       this.baked_probe_debug_leaf_indices_buffer.config.name
     );
@@ -3574,6 +3398,7 @@ export class SparseVolumetricLightmapper {
           debug_depth,
           debug_leaf_indices,
           irradiance,
+          probe_validity,
         ],
         outputs: [debug_depth],
         shader_setup: svlm_probe_debug_splat_shader_setup,
@@ -3683,49 +3508,25 @@ export class SparseVolumetricLightmapper {
     if (options.world_tile_size !== undefined) {
       out.world_tile_size = Math.max(1.0, Number(options.world_tile_size) || 1.0);
     }
-    if (options.streaming_radius !== undefined) {
-      out.streaming_radius = clamp(Math.floor(Number(options.streaming_radius) || 0), 0, 16);
-    }
-    if (options.streaming_hysteresis !== undefined) {
-      out.streaming_hysteresis = clamp(Math.floor(Number(options.streaming_hysteresis) || 0), 0, 8);
-    }
-    if (options.streaming_prefetch_tiles !== undefined) {
-      out.streaming_prefetch_tiles = clamp(
-        Math.floor(Number(options.streaming_prefetch_tiles) || 0),
-        0,
-        8
-      );
-    }
-    if (options.streaming_prediction_seconds !== undefined) {
-      out.streaming_prediction_seconds = clamp(
-        Number(options.streaming_prediction_seconds) || 0,
-        0,
-        5
-      );
-    }
-    if (options.streaming_prediction_max_tiles !== undefined) {
-      out.streaming_prediction_max_tiles = clamp(
-        Math.floor(Number(options.streaming_prediction_max_tiles) || 0),
-        0,
-        32
-      );
-    }
-    if (options.streaming_max_requests !== undefined) {
-      out.streaming_max_requests = clamp(
-        Math.floor(Number(options.streaming_max_requests) || 1),
-        1,
-        256
+    if (options.streaming_enabled !== undefined) {
+      out.streaming_enabled = parse_boolean_option(
+        options.streaming_enabled,
+        this.config.streaming_enabled
       );
     }
     if (options.streaming_memory_budget_mb !== undefined) {
       out.streaming_memory_budget_mb = clamp(
         Number(options.streaming_memory_budget_mb) || 1,
         1,
-        1024
+        MAX_STORAGE_BINDING_SIZE / (1024 * 1024)
       );
     }
-    if (options.streaming_transition_tiles !== undefined) {
-      out.streaming_transition_tiles = clamp(Number(options.streaming_transition_tiles) || 0, 0, 4);
+    if (options.streaming_upload_budget_mb !== undefined) {
+      out.streaming_upload_budget_mb = clamp(
+        Number(options.streaming_upload_budget_mb) || DEFAULT_STREAMING_UPLOAD_BUDGET_MB,
+        0.25,
+        MAX_STORAGE_BINDING_SIZE_MB
+      );
     }
     if (options.streaming_fade_seconds !== undefined) {
       out.streaming_fade_seconds = clamp(Number(options.streaming_fade_seconds) || 0, 0, 4);
@@ -3741,7 +3542,11 @@ export class SparseVolumetricLightmapper {
       );
     }
     if (options.coarse_memory_budget_mb !== undefined) {
-      out.coarse_memory_budget_mb = clamp(Number(options.coarse_memory_budget_mb) || 1, 1, 128);
+      out.coarse_memory_budget_mb = clamp(
+        Number(options.coarse_memory_budget_mb) || 1,
+        1,
+        MAX_STORAGE_BINDING_SIZE_MB
+      );
     }
     return out;
   }
@@ -3803,30 +3608,20 @@ export class SparseVolumetricLightmapper {
       ),
       max_emissive_lights,
       world_tile_size: Math.max(1.0, Number(config.world_tile_size) || this.config.world_tile_size),
-      streaming_radius: clamp(Math.floor(Number(config.streaming_radius) || 0), 0, 16),
-      streaming_hysteresis: clamp(Math.floor(Number(config.streaming_hysteresis) || 0), 0, 8),
-      streaming_prefetch_tiles: clamp(
-        Math.floor(Number(config.streaming_prefetch_tiles) || 0),
-        0,
-        8
-      ),
-      streaming_prediction_seconds: clamp(Number(config.streaming_prediction_seconds) || 0, 0, 5),
-      streaming_prediction_max_tiles: clamp(
-        Math.floor(Number(config.streaming_prediction_max_tiles) || 0),
-        0,
-        32
-      ),
-      streaming_max_requests: clamp(
-        Math.floor(Number(config.streaming_max_requests) || this.config.streaming_max_requests),
-        1,
-        256
+      streaming_enabled: parse_boolean_option(
+        config.streaming_enabled,
+        this.config.streaming_enabled
       ),
       streaming_memory_budget_mb: clamp(
         Number(config.streaming_memory_budget_mb) || this.config.streaming_memory_budget_mb,
         1,
-        1024
+        MAX_STORAGE_BINDING_SIZE / (1024 * 1024)
       ),
-      streaming_transition_tiles: clamp(Number(config.streaming_transition_tiles) || 0, 0, 4),
+      streaming_upload_budget_mb: clamp(
+        Number(config.streaming_upload_budget_mb) || DEFAULT_STREAMING_UPLOAD_BUDGET_MB,
+        0.25,
+        MAX_STORAGE_BINDING_SIZE_MB
+      ),
       streaming_fade_seconds: clamp(Number(config.streaming_fade_seconds) || 0, 0, 4),
       coarse_min_lod: clamp(Math.floor(Number(config.coarse_min_lod) || 1), 1, 16),
       coarse_max_lod: clamp(
@@ -3837,7 +3632,7 @@ export class SparseVolumetricLightmapper {
       coarse_memory_budget_mb: clamp(
         Number(config.coarse_memory_budget_mb) || this.config.coarse_memory_budget_mb,
         1,
-        128
+        MAX_STORAGE_BINDING_SIZE_MB
       ),
     };
   }
@@ -3902,8 +3697,6 @@ export class SparseVolumetricLightmapper {
     this.params_data[PARAM_TILE_STREAMING_ENABLED] = 0;
     this.params_data[PARAM_COARSE_MIN_LOD] = this.config.coarse_min_lod;
     this.params_data[PARAM_COARSE_MAX_LOD] = this.config.coarse_max_lod;
-    this.params_data[PARAM_STREAMING_RADIUS] = this.config.streaming_radius;
-    this.params_data[PARAM_STREAMING_TRANSITION_TILES] = this.config.streaming_transition_tiles;
     this.params_data[PARAM_STREAMING_FADE_SECONDS] = this.config.streaming_fade_seconds;
     this.params_data[PARAM_TRIANGLE_DENSITY_THRESHOLD] = this.config.triangle_density_threshold;
   }
@@ -4164,9 +3957,6 @@ export class SparseVolumetricLightmapper {
     this.stats.requested_tile_count = 0;
     this.stats.resident_tile_bytes = 0;
     this.stats.streamed_gpu_bytes = 0;
-    this.stats.streaming_memory_budget_bytes = this._get_streaming_memory_budget_bytes();
-    this.stats.coarse_record_count = 0;
-    this.stats.coarse_bytes = 0;
     this.stats.tile_streaming_enabled = false;
     this.stats.tile_serialization_in_progress = false;
     this.stats.tile_serialization_error = null;
