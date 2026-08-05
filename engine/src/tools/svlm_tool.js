@@ -197,7 +197,7 @@ function parse_bake_options(args) {
 
   for (let i = 0; i < args.length; i += 1) {
     const raw = args[i];
-    const eq = raw.indexOf("=");
+    const eq = raw.indexOf(":");
     if (eq === -1) continue;
 
     const key = raw.slice(0, eq).trim().toLowerCase();

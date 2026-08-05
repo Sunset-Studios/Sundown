@@ -4,7 +4,7 @@ import { InputProvider } from '../../input/input_provider.js';
 import { InputKey, InputRange } from '../../input/input_types.js';
 import { radians, clamp, near_zero } from '../../utility/math.js';
 import { vec4, quat, vec3 } from 'gl-matrix';
-import { WORLD_FORWARD, WORLD_UP } from '../minimal.js';
+import { WORLD_FORWARD, WORLD_RIGHT, WORLD_UP } from '../minimal.js';
 
 export class FreeformArcballControlProcessor extends SimulationLayer {
     max_move_speed = 500.0;
