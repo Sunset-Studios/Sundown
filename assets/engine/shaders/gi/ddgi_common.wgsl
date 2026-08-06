@@ -3,6 +3,7 @@
 
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
 const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
+const DDGI_DEPTH_MOMENTS_INVALID_TEXEL: u32 = 0xffffu;
 const DDGI_CASCADE_ACTIVE_OVERLAP_ROWS = 4.0;
 const DDGI_CASCADE_BLEND_WINDOW_PROBES = 4.0;
 
@@ -730,6 +731,13 @@ fn ddgi_depth_moments_unpack(
     spacing: f32,
     miss_distance: f32
 ) -> vec2<f32> {
+    // Fresh sparse texels sample as unoccluded until their first ray arrives.
+    // The update pass recognizes the sentinel and bypasses history exactly
+    // once, keeping allocation state separate from established visibility.
+    if (packed_texel == DDGI_DEPTH_MOMENTS_INVALID_TEXEL) {
+        return vec2<f32>(miss_distance, miss_distance * miss_distance);
+    }
+
     let mean_n = f32(packed_texel & 0x7ffu) / 2047.0;
     let spread_n = f32((packed_texel >> 11u) & 0x1fu) / 31.0;
     let mean_t = ddgi_depth_log_decode(mean_n, spacing, miss_distance);
@@ -765,6 +773,19 @@ fn ddgi_depth_moments_load(
 
 fn ddgi_depth_texel_id(texel_coord: vec2<u32>, depth_res: u32) -> u32 {
     return texel_coord.x + texel_coord.y * depth_res;
+}
+
+fn ddgi_visibility_from_moments(moments: vec2<f32>, dist: f32) -> f32 {
+    let mean_d = moments.x;
+    let mean_d2 = moments.y;
+    let variance = max(mean_d2 - mean_d * mean_d, DDGI_VISIBILITY_MIN_VARIANCE);
+    let delta = max(0.0, dist - mean_d);
+    let chebyshev_weight = variance / (variance + delta * delta);
+
+    // Squaring suppresses the residual light bleeding inherent to the
+    // one-tailed Chebyshev bound without introducing a hard visibility edge.
+    let visibility = chebyshev_weight * chebyshev_weight;
+    return select(visibility, 1.0, dist <= mean_d);
 }
 
 fn ddgi_visibility_weight_from_moments(
@@ -805,20 +826,16 @@ fn ddgi_visibility_weight_from_moments(
     let m01 = ddgi_depth_moments_load(probe_depth_moments, base_idx, ddgi_depth_texel_id(c01, depth_res), spacing, miss_distance);
     let m11 = ddgi_depth_moments_load(probe_depth_moments, base_idx, ddgi_depth_texel_id(c11, depth_res), spacing, miss_distance);
 
-    let moments = mix(mix(m00, m10, frac.x), mix(m01, m11, frac.x), frac.y);
-
-    let mean_d = moments.x;
-    let mean_d2 = moments.y;
-
-    let variance = max(mean_d2 - mean_d * mean_d, DDGI_VISIBILITY_MIN_VARIANCE);
-
-    let delta = max(0.0, dist - mean_d);
-    var chebyshev_weight = variance / (variance + delta * delta);
-    
-    // Softer contrast (square instead of cube) to reduce banding
-    chebyshev_weight = chebyshev_weight * chebyshev_weight;
-
-    return select(chebyshev_weight, 1.0, dist <= mean_d);
+    // Evaluate the bound before filtering. Filtering raw moments across a
+    // depth discontinuity lets a far, open texel raise the mean of a nearby
+    // occluding texel past the receiver, turning the whole sample visible.
+    // Per-texel evaluation costs only ALU (the four loads already existed) and
+    // keeps wall silhouettes occluding while retaining bilinear transitions.
+    let v00 = ddgi_visibility_from_moments(m00, dist);
+    let v10 = ddgi_visibility_from_moments(m10, dist);
+    let v01 = ddgi_visibility_from_moments(m01, dist);
+    let v11 = ddgi_visibility_from_moments(m11, dist);
+    return mix(mix(v00, v10, frac.x), mix(v01, v11, frac.x), frac.y);
 }
 
 // =============================================================================

@@ -90,8 +90,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let inv_sample_count = 1.0 / f32(sample_count);
         let t = t_sum * inv_sample_count;
         let t2 = t2_sum * inv_sample_count;
+        let packed_prev = ddgi_depth_word_texel(packed_word, texel_idx);
+        let has_moment_history =
+            has_local_history && packed_prev != DDGI_DEPTH_MOMENTS_INVALID_TEXEL;
         let prev = ddgi_depth_moments_unpack(
-            ddgi_depth_word_texel(packed_word, texel_idx),
+            packed_prev,
             spacing,
             miss_distance
         );
@@ -103,9 +106,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             max(prev.x, spacing) * DDGI_LARGE_GEOMETRY_CHANGE_DISTANCE_FRACTION
         );
         let large_geometry_change =
-            has_local_history && abs(t - prev.x) > geometry_change_threshold;
+            has_moment_history && abs(t - prev.x) > geometry_change_threshold;
         var visibility_hysteresis =
-            select(0.0, DDGI_VISIBILITY_HYSTERESIS, has_local_history);
+            select(0.0, DDGI_VISIBILITY_HYSTERESIS, has_moment_history);
         if (large_geometry_change) {
             visibility_hysteresis *= DDGI_LARGE_GEOMETRY_CHANGE_HYSTERESIS_SCALE;
         }

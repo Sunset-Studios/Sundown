@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { deflateSync } from "zlib";
-import { WgslReflect, ResourceType } from "wgsl_reflect/wgsl_reflect.node.js";
+import { WgslReflect, ResourceType } from "wgsl_reflect/wgsl_reflect.module.js";
 import { ShaderResourceType } from "../engine/src/renderer/renderer_types.js";
 import {
   ShaderPrecisionProfile,

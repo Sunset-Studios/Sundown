@@ -52,18 +52,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     atomicStore(&probe_depth_slots[probe_index], slot_index + 1u);
     depth_slot_last_used[slot_index] = frame_index;
 
-    let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
-    let miss_distance = ddgi_probe_miss_distance(&ddgi_params, probe_index);
-    let miss_texel = ddgi_depth_moments_pack(
-        miss_distance,
-        miss_distance * miss_distance,
-        spacing,
-        miss_distance
-    );
-    let miss_word = miss_texel | (miss_texel << 16u);
+    let invalid_word =
+        DDGI_DEPTH_MOMENTS_INVALID_TEXEL |
+        (DDGI_DEPTH_MOMENTS_INVALID_TEXEL << 16u);
     let slot_base = ddgi_depth_base_for_slot(&ddgi_params, slot_index);
     let words_per_slot = ddgi_depth_words_per_slot(&ddgi_params);
     for (var word = 0u; word < words_per_slot; word = word + 1u) {
-        probe_depth_moments[slot_base + word] = miss_word;
+        probe_depth_moments[slot_base + word] = invalid_word;
     }
 }
