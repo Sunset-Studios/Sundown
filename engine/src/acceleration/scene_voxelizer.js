@@ -1,4 +1,5 @@
 import { RenderPassFlags } from "../renderer/renderer_types.js";
+import { floor_to_multiple } from "../utility/math.js";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //  ███████╗ ██████╗███████╗███╗   ██╗███████╗    ██╗   ██╗ ██████╗ ██╗  ██╗███████╗██╗     ███████╗
@@ -407,9 +408,9 @@ export class SceneVoxelizer {
       const world_extent = SCENE_VOXEL_GRID_RESOLUTION * level_voxel_size;
       const scroll_quantum = SCENE_VOXEL_BRICK_RESOLUTION * level_voxel_size;
       const grid_origin = [
-        Math.floor((clip_center[0] - world_extent * 0.5) / scroll_quantum) * scroll_quantum,
-        Math.floor((clip_center[1] - world_extent * 0.5) / scroll_quantum) * scroll_quantum,
-        Math.floor((clip_center[2] - world_extent * 0.5) / scroll_quantum) * scroll_quantum,
+        floor_to_multiple(clip_center[0] - world_extent * 0.5, scroll_quantum),
+        floor_to_multiple(clip_center[1] - world_extent * 0.5, scroll_quantum),
+        floor_to_multiple(clip_center[2] - world_extent * 0.5, scroll_quantum),
       ];
       const previous_origin = this.previous_clip_origins[clip_level];
       const previous_voxel_size = this.previous_clip_voxel_sizes[clip_level];

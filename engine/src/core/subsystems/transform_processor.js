@@ -19,14 +19,24 @@ const world_rotation_buffer_name = "world_rotation";
 const world_scale_buffer_name = "world_scale";
 const transform_processing_task_name = "transform_processing";
 const transform_processing_wgsl_path = "system_compute/transform_processing.wgsl";
+const compact_transforms_buffer_name = "compact_transforms";
+const compact_transform_processing_task_name = "compact_transform_processing";
+const compact_transform_processing_wgsl_path =
+  "system_compute/compact_transform_processing.wgsl";
+const compact_transform_float_stride = 32;
+const compact_transform_workgroup_size = 128;
 const transform_relevant_flag_mask =
   EntityFlags.IGNORE_PARENT_SCALE |
   EntityFlags.IGNORE_PARENT_ROTATION |
   EntityFlags.INTERACTIVE;
 
 export class TransformProcessor extends SimulationLayer {
+  static compact_transforms_gpu_buffer = null;
+
   transform_processing_input_lists = [];
   transform_processing_output_lists = [];
+  compact_transform_processing_inputs = new Array(2);
+  compact_transform_processing_outputs = new Array(1);
 
   #dirty_root_entities = new Set();
   #entity_state_cache = new Map();
@@ -43,6 +53,17 @@ export class TransformProcessor extends SimulationLayer {
   _on_delete = null;
 
   init() {
+    if (!TransformProcessor.compact_transforms_gpu_buffer) {
+      TransformProcessor.compact_transforms_gpu_buffer = new FragmentGpuBuffer(
+        compact_transforms_buffer_name,
+        FragmentGpuBuffer.initial_max_rows,
+        compact_transform_float_stride * Float32Array.BYTES_PER_ELEMENT,
+        false,
+        true,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+      );
+    }
+
     this._update_internal = this._update_internal.bind(this);
     this._on_flags_changed = this._on_flags_changed_internal.bind(this);
     this._on_delete = this._on_delete_internal.bind(this);
@@ -60,6 +81,16 @@ export class TransformProcessor extends SimulationLayer {
   post_update(delta_time) {
     super.post_update(delta_time);
     profile_scope(transform_processor_update_scope_name, this._update_internal);
+  }
+
+  static get_compact_transforms_buffer() {
+    const compact_transforms = TransformProcessor.compact_transforms_gpu_buffer?.buffer;
+    if (!compact_transforms) {
+      throw new Error(
+        "Compact transforms are unavailable before TransformProcessor initialization."
+      );
+    }
+    return compact_transforms;
   }
 
   _update_internal() {
@@ -142,6 +173,7 @@ export class TransformProcessor extends SimulationLayer {
       TransformFragment,
       transform_buffer_name
     );
+    const compact_transforms = TransformProcessor.get_compact_transforms_buffer();
     const flags = FragmentGpuBuffer.entity_flags_buffer;
 
     if (
@@ -191,6 +223,21 @@ export class TransformProcessor extends SimulationLayer {
         transform_dispatch_count
       );
     }
+
+    this.compact_transform_processing_inputs[0] = transforms.buffer;
+    this.compact_transform_processing_inputs[1] = compact_transforms;
+    this.compact_transform_processing_outputs[0] = compact_transforms;
+
+    ComputeTaskQueue.new_task(
+      compact_transform_processing_task_name,
+      compact_transform_processing_wgsl_path,
+      this.compact_transform_processing_inputs,
+      this.compact_transform_processing_outputs,
+      Math.max(
+        1,
+        Math.ceil(EntityManager.get_max_rows() / compact_transform_workgroup_size)
+      )
+    );
   }
 
   #get_entity_transform_state(entity) {

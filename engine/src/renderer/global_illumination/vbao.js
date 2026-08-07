@@ -113,6 +113,7 @@ export class VBAO {
     blas_bvh2_nodes,
     blas_directory,
     entity_transforms,
+    _compact_transforms,
     index_buffer,
     dense_lights,
     force_recreate = false

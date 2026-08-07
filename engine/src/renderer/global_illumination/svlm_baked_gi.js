@@ -76,6 +76,7 @@ export class SVLMBakedGI {
     _blas_bvh2_nodes,
     _blas_directory,
     _entity_transforms,
+    _compact_transforms,
     _index_buffer,
     _dense_lights,
     draw_count,

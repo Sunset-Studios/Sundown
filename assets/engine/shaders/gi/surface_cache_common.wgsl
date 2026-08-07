@@ -1,15 +1,13 @@
 #include "gi/gi_common.wgsl"
 #include "sh_common.wgsl"
+#include "hashmap.wgsl"
 
-// One unified hash table stores every LOD. A wider set-associative bucket
-// keeps local hash pressure from turning into visible allocation holes.
-const SURFACE_CACHE_BUCKET_SIZE: u32 = 16u;
-const SURFACE_CACHE_LOD_EXTENT_CELLS: f32 = 128.0;
-const SURFACE_CACHE_PATCH_EMPTY: u32 = 0u;
-const SURFACE_CACHE_UPDATE_LOCKED: u32 = 0xffffffffu;
 const SURFACE_CACHE_MIN_QUERY_SAMPLES: f32 = 2.0;
 const SURFACE_CACHE_MAX_RADIANCE: f32 = 10.0;
 const SURFACE_CACHE_SH_PATCH_SIZE_U32: u32 = 6u;
+const SURFACE_CACHE_NORMAL_BIN_COUNT: u32 = 7u;
+const SURFACE_CACHE_NORMAL_DESCRIPTOR_COUNT: u32 = 343u;
+const SURFACE_CACHE_LOD_EXPONENT_BIAS: u32 = 16u;
 
 struct SurfaceCacheParams {
     surface_cache_size: f32,
@@ -26,7 +24,11 @@ struct SurfaceCacheParams {
     importance_sample_count: f32,
     cache_entry_lifetime: f32,
     importance_exploration: f32,
-    padding3: f32,
+    rays_per_patch: f32,
+    cache_pixel_footprint: f32,
+    cache_lookup_jitter: f32,
+    cache_sample_limit: f32,
+    hash_search_count: f32,
     padding2: f32,
 };
 
@@ -36,10 +38,6 @@ struct SurfacePatch {
     grid_key: vec4<i32>,
     metadata: vec4<f32>,
     history: vec4<f32>,
-    fingerprint: atomic<u32>,
-    update_frame: atomic<u32>,
-    padding1: u32,
-    padding2: u32,
 };
 
 struct SurfacePatchReadOnly {
@@ -48,10 +46,6 @@ struct SurfacePatchReadOnly {
     grid_key: vec4<i32>,
     metadata: vec4<f32>,
     history: vec4<f32>,
-    fingerprint: u32,
-    update_frame: u32,
-    padding1: u32,
-    padding2: u32,
 };
 
 struct SurfaceCacheCounters {
@@ -144,28 +138,52 @@ fn surface_cache_full_resolution(params: SurfaceCacheParams) -> vec2<u32> {
     return vec2<u32>(u32(params.full_resolution_x), u32(params.full_resolution_y));
 }
 
-fn surface_cache_lod_value(position: vec3<f32>, camera_position: vec3<f32>, params: SurfaceCacheParams) -> f32 {
-    let distance = length(position - camera_position);
-    let base_extent = max(
-        params.surface_cache_cell_size * SURFACE_CACHE_LOD_EXTENT_CELLS,
-        params.surface_cache_cell_size
-    );
-    let maximum_lod = max(params.surface_cache_lod_count - 1.0, 0.0);
-    return clamp(log2(max(distance / base_extent, 1.0)), 0.0, maximum_lod);
+fn surface_cache_rays_per_patch(params: SurfaceCacheParams) -> u32 {
+    return max(u32(params.rays_per_patch), 1u);
 }
 
-fn surface_cache_select_lod(position: vec3<f32>, camera_position: vec3<f32>, params: SurfaceCacheParams) -> u32 {
-    // Admission chooses the nearest logarithmic level. Lookup blends adjacent
-    // levels, so camera motion cannot create a hard level switch.
-    return u32(floor(surface_cache_lod_value(position, camera_position, params) + 0.5));
+fn surface_cache_maximum_lod(params: SurfaceCacheParams) -> u32 {
+    return SURFACE_CACHE_LOD_EXPONENT_BIAS +
+        max(u32(params.surface_cache_lod_count), 1u) - 1u;
+}
+
+fn surface_cache_lod_value(position: vec3<f32>, params: SurfaceCacheParams) -> f32 {
+    let view = view_buffer[u32(frame_info.view_index)];
+    let projection_y_scale = max(abs(view.projection_matrix[1][1]), 1e-6);
+    let view_depth = abs((view.view_matrix * vec4<f32>(position, 1.0)).z);
+    let is_perspective = abs(view.projection_matrix[3][3]) < 0.5;
+    let half_view_height = select(
+        1.0 / projection_y_scale,
+        view_depth / projection_y_scale,
+        is_perspective
+    );
+    let world_space_footprint = max(params.cache_pixel_footprint, 1.0) * (
+        (half_view_height * 2.0) / max(params.full_resolution_y, 1.0)
+    );
+    let relative_exponent = log2(max(
+        world_space_footprint / max(params.surface_cache_cell_size, 1e-4),
+        1e-6
+    ));
+    return clamp(
+        relative_exponent + f32(SURFACE_CACHE_LOD_EXPONENT_BIAS),
+        0.0,
+        f32(surface_cache_maximum_lod(params))
+    );
+}
+
+fn surface_cache_select_lod(position: vec3<f32>, params: SurfaceCacheParams) -> u32 {
+    // The bias encodes negative exponents without changing the compact u32 LOD
+    // descriptor. This lets nearby cells refine below the reference cell size.
+    return u32(floor(surface_cache_lod_value(position, params)));
 }
 
 fn surface_cache_lod_cell_size(lod: u32, params: SurfaceCacheParams) -> f32 {
-    return params.surface_cache_cell_size * f32(1 << lod);
+    let exponent = i32(lod) - i32(SURFACE_CACHE_LOD_EXPONENT_BIAS);
+    return max(params.surface_cache_cell_size, 1e-4) * exp2(f32(exponent));
 }
 
 fn surface_cache_quantize_position(position: vec3<f32>, lod: u32, params: SurfaceCacheParams) -> vec3<i32> {
-    return vec3<i32>(floor(position / surface_cache_lod_cell_size(lod, params) + vec3<f32>(0.0001)));
+    return vec3<i32>(floor(position / surface_cache_lod_cell_size(lod, params)));
 }
 
 // Return the world-space center of a quantized cell constrained to the patch's
@@ -212,47 +230,73 @@ fn surface_cache_world_cell_center(
     return cell_center;
 }
 
-fn surface_cache_quantize_normal(normal: vec3<f32>) -> vec2<i32> {
-    let n = safe_normalize(normal);
-    let normal_octant =
-        select(0, 1, n.x >= 0.0) |
-        select(0, 2, n.y >= 0.0) |
-        select(0, 4, n.z >= 0.0);
-    return vec2<i32>(normal_octant, 0);
+fn surface_cache_quantize_normal(normal: vec3<f32>) -> vec3<i32> {
+    let normalized = clamp(
+        safe_normalize(normal),
+        vec3<f32>(-1.0),
+        vec3<f32>(1.0)
+    );
+    return vec3<i32>(floor(normalized * 3.0));
 }
 
-fn surface_cache_bucket_start(position: vec3<i32>, normal: vec2<i32>, lod: u32, params: SurfaceCacheParams) -> u32 {
-    let position_hash = (position.x * 73856093) ^ (position.y * 19349663) ^ (position.z * 83492791);
-    let descriptor_hash = (normal.x * 50331653) ^ (i32(lod) * 25165843);
-    let combined = bitcast<u32>(position_hash ^ descriptor_hash);
-    let capacity = max(u32(params.total_patch_count), SURFACE_CACHE_BUCKET_SIZE);
-    let bucket_count = max(capacity / SURFACE_CACHE_BUCKET_SIZE, 1u);
-    return (combined % bucket_count) * SURFACE_CACHE_BUCKET_SIZE;
-}
+fn surface_cache_hash_key(
+    quantized_position: vec3<i32>,
+    quantized_normal: vec3<i32>,
+    lod: u32,
+    params: SurfaceCacheParams
+) -> HashMapKey {
+    // Multiplication keeps sub-unit cell sizes from collapsing to zero before
+    // they enter the nested hash, while preserving power-of-two LOD identity.
+    let scaled_cell_size = max(
+        u32(round(surface_cache_lod_cell_size(lod, params) * 10000.0)),
+        1u
+    );
 
-fn surface_cache_hash_fingerprint(position: vec3<i32>, normal: vec2<i32>, lod: u32) -> u32 {
-    let position_hash = (position.x * 25165843) ^ (position.y * 50331653) ^ (position.z * 73856093);
-    let normal_hash = (normal.x * 83492791) ^ (normal.y * 19349663);
-    let value = bitcast<u32>(position_hash ^ normal_hash ^ (i32(lod) * 393241));
-    return select(value, 1u, value == 0u);
+    var index_hash = hashmap_pcg(bitcast<u32>(quantized_normal.z));
+    index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_normal.y), index_hash);
+    index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_normal.x), index_hash);
+    index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_position.z), index_hash);
+    index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_position.y), index_hash);
+    index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_position.x), index_hash);
+    index_hash = hashmap_pcg_combine(lod, index_hash);
+    index_hash = hashmap_pcg_combine(scaled_cell_size, index_hash);
+
+    var checksum = hashmap_xxhash32(bitcast<u32>(quantized_normal.z));
+    checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_normal.y), checksum);
+    checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_normal.x), checksum);
+    checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_position.z), checksum);
+    checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_position.y), checksum);
+    checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_position.x), checksum);
+    checksum = hashmap_xxhash32_combine(lod, checksum);
+    checksum = hashmap_xxhash32_combine(scaled_cell_size, checksum);
+
+    return HashMapKey(index_hash, hashmap_sanitize_checksum(checksum));
 }
 
 fn surface_cache_make_grid_key(
     quantized_position: vec3<i32>,
-    quantized_normal: vec2<i32>,
+    quantized_normal: vec3<i32>,
     lod: u32
 ) -> vec4<i32> {
-    return vec4<i32>(quantized_position, i32(lod * 8u) + quantized_normal.x);
+    let normal_descriptor =
+        u32(quantized_normal.x + 3) +
+        SURFACE_CACHE_NORMAL_BIN_COUNT * u32(quantized_normal.y + 3) +
+        SURFACE_CACHE_NORMAL_BIN_COUNT * SURFACE_CACHE_NORMAL_BIN_COUNT *
+            u32(quantized_normal.z + 3);
+    return vec4<i32>(
+        quantized_position,
+        i32(lod * SURFACE_CACHE_NORMAL_DESCRIPTOR_COUNT + normal_descriptor)
+    );
 }
 
 fn surface_cache_grid_key_lod(grid_key: vec4<i32>) -> u32 {
-    return u32(max(grid_key.w, 0)) / 8u;
+    return u32(max(grid_key.w, 0)) / SURFACE_CACHE_NORMAL_DESCRIPTOR_COUNT;
 }
 
 fn surface_cache_patch_descriptor_matches(
     patch_grid_key: vec4<i32>,
     quantized_position: vec3<i32>,
-    quantized_normal: vec2<i32>,
+    quantized_normal: vec3<i32>,
     lod: u32
 ) -> bool {
     return all(patch_grid_key == surface_cache_make_grid_key(
@@ -262,7 +306,49 @@ fn surface_cache_patch_descriptor_matches(
     ));
 }
 
-fn surface_cache_patch_rng(patch_index: u32, patch_fingerprint: u32) -> u32 {
-    let rng = hash(patch_index ^ patch_fingerprint ^ 0x9e3779b9u);
+fn surface_cache_hash_search_count(params: SurfaceCacheParams) -> u32 {
+    return hashmap_search_count(
+        max(u32(params.hash_search_count), 1u),
+        max(u32(params.total_patch_count), 1u)
+    );
+}
+
+fn surface_cache_sample_limit_reached(
+    surface_patch: SurfacePatch,
+    params: SurfaceCacheParams
+) -> bool {
+    return params.cache_sample_limit > 0.0 && surface_patch.history.x >= params.cache_sample_limit;
+}
+
+fn surface_cache_jitter_lookup_position(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    pixel_coord: vec2<u32>,
+    frame: u32,
+    cell_size: f32,
+    params: SurfaceCacheParams
+) -> vec3<f32> {
+    let seed = random_seed(
+        pixel_coord.x ^
+        (pixel_coord.y * 0x9e3779b9u) ^
+        (frame * 0x85ebca6bu)
+    );
+    let jitter = vec2<f32>(
+        rand_float(seed),
+        rand_float(random_seed(seed))
+    ) * 2.0 - vec2<f32>(1.0);
+    let tangent_frame = surface_cache_hemisphere_frame(normal);
+    return position + params.cache_lookup_jitter * cell_size * (
+        jitter.x * tangent_frame[0] + jitter.y * tangent_frame[1]
+    );
+}
+
+fn surface_cache_patch_rng(patch_index: u32, grid_key: vec4<i32>) -> u32 {
+    let descriptor_seed =
+        bitcast<u32>(grid_key.x) ^
+        hash(bitcast<u32>(grid_key.y)) ^
+        hash(bitcast<u32>(grid_key.z)) ^
+        hash(bitcast<u32>(grid_key.w));
+    let rng = hash(patch_index ^ descriptor_seed ^ 0x9e3779b9u);
     return random_seed(rng);
 }

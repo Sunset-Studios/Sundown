@@ -6,6 +6,7 @@ import { SharedFrameInfoBuffer, SharedViewBuffer } from "../../core/shared_data.
 
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
+import { TransformProcessor } from "../../core/subsystems/transform_processor.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
 
@@ -41,6 +42,7 @@ import {
   SCENE_VOXEL_GRID_RESOLUTION,
 } from "../../acceleration/scene_voxelizer.js";
 import { profile_scope } from "../../utility/performance.js";
+import { floor_to_multiple } from "../../utility/math.js";
 import {
   rgba16float_format,
   src_alpha_one_minus_src_alpha_blend_config,
@@ -51,6 +53,7 @@ import { draw_quad } from "../draw_helpers.js";
 
 // Specialized renderer components
 import { PTGI } from "../global_illumination/ptgi.js";
+import { SCGI } from "../global_illumination/scgi.js";
 import { DDGI } from "../global_illumination/ddgi.js";
 import { SVLMBakedGI } from "../global_illumination/svlm_baked_gi.js";
 import { SparseVolumetricLightmapper } from "../global_illumination/svlm.js";
@@ -226,6 +229,9 @@ export class DeferredShadingStrategy {
       case GIStrategyType.DDGI:
         this.gi = new DDGI();
         break;
+      case GIStrategyType.SCGI:
+        this.gi = new SCGI();
+        break;
       case GIStrategyType.PTGI:
       default:
         this.gi = new PTGI();
@@ -334,6 +340,10 @@ export class DeferredShadingStrategy {
         transforms_name
       );
       const entity_transforms = render_graph.register_buffer(transforms_buffer.buffer.config.name);
+      const compact_transforms_buffer = TransformProcessor.get_compact_transforms_buffer();
+      const compact_transforms = render_graph.register_buffer(
+        compact_transforms_buffer.config.name
+      );
 
       const bounds_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, bounds_name);
       const aabb_bounds = render_graph.register_buffer(bounds_buffer.buffer.config.name);
@@ -769,6 +779,7 @@ export class DeferredShadingStrategy {
           tlas_bvh_info,
           tlas_bvh2_nodes: aabb_bounds,
           entity_transforms,
+          compact_transforms,
           entity_index_lookup,
           blas_directory,
           blas_bvh2_nodes,
@@ -819,6 +830,7 @@ export class DeferredShadingStrategy {
           blas_bvh2_nodes,
           blas_directory,
           entity_transforms,
+          compact_transforms,
           index_buffer,
           dense_lights,
           draw_count,
@@ -877,6 +889,7 @@ export class DeferredShadingStrategy {
           blas_bvh2_nodes,
           blas_directory,
           entity_transforms,
+          compact_transforms,
           index_buffer,
           dense_lights,
           this.force_recreate
@@ -1267,8 +1280,10 @@ export class DeferredShadingStrategy {
     const voxel_size = this.scene_voxelizer.config.voxel_size;
     const half_extent = SCENE_VOXEL_GRID_RESOLUTION * voxel_size * 0.5;
     for (let axis = 0; axis < 3; axis++) {
-      this.scene_voxel_grid_origin[axis] =
-        Math.floor((view_position[axis] - half_extent) / voxel_size) * voxel_size;
+      this.scene_voxel_grid_origin[axis] = floor_to_multiple(
+        view_position[axis] - half_extent,
+        voxel_size
+      );
     }
     return this.scene_voxel_grid_origin;
   }

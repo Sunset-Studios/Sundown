@@ -6,6 +6,7 @@ import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
 
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
+import { TransformProcessor } from "../../core/subsystems/transform_processor.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 
 // Renderer components
@@ -239,6 +240,10 @@ export class PathTracingStrategy {
       );
       const bounds_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, bounds_name);
       const entity_transforms = render_graph.register_buffer(transforms_buffer.buffer.config.name);
+      const compact_transforms_buffer = TransformProcessor.get_compact_transforms_buffer();
+      const compact_transforms = render_graph.register_buffer(
+        compact_transforms_buffer.config.name
+      );
       const aabb_bounds = render_graph.register_buffer(bounds_buffer.buffer.config.name);
 
       const aabb_gpu_data = BVH.to_gpu_data();
@@ -548,6 +553,7 @@ export class PathTracingStrategy {
           blas_bvh2_nodes,
           blas_directory,
           entity_transforms,
+          compact_transforms,
           index_buffer,
           dense_lights,
           visibility_entity_image,

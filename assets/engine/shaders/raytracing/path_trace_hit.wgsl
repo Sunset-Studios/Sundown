@@ -55,7 +55,7 @@ struct PathState {
 @group(1) @binding(3) var<uniform> tlas_bvh_info: BVHInfo;
 @group(1) @binding(4) var<storage, read> blas_bvh2_nodes: array<AABB>;
 @group(1) @binding(5) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
-@group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(6) var<storage, read> compact_transforms: array<RayInstanceTransform>;
 @group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
 @group(1) @binding(9) var output_tex: texture_storage_2d<rgba16float, write>;
@@ -128,17 +128,16 @@ fn cs(
             let prim_store = hit_result.prim_store;
             let entity_resolved = entity_index_lookup[prim_store];
 
-            let entity_transform = entity_transforms[entity_resolved];
+            let instance_transform = compact_transforms[entity_resolved];
 
-            var ray_local = build_local_ray(
+            var ray_local = build_local_ray_from_instance(
                 &ray,
-                entity_transform.transform,
-                entity_transform.transpose_inverse_model_matrix
+                instance_transform
             );
 
             let t_tri = hit_result.t_hit;
             let p_local = ray_local.origin_and_tmin.xyz + ray_local.direction_and_tmax.xyz * t_tri;
-            let p_world = (entity_transform.transform * vec4<f32>(p_local, 1.0)).xyz;
+            let p_world = transform_local_point_from_instance(instance_transform, p_local);
 
             let v0i = hit_result.tri_indices.x;
             let v1i = hit_result.tri_indices.y;
@@ -176,7 +175,7 @@ fn cs(
                           vertex1.normal.xyz * u_bc + 
                           vertex2.normal.xyz * v_bc;
             var world_n = safe_normalize(
-                (entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz
+                transform_local_direction_from_instance(instance_transform, n_local)
             );
 
             // Interpolate and transform tangents
@@ -184,7 +183,7 @@ fn cs(
                           vertex1.tangent.xyz * u_bc + 
                           vertex2.tangent.xyz * v_bc;
             var world_t = safe_normalize(
-                (entity_transform.transpose_inverse_model_matrix * vec4<f32>(t_local, 0.0)).xyz
+                transform_local_direction_from_instance(instance_transform, t_local)
             );
 
             // Interpolate and transform bitangents
@@ -192,7 +191,7 @@ fn cs(
                           vertex1.bitangent.xyz * u_bc + 
                           vertex2.bitangent.xyz * v_bc;
             var world_b = safe_normalize(
-                (entity_transform.transpose_inverse_model_matrix * vec4<f32>(b_local, 0.0)).xyz
+                transform_local_direction_from_instance(instance_transform, b_local)
             );
             
             // Handle backfacing geometry

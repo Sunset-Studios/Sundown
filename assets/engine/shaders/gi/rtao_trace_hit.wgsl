@@ -26,7 +26,7 @@
 @group(1) @binding(5) var<uniform> tlas_bvh_info: BVHInfo;
 @group(1) @binding(6) var<storage, read> blas_bvh2_nodes: array<AABB>;
 @group(1) @binding(7) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
-@group(1) @binding(8) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(8) var<storage, read> compact_transforms: array<RayInstanceTransform>;
 @group(1) @binding(9) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(10) var<storage, read> entity_index_lookup: array<u32>;
 

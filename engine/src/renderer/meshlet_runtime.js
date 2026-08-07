@@ -5,7 +5,7 @@ import {
   read_binary_manifest_async,
   resolve_manifest_asset_path,
 } from "../streaming/streaming_io.js";
-import { pack_snorm4x8 } from "../utility/math.js";
+import { floor_to_multiple, pack_snorm4x8 } from "../utility/math.js";
 import {
   build_empty_meshlet_sections,
   build_meshlet_groups,
@@ -565,7 +565,7 @@ function create_runtime_meshlet_upload_data(positions, indices, sections, settin
     const section = section_descriptors[section_index];
     const first_index = section?.first_index ?? 0;
     const index_count = section?.index_count ?? 0;
-    const trimmed_index_count = Math.max(0, index_count - (index_count % 3));
+    const trimmed_index_count = Math.max(0, floor_to_multiple(index_count, 3));
     if (trimmed_index_count <= 0) {
       continue;
     }

@@ -1,5 +1,3 @@
-#define RAY_TRAVERSAL_USE_RAY_INSTANCE_TRANSFORMS
-
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 #include "gi/surface_cache_common.wgsl"
@@ -15,7 +13,7 @@
 @group(1) @binding(7) var<uniform> tlas_bvh_info: BVHInfo;
 @group(1) @binding(8) var<storage, read> blas_bvh2_nodes: array<AABB>;
 @group(1) @binding(9) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
-@group(1) @binding(10) var<storage, read> ray_instance_transforms: array<RayInstanceTransform>;
+@group(1) @binding(10) var<storage, read> compact_transforms: array<RayInstanceTransform>;
 @group(1) @binding(11) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(12) var<storage, read> entity_index_lookup: array<u32>;
 
@@ -56,15 +54,19 @@ fn generate_ray_sample(
     return result;
 }
 
-fn trace_surface_cache_ray(active_index: u32) {
+fn trace_surface_cache_ray(
+    active_index: u32,
+    ray_index_in_patch: u32,
+    ray_data_index: u32
+) {
     let patch_index = active_indices[active_index];
     let surface_patch = surface_cache[patch_index];
     let normal = safe_normalize(surface_patch.normal_lod.xyz);
-    let seed = surface_cache_patch_rng(patch_index, surface_patch.fingerprint);
+    let seed = surface_cache_patch_rng(patch_index, surface_patch.grid_key);
     let ray_sample = generate_ray_sample(
         seed,
         normal,
-        u32(surface_patch.history.y)
+        u32(surface_patch.history.y) + ray_index_in_patch
     );
     let direction = ray_sample.direction;
 
@@ -87,18 +89,18 @@ fn trace_surface_cache_ray(active_index: u32) {
     );
 
     // A negative primitive lane is the miss marker consumed by shade.
-    hit_info[active_index].hit_position_sampling_weight = vec4<f32>(
+    hit_info[ray_data_index].hit_position_sampling_weight = vec4<f32>(
         0.0,
         0.0,
         0.0,
         ray_sample.sampling_weight
     );
-    hit_info[active_index].ray_direction_primitive = vec4<f32>(direction, -1.0);
-    hit_info[active_index].normal_section_index = vec4<f32>(normal, 0.0);
-    hit_info[active_index].hit_attr0 = vec4<f32>(0.0);
-    hit_info[active_index].hit_attr1 = vec4<f32>(0.0);
-    hit_info[active_index].shadow_origin = vec4<f32>(0.0);
-    hit_info[active_index].shadow_direction = vec4<f32>(0.0);
+    hit_info[ray_data_index].ray_direction_primitive = vec4<f32>(direction, -1.0);
+    hit_info[ray_data_index].normal_section_index = vec4<f32>(normal, 0.0);
+    hit_info[ray_data_index].hit_attr0 = vec4<f32>(0.0);
+    hit_info[ray_data_index].hit_attr1 = vec4<f32>(0.0);
+    hit_info[ray_data_index].shadow_origin = vec4<f32>(0.0);
+    hit_info[ray_data_index].shadow_direction = vec4<f32>(0.0);
 
     let hit_result = trace_ray_closest(&ray);
     if (hit_result.has_hit == 0u) {
@@ -107,7 +109,7 @@ fn trace_surface_cache_ray(active_index: u32) {
 
     let prim_store = hit_result.prim_store;
     let entity_resolved = entity_index_lookup[prim_store];
-    let instance_transform = ray_instance_transforms[entity_resolved];
+    let instance_transform = compact_transforms[entity_resolved];
     var ray_local = build_local_ray_from_instance(&ray, instance_transform);
     let hit_position_local = ray_local.origin_and_tmin.xyz
         + ray_local.direction_and_tmax.xyz * hit_result.t_hit;
@@ -160,20 +162,20 @@ fn trace_surface_cache_ray(active_index: u32) {
     tangent_world = select(tangent_world, -tangent_world, backfacing);
     bitangent_world = select(bitangent_world, -bitangent_world, backfacing);
 
-    hit_info[active_index].hit_position_sampling_weight = vec4<f32>(
+    hit_info[ray_data_index].hit_position_sampling_weight = vec4<f32>(
         hit_position_world,
         ray_sample.sampling_weight
     );
-    hit_info[active_index].ray_direction_primitive = vec4<f32>(
+    hit_info[ray_data_index].ray_direction_primitive = vec4<f32>(
         direction,
         f32(prim_store)
     );
-    hit_info[active_index].normal_section_index = vec4<f32>(
+    hit_info[ray_data_index].normal_section_index = vec4<f32>(
         normal_world,
         vertex0.section_index
     );
-    hit_info[active_index].hit_attr0 = vec4<f32>(tangent_world, uv.x);
-    hit_info[active_index].hit_attr1 = vec4<f32>(bitangent_world, uv.y);
+    hit_info[ray_data_index].hit_attr0 = vec4<f32>(tangent_world, uv.x);
+    hit_info[ray_data_index].hit_attr1 = vec4<f32>(bitangent_world, uv.y);
 }
 
 @compute @workgroup_size(128, 1, 1)
@@ -182,8 +184,15 @@ fn cs(
     @builtin(local_invocation_index) local_idx: u32,
 ) {
     bvh_stack_lane = local_idx;
-    if (gid.x >= counters.active_patch_count) {
+    let rays_per_patch = surface_cache_rays_per_patch(surface_cache_params);
+    let ray_data_index = gid.x;
+    let active_index = ray_data_index / rays_per_patch;
+    if (active_index >= counters.active_patch_count) {
         return;
     }
-    trace_surface_cache_ray(gid.x);
+    trace_surface_cache_ray(
+        active_index,
+        ray_data_index % rays_per_patch,
+        ray_data_index
+    );
 }

@@ -7,7 +7,7 @@
 @group(1) @binding(1) var<storage, read> rays: array<Ray>; // The mesh's vertex buffer
 @group(1) @binding(2) var<storage, read_write> hits: array<RayHit>;
 @group(1) @binding(3) var<storage, read> tlas_bvh2_bounds: array<AABB>;
-@group(1) @binding(4) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(4) var<storage, read> compact_transforms: array<RayInstanceTransform>;
 @group(1) @binding(5) var<storage, read> blas_bvh2_nodes: array<AABB>;
 @group(1) @binding(6) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
 @group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
@@ -31,22 +31,21 @@ fn traverse_tlas_bvh(
     if (hit_result.has_hit != 0u) {
         let prim_store = hit_result.prim_store;
         let entity_resolved = entity_index_lookup[prim_store];
-        let entity_transform = entity_transforms[entity_resolved];
+        let instance_transform = compact_transforms[entity_resolved];
 
         if (tlas_only) {
             let p_world = ray.origin_and_tmin.xyz + ray.direction_and_tmax.xyz * hit_result.t_hit;
             hit.position_and_t = vec4<f32>(p_world, f32(hit_result.t_hit));
             hit.normal_and_user_data = vec4<f32>(vec3<f32>(0.0), f32(hit_result.prim_store));
         } else {
-            var ray_local = build_local_ray(
+            var ray_local = build_local_ray_from_instance(
                 &ray,
-                entity_transform.transform,
-                entity_transform.transpose_inverse_model_matrix
+                instance_transform
             );
 
             let t_tri = hit_result.t_hit;
             let p_local = ray_local.origin_and_tmin.xyz + ray_local.direction_and_tmax.xyz * t_tri;
-            let p_world = (entity_transform.transform * vec4<f32>(p_local, 1.0)).xyz;
+            let p_world = transform_local_point_from_instance(instance_transform, p_local);
 
             let v0i = hit_result.tri_indices.x;
             let v1i = hit_result.tri_indices.y;
@@ -76,7 +75,7 @@ fn traverse_tlas_bvh(
                 vertex1.normal.xyz * u_bc +
                 vertex2.normal.xyz * v_bc;
             var world_n = safe_normalize(
-                (entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz
+                transform_local_direction_from_instance(instance_transform, n_local)
             );
 
             let ray_is_backfacing = dot(world_n, ray.direction_and_tmax.xyz) > 0.0;

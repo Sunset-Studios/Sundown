@@ -67,10 +67,11 @@ export const engine_cvar_config = Object.freeze({
     {
       name: EngineCVars.Renderer.GIStrategy,
       type: CVarType.Enum,
-      default_value: GIStrategyType.SVLM,
+      default_value: GIStrategyType.SCGI,
       values: {
         ddgi: GIStrategyType.DDGI,
         ptgi: GIStrategyType.PTGI,
+        scgi: GIStrategyType.SCGI,
         svlm: GIStrategyType.SVLM,
       },
       description: "Selects the global illumination strategy.",

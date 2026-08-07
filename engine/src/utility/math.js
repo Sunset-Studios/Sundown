@@ -234,6 +234,10 @@ export function floor_div(a, b) {
   return Math.floor(a / b);
 }
 
+export function floor_to_multiple(value, multiple) {
+  return Math.floor(value / multiple) * multiple;
+}
+
 /**
  * Returns an euler angle representation of a quaternion, in degrees
  * @param  {vec3} out Euler angles, pitch-yaw-roll

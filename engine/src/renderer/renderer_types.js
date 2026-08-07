@@ -124,6 +124,7 @@ export const GIStrategyType = Object.freeze({
   PTGI: 0,
   DDGI: 1,
   SVLM: 2,
+  SCGI: 3,
 });
 
 /**

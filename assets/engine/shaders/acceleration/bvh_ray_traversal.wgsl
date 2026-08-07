@@ -7,19 +7,10 @@ var<workgroup> bvh_blas_node_stack: array<u32, NODE_STACK_SIZE * BVH_TRAVERSAL_W
 var<private> bvh_stack_lane: u32;
 
 fn bvh_build_local_ray(ray_world: ptr<function, Ray>, entity_resolved: u32) -> Ray {
-    #if RAY_TRAVERSAL_USE_RAY_INSTANCE_TRANSFORMS
     return build_local_ray_from_instance(
         ray_world,
-        ray_instance_transforms[entity_resolved]
+        compact_transforms[entity_resolved]
     );
-    #else
-    let entity_transform = entity_transforms[entity_resolved];
-    return build_local_ray(
-        ray_world,
-        entity_transform.transform,
-        entity_transform.transpose_inverse_model_matrix
-    );
-    #endif
 }
 
 // A direct descent keeps the selected child record resident across the loop backedge.

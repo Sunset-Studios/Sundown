@@ -86,6 +86,7 @@ export class RTAO {
     blas_bvh2_nodes,
     blas_directory,
     entity_transforms,
+    compact_transforms,
     index_buffer,
     dense_lights,
     force_recreate = false
@@ -271,7 +272,7 @@ export class RTAO {
           tlas_bvh_info,
           blas_bvh2_nodes,
           blas_directory,
-          entity_transforms,
+          compact_transforms,
           index_buffer,
           entity_index_lookup_buffer,
         ],

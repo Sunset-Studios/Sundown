@@ -26,25 +26,26 @@
 @group(1) @binding(19) var texture_pool_emission: texture_2d_array<f32>;
 @group(1) @binding(20) var skybox_texture: texture_cube<f32>;
 @group(1) @binding(21) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
+@group(1) @binding(22) var<storage, read> surface_cache_hashmap: array<HashMapEntry>;
 
 #include "gi/surface_cache_lookup.wgsl"
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let active_index = gid.x;
+    let rays_per_patch = surface_cache_rays_per_patch(surface_cache_params);
+    let ray_data_index = gid.x;
+    let active_index = ray_data_index / rays_per_patch;
     if (active_index >= counters.active_patch_count) {
         return;
     }
 
-    let path = hit_info[active_index];
-    let view_index = u32(frame_info.view_index);
-    let camera_position = view_buffer[view_index].view_position.xyz;
+    let path = hit_info[ray_data_index];
     let light_view_index = u32(scene_lighting_data.view_index);
     let sun_direction = normalize(-view_buffer[light_view_index].view_direction.xyz);
-    radiance_info[active_index].sample_radiance = vec4<f32>(0.0);
-    hit_info[active_index].shadow_origin = vec4<f32>(0.0);
-    hit_info[active_index].shadow_direction = vec4<f32>(0.0);
-    radiance_info[active_index].shadow_radiance = vec4<f32>(0.0);
+    radiance_info[ray_data_index].sample_radiance = vec4<f32>(0.0);
+    hit_info[ray_data_index].shadow_origin = vec4<f32>(0.0);
+    hit_info[ray_data_index].shadow_direction = vec4<f32>(0.0);
+    radiance_info[ray_data_index].shadow_radiance = vec4<f32>(0.0);
 
     if (path.ray_direction_primitive.w < 0.0) {
         let environment_radiance = evaluate_environment(
@@ -53,7 +54,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             scene_lighting_data,
             skybox_texture
         );
-        radiance_info[active_index].sample_radiance = vec4<f32>(
+        radiance_info[ray_data_index].sample_radiance = vec4<f32>(
             safe_clamp_vec3_max(environment_radiance, SURFACE_CACHE_MAX_RADIANCE),
             1.0
         );
@@ -105,10 +106,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let view_direction = normalize(-path.ray_direction_primitive.xyz);
     let recurrent_irradiance = surface_cache_sample(
         hit_position,
-        shading_normal,
-        camera_position
+        shading_normal
     ).xyz;
-    radiance_info[active_index].sample_radiance = vec4<f32>(
+    radiance_info[ray_data_index].sample_radiance = vec4<f32>(
         safe_clamp_vec3_max(
             emissive * albedo + recurrent_irradiance,
             SURFACE_CACHE_MAX_RADIANCE
@@ -124,10 +124,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let patch_index = active_indices[active_index];
     var rng = random_seed(surface_cache_patch_rng(
         patch_index,
-        surface_cache[patch_index].fingerprint
+        surface_cache[patch_index].grid_key
     ) ^ hash(
         (u32(surface_cache[patch_index].history.y) ^
-        u32(surface_cache_params.frame_index)) * 0x9e3779b9u
+        ((u32(surface_cache_params.frame_index) ^
+        (ray_data_index % rays_per_patch)) * 0xa24baeddu)) * 0x9e3779b9u
     ));
     let selected_light_index = u32(rand_float(rng) * f32(light_count)) % light_count;
     let light = dense_lights_buffer.lights[selected_light_index];
@@ -144,17 +145,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         length(light.position.xyz - hit_position),
         light.light_type != 0.0
     );
-    hit_info[active_index].shadow_origin = vec4<f32>(
+    hit_info[ray_data_index].shadow_origin = vec4<f32>(
         hit_position + shading_normal * 0.001,
         0.0001
     );
-    hit_info[active_index].shadow_direction = vec4<f32>(
+    hit_info[ray_data_index].shadow_direction = vec4<f32>(
         light_direction,
         min(light_distance * 0.999, surface_cache_params.max_ray_length)
     );
     // w = 1 means pending visibility; the shadow pass changes it to 2 only
     // when the light is visible.
-    radiance_info[active_index].shadow_radiance = vec4<f32>(
+    radiance_info[ray_data_index].shadow_radiance = vec4<f32>(
         safe_clamp_vec3_max(direct_radiance, SURFACE_CACHE_MAX_RADIANCE),
         1.0
     );

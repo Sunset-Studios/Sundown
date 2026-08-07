@@ -42,6 +42,7 @@
 @group(1) @binding(16) var skybox_texture: texture_cube<f32>;
 @group(1) @binding(17) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(18) var<storage, read_write> surface_cache_sh: array<u32>;
+@group(1) @binding(19) var<storage, read> surface_cache_hashmap: array<HashMapEntry>;
 
 #include "gi/surface_cache_lookup.wgsl"
 
@@ -77,7 +78,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     let light_view_index = u32(scene_lighting_data.view_index);
-    let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
     let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -184,8 +184,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (hit_distance_for_cache >= surface_cache_params.surface_cache_cell_size * 0.5) {
             cached_radiance = surface_cache_sample(
                 hit_pos,
-                n,
-                camera_position
+                n
             ).xyz;
         }
         

@@ -11,7 +11,7 @@
 @group(1) @binding(2) var<uniform> tlas_bvh_info: BVHInfo;
 @group(1) @binding(3) var<storage, read> blas_bvh2_nodes: array<AABB>;
 @group(1) @binding(4) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
-@group(1) @binding(5) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(5) var<storage, read> compact_transforms: array<RayInstanceTransform>;
 @group(1) @binding(6) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 @group(1) @binding(8) var<storage, read> emissive_lights_buffer: EmissiveLightsBuffer;
@@ -128,24 +128,24 @@ fn svlm_trace_primary_ray(ray_index: u32) {
     let entity_index = entity_index_lookup[prim_store];
     if (
         entity_index == INVALID_IDX ||
-        entity_index >= arrayLength(&entity_transforms)
+        entity_index >= arrayLength(&compact_transforms)
     ) {
         return;
     }
-    let entity_transform = entity_transforms[entity_index];
-    var local_ray = build_local_ray(
+    let instance_transform = compact_transforms[entity_index];
+    var local_ray = build_local_ray_from_instance(
         &ray,
-        entity_transform.transform,
-        entity_transform.transpose_inverse_model_matrix
+        instance_transform
     );
 
     let t_hit = hit_result.t_hit;
     let local_position =
         local_ray.origin_and_tmin.xyz +
         local_ray.direction_and_tmax.xyz * t_hit;
-    let world_position = (
-        entity_transform.transform * vec4<f32>(local_position, 1.0)
-    ).xyz;
+    let world_position = transform_local_point_from_instance(
+        instance_transform,
+        local_position
+    );
 
     let vertex0 = decode_vertex(vertex_buffer[hit_result.tri_indices.x]);
     let vertex1 = decode_vertex(vertex_buffer[hit_result.tri_indices.y]);
@@ -172,10 +172,9 @@ fn svlm_trace_primary_ray(ray_index: u32) {
         vertex0.normal.xyz * bary_w +
         vertex1.normal.xyz * bary_u +
         vertex2.normal.xyz * bary_v;
-    let world_normal = safe_normalize((
-        entity_transform.transpose_inverse_model_matrix *
-        vec4<f32>(normal_local, 0.0)
-    ).xyz);
+    let world_normal = safe_normalize(
+        transform_local_direction_from_instance(instance_transform, normal_local)
+    );
     let backfacing = dot(world_normal, direction) > 0.0;
 
     ray_data.rays[ray_index].hit_payload_t = vec4<f32>(

@@ -7,6 +7,7 @@
 @group(1) @binding(3) var<storage, read_write> surface_cache_sh_filtered: array<u32>;
 @group(1) @binding(4) var<storage, read> active_indices: array<u32>;
 @group(1) @binding(5) var<storage, read> counters: SurfaceCacheCountersReadOnly;
+@group(1) @binding(6) var<storage, read> surface_cache_hashmap: array<HashMapEntry>;
 
 #include "gi/surface_cache_lookup.wgsl"
 
@@ -36,7 +37,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let center_normal = safe_normalize(center_patch.normal_lod.xyz);
     let lod = min(
         surface_cache_grid_key_lod(center_patch.grid_key),
-        u32(surface_cache_params.surface_cache_lod_count) - 1u
+        surface_cache_maximum_lod(surface_cache_params)
     );
     let cell_size = surface_cache_lod_cell_size(lod, surface_cache_params);
     let center_descriptor = center_patch.grid_key.xyz;

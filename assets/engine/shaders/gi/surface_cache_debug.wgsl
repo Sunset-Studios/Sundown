@@ -8,6 +8,7 @@
 @group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(5) var scene_color: texture_2d<f32>;
 @group(1) @binding(6) var output_debug: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(7) var<storage, read> surface_cache_hashmap: array<HashMapEntry>;
 
 #include "gi/surface_cache_lookup.wgsl"
 
@@ -35,8 +36,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureLoad(depth_texture, pixel_coord, 0).r,
         view_index
     );
-    let camera_position = view_buffer[view_index].view_position.xyz;
-    let lod = surface_cache_select_lod(position, camera_position, surface_cache_params);
+    let lod = surface_cache_select_lod(position, surface_cache_params);
     let descriptor_position = surface_cache_quantize_position(position, lod, surface_cache_params);
     let descriptor_normal = surface_cache_quantize_normal(normal);
     let patch_index = surface_cache_find_patch(descriptor_position, descriptor_normal, lod);

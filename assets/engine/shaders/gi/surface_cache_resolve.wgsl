@@ -9,6 +9,7 @@
 @group(1) @binding(5) var out_direct: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(6) var out_indirect_diffuse: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(7) var out_indirect_specular: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(8) var<storage, read> surface_cache_hashmap: array<HashMapEntry>;
 
 #include "gi/surface_cache_lookup.wgsl"
 
@@ -36,14 +37,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let view_index = u32(frame_info.view_index);
-    let camera_position = view_buffer[view_index].view_position.xyz;
     let normal = safe_normalize(normal_data.xyz);
     let position = reconstruct_world_position(
         coord_to_uv(pixel_coord, full_resolution),
         textureLoad(depth_texture, pixel_coord, 0).r,
         view_index
     );
-    let cached_radiance = surface_cache_sample(position, normal, camera_position);
+    let cached_radiance = surface_cache_sample(position, normal);
 
     textureStore(out_direct, pixel_coord, vec4<f32>(0.0));
     textureStore(

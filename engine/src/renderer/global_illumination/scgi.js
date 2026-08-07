@@ -1,48 +1,37 @@
-import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
 import { GIPipelineComposition } from "./gi_pipeline.js";
-import { PerPixelRadianceCache, SurfaceRadianceCache } from "./radiance_caches.js";
+import { SurfaceRadianceCache } from "./radiance_caches.js";
 
-/** Surface-cache plus per-pixel path-traced GI composition. */
-export class PTGI {
+/** Surface-cache global illumination without a per-pixel tracing branch. */
+export class SCGI {
   final_gi_texture_direct = null;
   final_gi_texture_indirect_diffuse = null;
   final_gi_texture_indirect_specular = null;
   debug_texture = null;
 
   config = {
-    screen_ray_count: 1,
-    upscale_factor: 4,
     surface_cache_size: 131072,
     surface_cache_cell_size: 0.25,
-    surface_cache_lod_count: 4,
-    rays_per_patch: 1,
+    surface_cache_lod_count: 16,
+    rays_per_patch: 8,
     cache_entry_lifetime: 1,
-    history_hysteresis: 0.9,
+    hash_search_count: 10,
+    cache_pixel_footprint: 16.0,
+    cache_lookup_jitter: 1.0,
+    cache_sample_limit: 128,
+    history_hysteresis: 0.99,
     max_history_samples: 128,
     importance_sample_count: 8,
     importance_exploration: 0.01,
     indirect_boost: 1.0,
     max_ray_length: 128.0,
-    max_emissive_lights: 32768,
-    diffuse_atrous_enabled: false,
-    diffuse_atrous_pass_count: 3,
-    diffuse_atrous_phi_depth: 0.04,
-    diffuse_atrous_phi_normal: 64.0,
-    diffuse_atrous_luma_sigma: 1.0,
   };
 
-  constructor(params = {}, components = {}) {
+  constructor(params = {}) {
     this.surface_radiance_cache = new SurfaceRadianceCache(params.surface_radiance_cache);
-    this.pixel_radiance_cache = new PerPixelRadianceCache(params.pixel_radiance_cache);
     this.pipeline = new GIPipelineComposition([
       {
         name: "surface",
         module: this.surface_radiance_cache,
-      },
-      {
-        name: "pixel",
-        dependencies: { radiance_cache: "surface" },
-        module: this.pixel_radiance_cache,
       },
     ]);
   }
@@ -52,12 +41,12 @@ export class PTGI {
     width,
     height,
     depth_texture,
-    prev_depth_texture,
+    _prev_depth_texture,
     gbuffer_normal,
-    gbuffer_normal_prev,
-    gbuffer_albedo,
-    gbuffer_smra,
-    gbuffer_motion_emissive,
+    _gbuffer_normal_prev,
+    _gbuffer_albedo,
+    _gbuffer_smra,
+    _gbuffer_motion_emissive,
     tlas_bvh2_bounds,
     tlas_bvh_info,
     blas_bvh2_nodes,
@@ -75,32 +64,14 @@ export class PTGI {
       return;
     }
 
-    const safe_upscale_factor = Math.max(1, Math.floor(this.config.upscale_factor));
-    const gi_width = Math.max(1, Math.ceil(width / safe_upscale_factor));
-    const gi_height = Math.max(1, Math.ceil(height / safe_upscale_factor));
-    const total_pixels = gi_width * gi_height;
-    const frame_index = SharedFrameInfoBuffer.get_frame_index();
-
     this.pipeline.add_passes(render_graph, {
       config: this.config,
       width,
       height,
-      gi_width,
-      gi_height,
-      total_pixels,
-      rays_per_frame: total_pixels * this.config.screen_ray_count,
-      safe_upscale_factor,
-      frame_index,
-      ping_pong_frame: frame_index % 2,
       force_recreate,
       inputs: {
         depth_texture,
-        prev_depth_texture,
         gbuffer_normal,
-        gbuffer_normal_prev,
-        gbuffer_albedo,
-        gbuffer_smra,
-        gbuffer_motion_emissive,
         tlas_bvh2_bounds,
         tlas_bvh_info,
         blas_bvh2_nodes,
@@ -112,7 +83,7 @@ export class PTGI {
       },
     });
 
-    const output = this.pipeline.get_module("pixel");
+    const output = this.pipeline.get_module("surface");
     this.final_gi_texture_direct = output.get_resource("direct_output");
     this.final_gi_texture_indirect_diffuse = output.get_resource("diffuse_output");
     this.final_gi_texture_indirect_specular = output.get_resource("specular_output");
@@ -122,9 +93,9 @@ export class PTGI {
     render_graph,
     width,
     height,
-    main_normal_image,
+    gbuffer_normal,
     depth_texture,
-    post_lighting_image_desc,
+    scene_color,
     debug_view,
     force_recreate = false
   ) {
@@ -134,9 +105,9 @@ export class PTGI {
       debug_view,
       force_recreate,
       inputs: {
-        gbuffer_normal: main_normal_image,
+        gbuffer_normal,
         depth_texture,
-        scene_color: post_lighting_image_desc,
+        scene_color,
       },
     });
     return this.debug_texture;
@@ -150,5 +121,6 @@ export class PTGI {
     this.final_gi_texture_direct = null;
     this.final_gi_texture_indirect_diffuse = null;
     this.final_gi_texture_indirect_specular = null;
+    this.debug_texture = null;
   }
 }

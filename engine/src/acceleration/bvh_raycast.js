@@ -7,10 +7,10 @@ import { RandomAccessAllocator, RingBufferAllocator } from "../memory/allocator.
 import { MeshBLAS } from "./mesh_blas.js";
 import { MeshData } from "../renderer/mesh_data.js";
 import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
+import { TransformProcessor } from "../core/subsystems/transform_processor.js";
 
 const EPSILON = 0.0001;
 const bounds_name = "bounds";
-const transforms_name = "transforms";
 
 export const RayHitMode = {
   BLAS: 0,
@@ -178,10 +178,7 @@ export class BVHRaycast {
       bounds_name
     );
 
-    const entity_transforms_gpu = EntityManager.get_fragment_gpu_buffer(
-      TransformFragment,
-      transforms_name
-    );
+    const compact_transforms = TransformProcessor.get_compact_transforms_buffer();
 
     const blas_gpu_data = MeshBLAS.to_gpu_data();
     const index_buffer = MeshData.index_buffer;
@@ -195,7 +192,7 @@ export class BVHRaycast {
         this.rays_buffer,
         this.hits_buffer,
         bounds_gpu.buffer,
-        entity_transforms_gpu.buffer,
+        compact_transforms,
         blas_gpu_data.bvh2_nodes_buffer,
         blas_gpu_data.directory_buffer,
         index_buffer,
