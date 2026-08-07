@@ -4,7 +4,7 @@
 // ╠═══════════════════════════════════════════════════════════════════════════╣
 // ║  A compact sidecar turns any equally-sized storage-buffer array into a    ║
 // ║  bounded, concurrent hash map. Payload ownership stays with the caller;   ║
-// ║  this file owns hashing, probing, timestamps, claims, and publication.    ║
+// ║  this file owns hashing, probing, timestamps, and atomic claims.          ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
 
@@ -12,14 +12,12 @@
 // empty-table representation. Reused buffers must be cleared before repurposing.
 
 const HASHMAP_EMPTY_CHECKSUM: u32 = 0u;
-const HASHMAP_LOCKED_CHECKSUM: u32 = 0xffffffffu;
 const HASHMAP_INVALID_INDEX: u32 = 0xffffffffu;
-const HASHMAP_ENTRY_WORD_COUNT: u32 = 4u;
+const HASHMAP_ENTRY_WORD_COUNT: u32 = 3u;
 
 const HASHMAP_RESULT_MISS: u32 = 0u;
 const HASHMAP_RESULT_FOUND: u32 = 1u;
 const HASHMAP_RESULT_CLAIMED: u32 = 2u;
-const HASHMAP_RESULT_BUSY: u32 = 3u;
 const HASHMAP_RESULT_ALREADY_UPDATED: u32 = 4u;
 
 // Read-only view used by lookup passes. Mutation passes bind the same buffer as
@@ -28,7 +26,6 @@ struct HashMapEntry {
     checksum: u32,
     last_used_frame: u32,
     last_update_frame: u32,
-    lock: u32,
 };
 
 struct HashMapKey {
@@ -50,7 +47,7 @@ fn hashmap_pcg(value: u32) -> u32 {
 }
 
 // xxHash32's single-word avalanche is used for the independently stored
-// checksum. Zero and all-ones are reserved for empty and publishing slots.
+// checksum. Zero is reserved for empty slots.
 fn hashmap_xxhash32(value: u32) -> u32 {
     const PRIME32_2: u32 = 2246822519u;
     const PRIME32_3: u32 = 3266489917u;
@@ -75,9 +72,6 @@ fn hashmap_xxhash32_combine(value: u32, nested_hash: u32) -> u32 {
 fn hashmap_sanitize_checksum(checksum: u32) -> u32 {
     if (checksum == HASHMAP_EMPTY_CHECKSUM) {
         return 1u;
-    }
-    if (checksum == HASHMAP_LOCKED_CHECKSUM) {
-        return HASHMAP_LOCKED_CHECKSUM - 1u;
     }
     return checksum;
 }
@@ -118,143 +112,50 @@ fn hashmap_atomic_last_used_frame(
     return atomicLoad(&(*entries)[hashmap_atomic_word_offset(entry_index, 1u)]);
 }
 
-fn hashmap_atomic_last_update_frame(
-    entries: ptr<storage, array<atomic<u32>>, read_write>,
-    entry_index: u32
-) -> u32 {
-    return atomicLoad(&(*entries)[hashmap_atomic_word_offset(entry_index, 2u)]);
-}
-
-fn hashmap_try_acquire_lock(
-    entries: ptr<storage, array<atomic<u32>>, read_write>,
-    entry_index: u32
-) -> bool {
-    let lock_offset = hashmap_atomic_word_offset(entry_index, 3u);
-    // Weak compare-exchange may fail spuriously. A small bounded retry avoids
-    // an unbounded GPU spin while making a false busy result very unlikely.
-    for (var attempt = 0u; attempt < 4u; attempt = attempt + 1u) {
-        let claim = atomicCompareExchangeWeak(&(*entries)[lock_offset], 0u, 1u);
-        if (claim.exchanged) {
-            return true;
-        }
-        if (claim.old_value != 0u) {
-            return false;
-        }
-    }
-    return false;
-}
-
-fn hashmap_release_lock(
-    entries: ptr<storage, array<atomic<u32>>, read_write>,
-    entry_index: u32
-) {
-    atomicStore(&(*entries)[hashmap_atomic_word_offset(entry_index, 3u)], 0u);
-}
-
-// Begin writing either an empty slot or an expired occupied slot. The checksum
-// is changed to the publishing sentinel only after exclusive ownership and a
-// second age check, preventing two invocations from recycling the same entry.
-fn hashmap_try_begin_claim(
+// Claim an empty or expired slot by replacing the checksum directly. Weak
+// compare-exchange may fail spuriously, so retry without spinning indefinitely.
+fn hashmap_try_claim(
     entries: ptr<storage, array<atomic<u32>>, read_write>,
     entry_index: u32,
     observed_checksum: u32,
+    checksum: u32,
     current_frame: u32,
     lifetime: u32
 ) -> bool {
     if (
-        observed_checksum == HASHMAP_LOCKED_CHECKSUM ||
-        !hashmap_try_acquire_lock(entries, entry_index)
-    ) {
-        return false;
-    }
-
-    let current_checksum = hashmap_atomic_checksum(entries, entry_index);
-    if (current_checksum != observed_checksum) {
-        hashmap_release_lock(entries, entry_index);
-        return false;
-    }
-
-    if (
-        current_checksum != HASHMAP_EMPTY_CHECKSUM &&
+        observed_checksum != HASHMAP_EMPTY_CHECKSUM &&
         !hashmap_entry_is_expired(
             hashmap_atomic_last_used_frame(entries, entry_index),
             current_frame,
             lifetime
         )
     ) {
-        hashmap_release_lock(entries, entry_index);
         return false;
     }
 
-    atomicStore(
-        &(*entries)[hashmap_atomic_word_offset(entry_index, 0u)],
-        HASHMAP_LOCKED_CHECKSUM
-    );
-    return true;
-}
-
-// The caller initializes its ordinary payload buffer while the claim is held,
-// then publishes the checksum and releases the slot with this function.
-fn hashmap_publish_claim(
-    entries: ptr<storage, array<atomic<u32>>, read_write>,
-    entry_index: u32,
-    checksum: u32,
-    current_frame: u32
-) {
-    atomicStore(
-        &(*entries)[hashmap_atomic_word_offset(entry_index, 1u)],
-        current_frame
-    );
-    atomicStore(
-        &(*entries)[hashmap_atomic_word_offset(entry_index, 2u)],
-        current_frame
-    );
-    atomicStore(
-        &(*entries)[hashmap_atomic_word_offset(entry_index, 0u)],
-        hashmap_sanitize_checksum(checksum)
-    );
-    hashmap_release_lock(entries, entry_index);
-}
-
-fn hashmap_touch_locked_entry(
-    entries: ptr<storage, array<atomic<u32>>, read_write>,
-    entry_index: u32,
-    current_frame: u32
-) {
-    atomicStore(
-        &(*entries)[hashmap_atomic_word_offset(entry_index, 1u)],
-        current_frame
-    );
-}
-
-fn hashmap_mark_updated_locked(
-    entries: ptr<storage, array<atomic<u32>>, read_write>,
-    entry_index: u32,
-    current_frame: u32
-) {
-    atomicStore(
-        &(*entries)[hashmap_atomic_word_offset(entry_index, 2u)],
-        current_frame
-    );
-}
-
-fn hashmap_clear_locked_entry(
-    entries: ptr<storage, array<atomic<u32>>, read_write>,
-    entry_index: u32
-) {
-    atomicStore(
-        &(*entries)[hashmap_atomic_word_offset(entry_index, 1u)],
-        0u
-    );
-    atomicStore(
-        &(*entries)[hashmap_atomic_word_offset(entry_index, 2u)],
-        0u
-    );
-    atomicStore(
-        &(*entries)[hashmap_atomic_word_offset(entry_index, 0u)],
-        HASHMAP_EMPTY_CHECKSUM
-    );
-    hashmap_release_lock(entries, entry_index);
+    let checksum_offset = hashmap_atomic_word_offset(entry_index, 0u);
+    for (var attempt = 0u; attempt < 4u; attempt = attempt + 1u) {
+        let claim = atomicCompareExchangeWeak(
+            &(*entries)[checksum_offset],
+            observed_checksum,
+            hashmap_sanitize_checksum(checksum)
+        );
+        if (claim.exchanged) {
+            atomicStore(
+                &(*entries)[hashmap_atomic_word_offset(entry_index, 1u)],
+                current_frame
+            );
+            atomicStore(
+                &(*entries)[hashmap_atomic_word_offset(entry_index, 2u)],
+                current_frame
+            );
+            return true;
+        }
+        if (claim.old_value != observed_checksum) {
+            return false;
+        }
+    }
+    return false;
 }
 
 // Checksum-only lookup mirrors the article's compact representation. Clients
@@ -281,7 +182,6 @@ fn hashmap_find(
 }
 
 // Generic find-or-claim for payloads whose 32-bit checksum is their identity.
-// A CLAIMED result keeps the slot locked until hashmap_publish_claim() runs.
 fn hashmap_find_or_claim(
     entries: ptr<storage, array<atomic<u32>>, read_write>,
     key: HashMapKey,
@@ -291,27 +191,13 @@ fn hashmap_find_or_claim(
     lifetime: u32
 ) -> HashMapResult {
     let search_count = hashmap_search_count(requested_search_count, capacity);
+    var reclaim_index = HASHMAP_INVALID_INDEX;
+    var reclaim_checksum = HASHMAP_EMPTY_CHECKSUM;
+
     for (var probe = 0u; probe < search_count; probe = probe + 1u) {
         let entry_index = hashmap_probe_index(key.hash_value, probe, capacity);
         let checksum = hashmap_atomic_checksum(entries, entry_index);
         if (checksum == key.checksum) {
-            if (hashmap_atomic_last_update_frame(entries, entry_index) == current_frame) {
-                atomicStore(
-                    &(*entries)[hashmap_atomic_word_offset(entry_index, 1u)],
-                    current_frame
-                );
-                return HashMapResult(
-                    entry_index,
-                    HASHMAP_RESULT_ALREADY_UPDATED
-                );
-            }
-            if (!hashmap_try_acquire_lock(entries, entry_index)) {
-                return HashMapResult(HASHMAP_INVALID_INDEX, HASHMAP_RESULT_BUSY);
-            }
-            if (hashmap_atomic_checksum(entries, entry_index) != key.checksum) {
-                hashmap_release_lock(entries, entry_index);
-                return HashMapResult(HASHMAP_INVALID_INDEX, HASHMAP_RESULT_BUSY);
-            }
             atomicStore(
                 &(*entries)[hashmap_atomic_word_offset(entry_index, 1u)],
                 current_frame
@@ -321,37 +207,42 @@ fn hashmap_find_or_claim(
                 current_frame
             );
             if (previous_update_frame == current_frame) {
-                hashmap_release_lock(entries, entry_index);
                 return HashMapResult(
                     entry_index,
                     HASHMAP_RESULT_ALREADY_UPDATED
                 );
             }
-            hashmap_release_lock(entries, entry_index);
             return HashMapResult(entry_index, HASHMAP_RESULT_FOUND);
         }
-        if (checksum == HASHMAP_LOCKED_CHECKSUM) {
-            return HashMapResult(HASHMAP_INVALID_INDEX, HASHMAP_RESULT_BUSY);
-        }
-        if (
-            checksum == HASHMAP_EMPTY_CHECKSUM ||
-            hashmap_entry_is_expired(
+
+        let is_empty = checksum == HASHMAP_EMPTY_CHECKSUM;
+        let is_expired = !is_empty && hashmap_entry_is_expired(
                 hashmap_atomic_last_used_frame(entries, entry_index),
                 current_frame,
                 lifetime
-            )
-        ) {
-            if (hashmap_try_begin_claim(
-                entries,
-                entry_index,
-                checksum,
-                current_frame,
-                lifetime
-            )) {
-                return HashMapResult(entry_index, HASHMAP_RESULT_CLAIMED);
-            }
-            return HashMapResult(HASHMAP_INVALID_INDEX, HASHMAP_RESULT_BUSY);
+            );
+        if ((is_empty || is_expired) && reclaim_index == HASHMAP_INVALID_INDEX) {
+            reclaim_index = entry_index;
+            reclaim_checksum = checksum;
+        }
+        if (is_empty) {
+            break;
         }
     }
+
+    if (reclaim_index != HASHMAP_INVALID_INDEX) {
+        if (hashmap_try_claim(
+            entries,
+            reclaim_index,
+            reclaim_checksum,
+            key.checksum,
+            current_frame,
+            lifetime
+        )) {
+            return HashMapResult(reclaim_index, HASHMAP_RESULT_CLAIMED);
+        }
+        return HashMapResult(HASHMAP_INVALID_INDEX, HASHMAP_RESULT_MISS);
+    }
+
     return HashMapResult(HASHMAP_INVALID_INDEX, HASHMAP_RESULT_MISS);
 }

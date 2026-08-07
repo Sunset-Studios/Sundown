@@ -1193,7 +1193,7 @@ export class SurfaceRadianceCache extends GIModule {
     });
     this.create_buffer(render_graph, "hashmap_entries", {
       name: "surface_cache_hashmap_entries",
-      size: context.total_patches * 4,
+      size: context.total_patches * 3,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -1304,8 +1304,8 @@ export class SurfaceRadianceCache extends GIModule {
       this.params_data[12] = rays_per_patch;
       this.params_data[13] = Math.max(config.cache_pixel_footprint ?? 3, 1);
       this.params_data[14] = Math.max(config.cache_lookup_jitter ?? 0, 0);
-      this.params_data[15] = Math.max(config.cache_sample_limit ?? 0, 0);
-      this.params_data[16] = clamp(Math.floor(config.hash_search_count ?? 10), 1, 64);
+      this.params_data[15] = clamp(Math.floor(config.hash_search_count ?? 10), 1, 64);
+      this.params_data[16] = Math.max(config.cache_normal_bias ?? 0, 0);
       this.params_data[17] = 0;
       this.params_data[18] = 0;
       this.params_data[19] = 0;

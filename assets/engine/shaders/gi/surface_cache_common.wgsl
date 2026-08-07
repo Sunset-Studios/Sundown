@@ -10,6 +10,9 @@ const SURFACE_CACHE_NORMAL_DESCRIPTOR_COUNT: u32 = 343u;
 const SURFACE_CACHE_CELL_EXPONENT_BIAS: i32 = 16;
 const SURFACE_CACHE_MIN_CELL_EXPONENT: i32 = -16;
 const SURFACE_CACHE_MAX_CELL_EXPONENT: i32 = 15;
+const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.2;
+const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 0.8;
+const SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES: f32 = 16.0;
 
 struct SurfaceCacheParams {
     surface_cache_size: f32,
@@ -27,11 +30,17 @@ struct SurfaceCacheParams {
     rays_per_patch: f32,
     cache_pixel_footprint: f32,
     cache_lookup_jitter: f32,
-    cache_sample_limit: f32,
     hash_search_count: f32,
+    cache_normal_bias: f32,
     padding0: f32,
     padding1: f32,
     padding2: f32,
+};
+
+struct SurfaceCacheCellLevels {
+    fine_exponent: i32,
+    coarse_exponent: i32,
+    blend: f32,
 };
 
 struct SurfacePatch {
@@ -144,11 +153,13 @@ fn surface_cache_rays_per_patch(params: SurfaceCacheParams) -> u32 {
     return max(u32(params.rays_per_patch), 1u);
 }
 
-// Convert the configured screen-space feature size into a stable world-space
-// cell size. Quantizing the exponent follows the article's
-// 2^floor(log2(pixel_footprint)) construction; fixed internal bounds only keep
-// the exponent compact enough to pack into the cache descriptor.
-fn surface_cache_cell_exponent(position: vec3<f32>, params: SurfaceCacheParams) -> i32 {
+// Convert the configured screen-space feature size into a continuous
+// world-space exponent. Keeping the fractional component lets adjacent cache
+// levels overlap instead of replacing one another at a hard power-of-two line.
+fn surface_cache_cell_exponent_value(
+    position: vec3<f32>,
+    params: SurfaceCacheParams
+) -> f32 {
     let view = view_buffer[u32(frame_info.view_index)];
     let projection_y_scale = max(abs(view.projection_matrix[1][1]), 1e-6);
     let view_depth = abs((view.view_matrix * vec4<f32>(position, 1.0)).z);
@@ -164,15 +175,42 @@ fn surface_cache_cell_exponent(position: vec3<f32>, params: SurfaceCacheParams) 
         (half_view_height * 2.0) / max(params.full_resolution_y, 1.0)
     );
     let minimum_cell_size = exp2(f32(SURFACE_CACHE_MIN_CELL_EXPONENT));
-    let quantized_exponent = i32(floor(log2(max(
+    let exponent_value = log2(max(
         world_space_footprint,
         minimum_cell_size
-    ))));
+    ));
     return clamp(
-        quantized_exponent,
-        SURFACE_CACHE_MIN_CELL_EXPONENT,
+        exponent_value,
+        f32(SURFACE_CACHE_MIN_CELL_EXPONENT),
+        f32(SURFACE_CACHE_MAX_CELL_EXPONENT)
+    );
+}
+
+fn surface_cache_cell_levels(
+    position: vec3<f32>,
+    params: SurfaceCacheParams
+) -> SurfaceCacheCellLevels {
+    let exponent_value = surface_cache_cell_exponent_value(position, params);
+    let fine_exponent = i32(floor(exponent_value));
+    let coarse_exponent = min(
+        fine_exponent + 1,
         SURFACE_CACHE_MAX_CELL_EXPONENT
     );
+    let level_fraction = fract(exponent_value);
+    let blend = select(
+        smoothstep(
+            SURFACE_CACHE_LEVEL_BLEND_START,
+            SURFACE_CACHE_LEVEL_BLEND_END,
+            level_fraction
+        ),
+        0.0,
+        fine_exponent == coarse_exponent
+    );
+    return SurfaceCacheCellLevels(fine_exponent, coarse_exponent, blend);
+}
+
+fn surface_cache_cell_exponent(position: vec3<f32>, params: SurfaceCacheParams) -> i32 {
+    return surface_cache_cell_levels(position, params).fine_exponent;
 }
 
 fn surface_cache_cell_size(cell_exponent: i32) -> f32 {
@@ -187,8 +225,42 @@ fn surface_cache_decode_cell_exponent(encoded_exponent: u32) -> i32 {
     return i32(encoded_exponent) - SURFACE_CACHE_CELL_EXPONENT_BIAS;
 }
 
-fn surface_cache_quantize_position(position: vec3<f32>, cell_exponent: i32) -> vec3<i32> {
-    return vec3<i32>(floor(position / surface_cache_cell_size(cell_exponent)));
+fn surface_cache_descriptor_offset(
+    normal: vec3<f32>,
+    cell_size: f32,
+    params: SurfaceCacheParams
+) -> vec3<f32> {
+    let normalized = safe_normalize(normal);
+    let absolute_normal = abs(normalized);
+    let dominant_axis = select(
+        select(2u, 1u, absolute_normal.y >= absolute_normal.z),
+        0u,
+        absolute_normal.x >= max(absolute_normal.y, absolute_normal.z)
+    );
+    let bias = max(params.cache_normal_bias, 0.0) * cell_size;
+
+    if (dominant_axis == 0u) {
+        return vec3<f32>(select(-bias, bias, normalized.x >= 0.0), 0.0, 0.0);
+    }
+    if (dominant_axis == 1u) {
+        return vec3<f32>(0.0, select(-bias, bias, normalized.y >= 0.0), 0.0);
+    }
+    return vec3<f32>(0.0, 0.0, select(-bias, bias, normalized.z >= 0.0));
+}
+
+fn surface_cache_quantize_position(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    cell_exponent: i32,
+    params: SurfaceCacheParams
+) -> vec3<i32> {
+    let cell_size = surface_cache_cell_size(cell_exponent);
+    let descriptor_position = position + surface_cache_descriptor_offset(
+        normal,
+        cell_size,
+        params
+    );
+    return vec3<i32>(floor(descriptor_position / cell_size));
 }
 
 // Return the world-space center of a quantized cell constrained to the patch's
@@ -314,13 +386,6 @@ fn surface_cache_hash_search_count(params: SurfaceCacheParams) -> u32 {
         max(u32(params.hash_search_count), 1u),
         max(u32(params.total_patch_count), 1u)
     );
-}
-
-fn surface_cache_sample_limit_reached(
-    surface_patch: SurfacePatch,
-    params: SurfaceCacheParams
-) -> bool {
-    return params.cache_sample_limit > 0.0 && surface_patch.history.x >= params.cache_sample_limit;
 }
 
 fn surface_cache_jitter_lookup_position(

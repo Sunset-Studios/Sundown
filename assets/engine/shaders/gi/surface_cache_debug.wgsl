@@ -37,7 +37,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         view_index
     );
     let cell_exponent = surface_cache_cell_exponent(position, surface_cache_params);
-    let descriptor_position = surface_cache_quantize_position(position, cell_exponent);
+    let descriptor_position = surface_cache_quantize_position(
+        position,
+        normal,
+        cell_exponent,
+        surface_cache_params
+    );
     let descriptor_normal = surface_cache_quantize_normal(normal);
     let patch_index = surface_cache_find_patch(
         descriptor_position,

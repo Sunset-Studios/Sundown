@@ -67,7 +67,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 center_normal,
                 center_tangent_cell + tap_offset,
                 dominant_axis,
-                cell_size
+                cell_size,
+                surface_cache_params
             );
             let neighbor_index_i = surface_cache_find_patch(
                 descriptor,

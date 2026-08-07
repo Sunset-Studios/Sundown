@@ -20,8 +20,8 @@ fn store_zero(pixel_coord: vec2<i32>) {
 }
 
 // Pure reconstruction pass. Noise and geometry-aware filtering have already
-// been handled in surface-cache space; this pass only resolves three filtered
-// patch samples into the full-resolution indirect-lighting texture.
+// been handled in surface-cache space; this pass reconstructs geometry-aware
+// filtered patch samples into the full-resolution indirect-lighting texture.
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let full_resolution = surface_cache_full_resolution(surface_cache_params);

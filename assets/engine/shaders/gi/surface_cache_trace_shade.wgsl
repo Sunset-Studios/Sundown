@@ -104,7 +104,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let hit_position = path.hit_position_sampling_weight.xyz;
     let view_direction = normalize(-path.ray_direction_primitive.xyz);
-    let recurrent_irradiance = surface_cache_sample(
+    let recurrent_irradiance = surface_cache_sample_nearest(
         hit_position,
         shading_normal
     ).xyz;

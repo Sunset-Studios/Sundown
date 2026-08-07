@@ -3230,12 +3230,20 @@ export class BackroomsScene extends Scene {
   geometry_batches = new Map();
   cube_mesh = null;
   flicker_material = null;
+  fixture_lights = [];
+  flicker_light_indices = [];
+  fixture_light_entity = null;
+  flicker_time = 0.0;
 
   init(parent_context) {
     super.init(parent_context);
 
     this.entities.length = 0;
     this.geometry_batches.clear();
+    this.fixture_lights.length = 0;
+    this.flicker_light_indices.length = 0;
+    this.fixture_light_entity = null;
+    this.flicker_time = 0.0;
 
     const camera_control = this.add_layer(FreeformArcballControlProcessor);
     camera_control.move_speed = 7.0;
@@ -3259,8 +3267,13 @@ export class BackroomsScene extends Scene {
     this.flush_geometry_batches();
     this.create_lighting();
 
+    const geometry_count = [...this.geometry_batches.values()].reduce(
+      (count, batch) => count + batch.length,
+      0
+    );
     log(
-      `[${this.name}] Initialized ${this.geometry_batches.size} material batches across `
+      `[${this.name}] Initialized ${geometry_count} pieces in ` +
+        `${this.geometry_batches.size} material batches with ${this.fixture_lights.length} fixtures.`
     );
   }
 
@@ -3371,6 +3384,30 @@ export class BackroomsScene extends Scene {
     clock_face.set_roughness(0.86);
     clock_face.set_metallic(0.0);
 
+    const damp_stain = StandardMaterial.create("backrooms_damp_stain");
+    damp_stain.set_albedo([0.22, 0.17, 0.055, 1.0]);
+    damp_stain.set_roughness(0.9);
+    damp_stain.set_metallic(0.0);
+    damp_stain.set_specular(0.12);
+
+    const puddle = StandardMaterial.create("backrooms_standing_water");
+    puddle.set_albedo([0.11, 0.095, 0.035, 1.0]);
+    puddle.set_roughness(0.28);
+    puddle.set_metallic(0.0);
+    puddle.set_specular(0.72);
+
+    const exit_sign = StandardMaterial.create("backrooms_exit_sign");
+    exit_sign.set_albedo([0.09, 0.34, 0.12, 1.0]);
+    exit_sign.set_emission(5.5);
+    exit_sign.set_roughness(0.7);
+    exit_sign.set_metallic(0.0);
+
+    const false_daylight = StandardMaterial.create("backrooms_false_daylight");
+    false_daylight.set_albedo([0.41, 0.65, 0.63, 1.0]);
+    false_daylight.set_emission(2.4);
+    false_daylight.set_roughness(0.88);
+    false_daylight.set_metallic(0.0);
+
     return {
       wallpaper: wallpaper.material_id,
       carpet: carpet.material_id,
@@ -3385,6 +3422,10 @@ export class BackroomsScene extends Scene {
       plastic: plastic.material_id,
       screen: screen.material_id,
       clock_face: clock_face.material_id,
+      damp_stain: damp_stain.material_id,
+      puddle: puddle.material_id,
+      exit_sign: exit_sign.material_id,
+      false_daylight: false_daylight.material_id,
     };
   }
 
@@ -3504,16 +3545,16 @@ export class BackroomsScene extends Scene {
     }
 
     const portals = [
-      ["x", 11, 0, 5, 6.6, 5.35],
-      ["x", 27, 0, 5, 6.6, 5.1],
-      ["z", -9, 0, 5, 7.0, 5.35],
-      ["z", -27, 0, 5, 5.8, 4.8],
-      ["x", -14, -36, 6, 5.8, 4.75],
-      ["x", 14, -36, 6, 4.8, 4.1],
-      ["x", 34, -36, 6, 4.8, 4.0],
-      ["z", -25, 44, 6, 6.0, 4.9],
-      ["z", -11, 44, 6, 6.0, 4.9],
-      ["x", -11, 0, 4.4, 6.5, 5.0],
+      ["x", 11, 0, 5, 7.2, 5.35],
+      ["x", 27, 0, 5, 8.4, 5.1],
+      ["z", -9, 0, 5, 7.2, 5.35],
+      ["z", -27, 0, 5, 7.0, 4.8],
+      ["x", -14, -36, 6, 7.0, 4.75],
+      ["x", 14, -36, 6, 5.8, 4.1],
+      ["x", 34, -36, 6, 9.0, 4.0],
+      ["z", -25, 44, 6, 9.0, 4.9],
+      ["z", -11, 44, 6, 8.4, 4.9],
+      ["x", -11, 0, 4.4, 7.2, 5.0],
     ];
 
     for (const portal of portals) {
@@ -3637,12 +3678,70 @@ export class BackroomsScene extends Scene {
     if (fixture_type === "dead") panel_material = materials.dark_void;
 
     this.queue_box([x, height - 0.095, z], [1.52, 0.025, 0.42], panel_material);
+    this.fixture_lights.push({ x, y: height - 0.42, z, fixture_type });
   }
 
   create_liminal_details(materials) {
     // A wall that almost bisects the first room forces an immediate, inexplicable detour.
     this.add_wall_segment("x", -4.2, -5.2, 1.2, 5.65, materials);
     this.queue_box([-4.2, 5.9, -2.0], [0.55, 0.24, 3.35], materials.wallpaper);
+
+    // A door-shaped absence is visible from the starting position, but has no frame or purpose.
+    this.queue_box([6.4, 2.45, -8.86], [1.25, 2.45, 0.035], materials.dark_void);
+    this.queue_box([6.4, 5.0, -8.82], [1.48, 0.11, 0.11], materials.baseboard);
+    this.queue_box([5.04, 2.5, -8.82], [0.11, 2.5, 0.11], materials.baseboard);
+    this.queue_box([7.76, 2.5, -8.82], [0.11, 2.5, 0.11], materials.baseboard);
+
+    // Damp carpet and standing water break up the otherwise uniform floor response.
+    this.queue_box(
+      [4.45, 0.012, 3.15],
+      [1.38, 0.012, 0.48],
+      materials.damp_stain,
+      quat.fromEuler(quat.create(), 0, 7, 0)
+    );
+    this.queue_box(
+      [5.65, 0.013, 2.86],
+      [0.72, 0.012, 0.32],
+      materials.damp_stain,
+      quat.fromEuler(quat.create(), 0, -14, 0)
+    );
+    this.queue_box(
+      [4.45, 0.027, 3.15],
+      [0.92, 0.008, 0.27],
+      materials.puddle,
+      quat.fromEuler(quat.create(), 0, 11, 0)
+    );
+    this.queue_box(
+      [5.18, 0.028, 2.92],
+      [0.56, 0.008, 0.2],
+      materials.puddle,
+      quat.fromEuler(quat.create(), 0, -17, 0)
+    );
+    this.queue_box(
+      [-7.2, 0.012, 5.2],
+      [1.2, 0.012, 0.45],
+      materials.damp_stain,
+      quat.fromEuler(quat.create(), 0, -11, 0)
+    );
+
+    // Repeated threshold frames make the south corridor feel longer than its footprint.
+    for (let z = -11.5; z >= -25.5; z -= 3.5) {
+      this.queue_box([-2.66, 2.75, z], [0.16, 2.75, 0.18], materials.baseboard);
+      this.queue_box([2.66, 2.75, z], [0.16, 2.75, 0.18], materials.baseboard);
+      this.queue_box([0, 5.38, z], [2.82, 0.16, 0.18], materials.baseboard);
+    }
+
+    // Several ceiling tiles are missing or hanging loose, revealing only featureless blackness.
+    this.add_ceiling_void(-5.8, 4.4, 7.2, materials);
+    this.add_ceiling_void(22.8, 0.0, 6.6, materials);
+    this.add_ceiling_void(-8.0, -40.8, 5.8, materials);
+    this.add_ceiling_void(39.0, -31.2, 9.0, materials);
+    this.queue_box(
+      [41.0, 7.85, -41.0],
+      [1.75, 0.045, 0.58],
+      materials.ceiling,
+      quat.fromEuler(quat.create(), 8, 0, -5)
+    );
 
     // The tall room uses a too-regular forest of columns, interrupted by one swollen column.
     for (let x = 32; x <= 46; x += 7) {
@@ -3667,12 +3766,48 @@ export class BackroomsScene extends Scene {
     this.add_chair(-23.4, -39.5, materials);
     this.add_chair(-19.6, -39.5, materials);
     this.add_wall_clock(-25.0, -42.78, materials);
+    this.queue_box(
+      [-29.5, 0.012, -35.15],
+      [2.1, 0.012, 0.52],
+      materials.damp_stain,
+      quat.fromEuler(quat.create(), 0, 6, 0)
+    );
+    this.queue_box(
+      [-27.4, 0.013, -35.45],
+      [1.15, 0.012, 0.34],
+      materials.damp_stain,
+      quat.fromEuler(quat.create(), 0, -12, 0)
+    );
+    this.queue_box(
+      [-30.2, 0.027, -35.0],
+      [1.15, 0.008, 0.26],
+      materials.puddle,
+      quat.fromEuler(quat.create(), 0, -8, 0)
+    );
+    this.queue_box(
+      [-28.85, 0.028, -35.25],
+      [0.62, 0.008, 0.2],
+      materials.puddle,
+      quat.fromEuler(quat.create(), 0, 14, 0)
+    );
 
     // Cubicle fragments stop short of enclosing anything useful.
     this.queue_box([-25.0, 1.45, -1.8], [0.09, 1.45, 4.0], materials.wallpaper);
     this.queue_box([-19.0, 1.45, 1.9], [3.0, 1.45, 0.09], materials.wallpaper);
     this.queue_box([-28.5, 1.45, 2.6], [2.4, 1.45, 0.09], materials.wallpaper);
     this.add_wall_phone(-30.2, -6.76, materials);
+
+    // An interior "window" emits cold, immobile daylight into an otherwise sealed office.
+    this.queue_box([-32.86, 3.25, 2.0], [0.035, 1.35, 2.1], materials.false_daylight);
+    this.queue_box([-32.78, 3.25, -0.2], [0.11, 1.55, 0.12], materials.baseboard);
+    this.queue_box([-32.78, 3.25, 4.2], [0.11, 1.55, 0.12], materials.baseboard);
+    this.queue_box([-32.78, 1.82, 2.0], [0.11, 0.12, 2.32], materials.baseboard);
+    this.queue_box([-32.78, 4.68, 2.0], [0.11, 0.12, 2.32], materials.baseboard);
+
+    // A glowing EXIT marker points deeper into the building instead of toward an exit.
+    this.queue_box([13.86, 3.9, -36.0], [0.035, 0.38, 0.92], materials.exit_sign);
+    this.queue_box([13.8, 3.9, -36.0], [0.08, 0.48, 1.05], materials.plastic);
+    this.queue_box([13.71, 3.9, -36.0], [0.035, 0.34, 0.86], materials.exit_sign);
 
     // A lone powered CRT faces the large final room, with no cable or apparent source.
     this.add_crt_cart(38.5, -43.0, materials);
@@ -3697,6 +3832,39 @@ export class BackroomsScene extends Scene {
     for (let z = -23; z <= -13; z += 2.5) {
       this.queue_box([44, 5.35, z], [1.62, 0.07, 0.07], materials.metal);
     }
+
+    // A leaking service pipe leaves a dark trail beneath the final dead fixture.
+    this.queue_box([46.1, 7.55, -28.4], [0.2, 0.2, 2.6], materials.metal);
+    this.queue_box(
+      [46.0, 0.012, -30.45],
+      [0.82, 0.012, 1.15],
+      materials.damp_stain,
+      quat.fromEuler(quat.create(), 0, -8, 0)
+    );
+    this.queue_box(
+      [46.45, 0.013, -29.15],
+      [0.48, 0.012, 0.72],
+      materials.damp_stain,
+      quat.fromEuler(quat.create(), 0, 15, 0)
+    );
+    this.queue_box(
+      [45.85, 0.027, -30.65],
+      [0.42, 0.008, 0.78],
+      materials.puddle,
+      quat.fromEuler(quat.create(), 0, -9, 0)
+    );
+    this.queue_box(
+      [46.35, 0.028, -29.75],
+      [0.28, 0.008, 0.5],
+      materials.puddle,
+      quat.fromEuler(quat.create(), 0, 13, 0)
+    );
+  }
+
+  add_ceiling_void(x, z, height, materials) {
+    this.queue_box([x, height - 0.175, z], [1.74, 0.035, 0.58], materials.dark_void);
+    this.queue_box([x - 1.76, height - 0.205, z], [0.035, 0.13, 0.62], materials.ceiling_grid);
+    this.queue_box([x + 1.76, height - 0.205, z], [0.035, 0.13, 0.62], materials.ceiling_grid);
   }
 
   add_chair(x, z, materials) {
@@ -3747,6 +3915,52 @@ export class BackroomsScene extends Scene {
     ambient_light.is_primary_sun = 1;
     ambient_light.shadow_casting = 0;
     this.entities.push(ambient_light_entity);
+
+    const active_fixtures = this.fixture_lights.filter(
+      (fixture) => fixture.fixture_type !== "dead"
+    );
+    if (active_fixtures.length === 0) return;
+
+    this.fixture_light_entity = EntityManager.create_entity([LightFragment]);
+    EntityManager.set_entity_instance_count(this.fixture_light_entity, active_fixtures.length);
+    this.entities.push(this.fixture_light_entity);
+
+    for (let i = 0; i < active_fixtures.length; i++) {
+      const fixture = active_fixtures[i];
+      const light = EntityManager.get_fragment(this.fixture_light_entity, LightFragment, i);
+      const is_flicker = fixture.fixture_type === "flicker";
+
+      light.type = LightType.POINT;
+      light.color = is_flicker ? [0.76, 0.79, 0.43, 1.0] : [1.0, 0.86, 0.48, 1.0];
+      light.intensity = is_flicker ? 3.8 : 5.2;
+      light.position = [fixture.x, fixture.y, fixture.z, 1.0];
+      light.radius = is_flicker ? 7.5 : 9.5;
+      light.active = true;
+      light.shadow_casting = 0;
+
+      if (is_flicker) this.flicker_light_indices.push(i);
+    }
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+
+    if (!this.fixture_light_entity || !this.flicker_material) return;
+
+    this.flicker_time += delta_time;
+    const slow_hum = Math.sin(this.flicker_time * 18.0) * 0.08;
+    const dropout = Math.sin(this.flicker_time * 3.71) > 0.93 ? 0.16 : 1.0;
+    const flicker = Math.max(0.08, (0.9 + slow_hum) * dropout);
+
+    this.flicker_material.set_emission(34.0 * flicker);
+    for (let i = 0; i < this.flicker_light_indices.length; i++) {
+      const light = EntityManager.get_fragment(
+        this.fixture_light_entity,
+        LightFragment,
+        this.flicker_light_indices[i]
+      );
+      light.intensity = 3.8 * flicker;
+    }
   }
 
   cleanup() {
@@ -3757,7 +3971,11 @@ export class BackroomsScene extends Scene {
     }
     this.entities.length = 0;
     this.geometry_batches.clear();
+    this.fixture_lights.length = 0;
+    this.flicker_light_indices.length = 0;
+    this.fixture_light_entity = null;
     this.flicker_material = null;
+    this.flicker_time = 0.0;
     this.cube_mesh = null;
 
     this.remove_layer(FreeformArcballControlProcessor);

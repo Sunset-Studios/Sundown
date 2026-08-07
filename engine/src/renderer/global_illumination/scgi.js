@@ -10,12 +10,12 @@ export class SCGI {
 
   config = {
     surface_cache_size: 262144,
-    rays_per_patch: 8,
+    rays_per_patch: 4,
     cache_entry_lifetime: 1,
     hash_search_count: 10,
-    cache_pixel_footprint: 16.0,
-    cache_lookup_jitter: 0.75,
-    cache_sample_limit: 128,
+    cache_pixel_footprint: 12.0,
+    cache_lookup_jitter: 0.0,
+    cache_normal_bias: 0.005,
     history_hysteresis: 0.99,
     max_history_samples: 128,
     importance_sample_count: 8,

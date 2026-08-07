@@ -48,6 +48,62 @@ fn initialize_patch(
     surface_cache_sh_patch_write(&surface_cache_sh_filtered, patch_index, sh_l1_rgb_zero());
 }
 
+fn feedback_surface_level(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    pixel_coord: vec2<u32>,
+    frame: u32,
+    cell_exponent: i32
+) {
+    let cell_size = surface_cache_cell_size(cell_exponent);
+    let lookup_position = surface_cache_jitter_lookup_position(
+        position,
+        normal,
+        pixel_coord,
+        frame,
+        cell_size,
+        surface_cache_params
+    );
+    let quantized_position = surface_cache_quantize_position(
+        lookup_position,
+        normal,
+        cell_exponent,
+        surface_cache_params
+    );
+    let quantized_normal = surface_cache_quantize_normal(normal);
+    let key = surface_cache_hash_key(
+        quantized_position,
+        quantized_normal,
+        cell_exponent
+    );
+    let capacity = max(u32(surface_cache_params.total_patch_count), 1u);
+    let search_count = surface_cache_hash_search_count(surface_cache_params);
+    let lifetime = max(u32(surface_cache_params.cache_entry_lifetime), 1u);
+    let result = hashmap_find_or_claim(
+        &surface_cache_hashmap,
+        key,
+        capacity,
+        search_count,
+        frame,
+        lifetime
+    );
+
+    if (result.status == HASHMAP_RESULT_CLAIMED) {
+        initialize_patch(
+            result.index,
+            position,
+            normal,
+            quantized_position,
+            quantized_normal,
+            cell_exponent
+        );
+        append_active_patch(result.index);
+    } else if (result.status == HASHMAP_RESULT_FOUND) {
+        surface_cache[result.index].position_frame.w = surface_cache_params.frame_index;
+        append_active_patch(result.index);
+    }
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_coord = gid.xy;
@@ -69,61 +125,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         u32(frame_info.view_index)
     );
 
-    let cell_exponent = surface_cache_cell_exponent(position, surface_cache_params);
-    let cell_size = surface_cache_cell_size(cell_exponent);
-    let lookup_position = surface_cache_jitter_lookup_position(
+    let levels = surface_cache_cell_levels(position, surface_cache_params);
+    feedback_surface_level(
         position,
         normal,
         pixel_coord,
         frame,
-        cell_size,
-        surface_cache_params
+        levels.fine_exponent
     );
-    let quantized_position = surface_cache_quantize_position(
-        lookup_position,
-        cell_exponent
-    );
-    let quantized_normal = surface_cache_quantize_normal(normal);
-    let key = surface_cache_hash_key(
-        quantized_position,
-        quantized_normal,
-        cell_exponent
-    );
-    let capacity = max(u32(surface_cache_params.total_patch_count), 1u);
-    let search_count = surface_cache_hash_search_count(surface_cache_params);
-    let lifetime = max(u32(surface_cache_params.cache_entry_lifetime), 1u);
-
-    let result = hashmap_find_or_claim(
-        &surface_cache_hashmap,
-        key,
-        capacity,
-        search_count,
-        frame,
-        lifetime
-    );
-    if (result.status == HASHMAP_RESULT_CLAIMED) {
-        initialize_patch(
-            result.index,
+    if (levels.coarse_exponent != levels.fine_exponent) {
+        feedback_surface_level(
             position,
             normal,
-            quantized_position,
-            quantized_normal,
-            cell_exponent
+            pixel_coord,
+            frame,
+            levels.coarse_exponent
         );
-        hashmap_publish_claim(
-            &surface_cache_hashmap,
-            result.index,
-            key.checksum,
-            frame
-        );
-        append_active_patch(result.index);
-    } else if (result.status == HASHMAP_RESULT_FOUND) {
-        surface_cache[result.index].position_frame.w = surface_cache_params.frame_index;
-        if (!surface_cache_sample_limit_reached(
-            surface_cache[result.index],
-            surface_cache_params
-        )) {
-            append_active_patch(result.index);
-        }
     }
 }

@@ -34,32 +34,42 @@ fn surface_cache_corner_descriptor(
     normal: vec3<f32>,
     tangent_cell: vec2<i32>,
     dominant_axis: u32,
-    cell_size: f32
+    cell_size: f32,
+    params: SurfaceCacheParams
 ) -> vec3<i32> {
-    let tangent_center = (vec2<f32>(tangent_cell) + vec2<f32>(0.5)) * cell_size;
+    let descriptor_offset = surface_cache_descriptor_offset(
+        normal,
+        cell_size,
+        params
+    );
+    let descriptor_tangent_center =
+        (vec2<f32>(tangent_cell) + vec2<f32>(0.5)) * cell_size;
     if (dominant_axis == 0u) {
+        let tangent_center = descriptor_tangent_center - descriptor_offset.yz;
         let dominant_position = position.x - (
             normal.y * (tangent_center.x - position.y) +
             normal.z * (tangent_center.y - position.z)
         ) / normal.x;
         return vec3<i32>(
-            i32(floor(dominant_position / cell_size)),
+            i32(floor((dominant_position + descriptor_offset.x) / cell_size)),
             tangent_cell.x,
             tangent_cell.y
         );
     }
     if (dominant_axis == 1u) {
+        let tangent_center = descriptor_tangent_center - descriptor_offset.xz;
         let dominant_position = position.y - (
             normal.x * (tangent_center.x - position.x) +
             normal.z * (tangent_center.y - position.z)
         ) / normal.y;
         return vec3<i32>(
             tangent_cell.x,
-            i32(floor(dominant_position / cell_size)),
+            i32(floor((dominant_position + descriptor_offset.y) / cell_size)),
             tangent_cell.y
         );
     }
 
+    let tangent_center = descriptor_tangent_center - descriptor_offset.xy;
     let dominant_position = position.z - (
         normal.x * (tangent_center.x - position.x) +
         normal.y * (tangent_center.y - position.y)
@@ -67,18 +77,109 @@ fn surface_cache_corner_descriptor(
     return vec3<i32>(
         tangent_cell.x,
         tangent_cell.y,
-        i32(floor(dominant_position / cell_size))
+        i32(floor((dominant_position + descriptor_offset.z) / cell_size))
     );
 }
 
-fn surface_cache_sample(
+struct SurfaceCacheTapSample {
+    irradiance: vec3<f32>,
+    sample_count: f32,
+    geometry_weight: f32,
+};
+
+fn surface_cache_dominant_axis(normal: vec3<f32>) -> u32 {
+    let absolute_normal = abs(normal);
+    return select(
+        select(2u, 1u, absolute_normal.y >= absolute_normal.z),
+        0u,
+        absolute_normal.x >= max(absolute_normal.y, absolute_normal.z)
+    );
+}
+
+fn surface_cache_tangent_components(value: vec3<f32>, dominant_axis: u32) -> vec2<f32> {
+    if (dominant_axis == 0u) {
+        return value.yz;
+    }
+    if (dominant_axis == 1u) {
+        return value.xz;
+    }
+    return value.xy;
+}
+
+fn surface_cache_sample_descriptor(
+    descriptor: vec3<i32>,
+    quantized_normal: vec3<i32>,
+    receiver_position: vec3<f32>,
+    receiver_normal: vec3<f32>,
+    cell_exponent: i32,
+    cell_size: f32
+) -> SurfaceCacheTapSample {
+    let patch_index_i = surface_cache_find_patch(
+        descriptor,
+        quantized_normal,
+        cell_exponent
+    );
+    if (patch_index_i < 0) {
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+    }
+
+    let patch_index = u32(patch_index_i);
+    let surface_patch = surface_cache[patch_index];
+    let sample_count = surface_patch.history.x;
+    let patch_normal = safe_normalize(surface_patch.normal_cell_exponent.xyz);
+    let normal_alignment = dot(receiver_normal, patch_normal);
+    if (
+        sample_count < SURFACE_CACHE_MIN_QUERY_SAMPLES ||
+        normal_alignment < 0.75
+    ) {
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+    }
+
+    let plane_distance = abs(dot(
+        surface_patch.position_frame.xyz - receiver_position,
+        receiver_normal
+    ));
+    let plane_sigma = max(cell_size * 0.35, 0.001);
+    let normalized_plane_distance = plane_distance / plane_sigma;
+    let plane_weight = exp(
+        -0.5 * normalized_plane_distance * normalized_plane_distance
+    );
+    let normal_weight = clamp(
+        (normal_alignment - 0.75) * 4.0,
+        0.0,
+        1.0
+    );
+    let geometry_weight = plane_weight * normal_weight * normal_weight;
+    if (geometry_weight <= 1e-5) {
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+    }
+
+    let receiver_direction = safe_normalize(
+        surface_cache_world_to_hemisphere(receiver_normal, patch_normal)
+    );
+    let irradiance = max(
+        sh_l1_rgb_calculate_irradiance(
+            surface_cache_sh_patch_read(&surface_cache_sh, patch_index),
+            receiver_direction
+        ),
+        vec3<f32>(0.0)
+    );
+    return SurfaceCacheTapSample(irradiance, sample_count, geometry_weight);
+}
+
+fn surface_cache_sample_level_nearest(
     position: vec3<f32>,
-    normal: vec3<f32>
+    normal: vec3<f32>,
+    cell_exponent: i32
 ) -> vec4<f32> {
     let receiver_normal = safe_normalize(normal);
-    let cell_exponent = surface_cache_cell_exponent(position, surface_cache_params);
     let patch_index_i = surface_cache_find_patch(
-        surface_cache_quantize_position(position, cell_exponent),
+        surface_cache_quantize_position(
+            position,
+            receiver_normal,
+            cell_exponent,
+            surface_cache_params
+        ),
         surface_cache_quantize_normal(receiver_normal),
         cell_exponent
     );
@@ -107,8 +208,172 @@ fn surface_cache_sample(
         ),
         vec3<f32>(0.0)
     );
+    return vec4<f32>(irradiance, sample_count);
+}
+
+// Reconstruct the cache as samples located at surface-constrained cell
+// centers. A geometry-aware bilinear footprint removes nearest-cell steps,
+// while renormalizing valid taps keeps silhouettes and missing cache entries
+// from darkening the result.
+fn surface_cache_sample_level(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    cell_exponent: i32
+) -> vec4<f32> {
+    let receiver_normal = safe_normalize(normal);
+    let quantized_normal = surface_cache_quantize_normal(receiver_normal);
+    let cell_size = surface_cache_cell_size(cell_exponent);
+    let dominant_axis = surface_cache_dominant_axis(receiver_normal);
+    let descriptor_position = position + surface_cache_descriptor_offset(
+        receiver_normal,
+        cell_size,
+        surface_cache_params
+    );
+    let tangent_position = surface_cache_tangent_components(
+        descriptor_position,
+        dominant_axis
+    ) / cell_size - vec2<f32>(0.5);
+    let tangent_base = vec2<i32>(floor(tangent_position));
+    let tangent_fraction = fract(tangent_position);
+
+    var irradiance_sum = vec3<f32>(0.0);
+    var sample_count_sum = 0.0;
+    var weight_sum = 0.0;
+    for (var tap_y = 0i; tap_y <= 1i; tap_y = tap_y + 1i) {
+        for (var tap_x = 0i; tap_x <= 1i; tap_x = tap_x + 1i) {
+            let tap_offset = vec2<i32>(tap_x, tap_y);
+            let descriptor = surface_cache_corner_descriptor(
+                position,
+                receiver_normal,
+                tangent_base + tap_offset,
+                dominant_axis,
+                cell_size,
+                surface_cache_params
+            );
+            let tap = surface_cache_sample_descriptor(
+                descriptor,
+                quantized_normal,
+                position,
+                receiver_normal,
+                cell_exponent,
+                cell_size
+            );
+            let axis_weight = select(
+                vec2<f32>(1.0) - tangent_fraction,
+                tangent_fraction,
+                tap_offset == vec2<i32>(1)
+            );
+            let weight = axis_weight.x * axis_weight.y * tap.geometry_weight;
+            irradiance_sum += tap.irradiance * weight;
+            sample_count_sum += tap.sample_count * weight;
+            weight_sum += weight;
+        }
+    }
+
+    if (weight_sum <= 1e-5) {
+        return surface_cache_sample_level_nearest(
+            position,
+            receiver_normal,
+            cell_exponent
+        );
+    }
+    return vec4<f32>(irradiance_sum, sample_count_sum) / weight_sum;
+}
+
+fn surface_cache_finalize_sample(sample: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(
-        irradiance * (surface_cache_params.indirect_boost / PI),
-        sample_count
+        sample.xyz * (surface_cache_params.indirect_boost / PI),
+        sample.w
+    );
+}
+
+fn surface_cache_level_confidence(sample_count: f32) -> f32 {
+    return clamp(
+        sample_count / SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES,
+        0.125,
+        1.0
+    );
+}
+
+fn surface_cache_blend_level_samples(
+    fine_sample: vec4<f32>,
+    coarse_sample: vec4<f32>,
+    blend: f32
+) -> vec4<f32> {
+    let fine_valid = fine_sample.w >= SURFACE_CACHE_MIN_QUERY_SAMPLES;
+    let coarse_valid = coarse_sample.w >= SURFACE_CACHE_MIN_QUERY_SAMPLES;
+    if (!fine_valid) {
+        return select(vec4<f32>(0.0), coarse_sample, coarse_valid);
+    }
+    if (!coarse_valid) {
+        return fine_sample;
+    }
+
+    let fine_weight = (1.0 - blend) *
+        surface_cache_level_confidence(fine_sample.w);
+    let coarse_weight = blend *
+        surface_cache_level_confidence(coarse_sample.w);
+    let weight_sum = fine_weight + coarse_weight;
+    if (weight_sum <= 1e-6) {
+        return select(fine_sample, coarse_sample, blend >= 0.5);
+    }
+    return (fine_sample * fine_weight + coarse_sample * coarse_weight) /
+        weight_sum;
+}
+
+fn surface_cache_sample(
+    position: vec3<f32>,
+    normal: vec3<f32>
+) -> vec4<f32> {
+    let levels = surface_cache_cell_levels(position, surface_cache_params);
+    let fine_sample = surface_cache_sample_level(
+        position,
+        normal,
+        levels.fine_exponent
+    );
+    if (levels.coarse_exponent == levels.fine_exponent) {
+        return surface_cache_finalize_sample(fine_sample);
+    }
+
+    let coarse_sample = surface_cache_sample_level(
+        position,
+        normal,
+        levels.coarse_exponent
+    );
+    return surface_cache_finalize_sample(
+        surface_cache_blend_level_samples(
+            fine_sample,
+            coarse_sample,
+            levels.blend
+        )
+    );
+}
+
+// Cache rays query this path recursively, so retain nearest reconstruction
+// there. The visible resolve uses the bilinear path above.
+fn surface_cache_sample_nearest(
+    position: vec3<f32>,
+    normal: vec3<f32>
+) -> vec4<f32> {
+    let levels = surface_cache_cell_levels(position, surface_cache_params);
+    let fine_sample = surface_cache_sample_level_nearest(
+        position,
+        normal,
+        levels.fine_exponent
+    );
+    if (levels.coarse_exponent == levels.fine_exponent) {
+        return surface_cache_finalize_sample(fine_sample);
+    }
+    let coarse_sample = surface_cache_sample_level_nearest(
+        position,
+        normal,
+        levels.coarse_exponent
+    );
+    return surface_cache_finalize_sample(
+        surface_cache_blend_level_samples(
+            fine_sample,
+            coarse_sample,
+            levels.blend
+        )
     );
 }
