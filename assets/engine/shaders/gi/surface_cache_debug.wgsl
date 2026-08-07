@@ -36,10 +36,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureLoad(depth_texture, pixel_coord, 0).r,
         view_index
     );
-    let lod = surface_cache_select_lod(position, surface_cache_params);
-    let descriptor_position = surface_cache_quantize_position(position, lod, surface_cache_params);
+    let cell_exponent = surface_cache_cell_exponent(position, surface_cache_params);
+    let descriptor_position = surface_cache_quantize_position(position, cell_exponent);
     let descriptor_normal = surface_cache_quantize_normal(normal);
-    let patch_index = surface_cache_find_patch(descriptor_position, descriptor_normal, lod);
+    let patch_index = surface_cache_find_patch(
+        descriptor_position,
+        descriptor_normal,
+        cell_exponent
+    );
 
     var cached_radiance = vec3<f32>(0.0);
     if (patch_index >= 0) {

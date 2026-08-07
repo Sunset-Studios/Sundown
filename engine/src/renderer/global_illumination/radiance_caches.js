@@ -1172,7 +1172,6 @@ export class SurfaceRadianceCache extends GIModule {
     const { config, width, height, force_recreate } = context;
 
     context.total_patches = Math.max(16, floor_to_multiple(config.surface_cache_size, 16));
-    context.lod_count = clamp(Math.floor(config.surface_cache_lod_count), 1, 16);
     context.rays_per_patch = clamp(
       Math.floor(config.rays_per_patch ?? 1),
       1,
@@ -1291,24 +1290,24 @@ export class SurfaceRadianceCache extends GIModule {
 
     this.add_graph_local_pass(render_graph, "surface_cache_upload_params", (graph) => {
       this.params_data[0] = total_patches;
-      this.params_data[1] = config.surface_cache_cell_size;
-      this.params_data[2] = context.lod_count;
-      this.params_data[3] = total_patches;
-      this.params_data[4] = width;
-      this.params_data[5] = height;
-      this.params_data[6] = SharedFrameInfoBuffer.get_frame_index();
-      this.params_data[7] = config.max_ray_length;
-      this.params_data[8] = config.history_hysteresis;
-      this.params_data[9] = config.max_history_samples;
-      this.params_data[10] = config.indirect_boost;
-      this.params_data[11] = clamp(Math.floor(config.importance_sample_count), 2, 16);
-      this.params_data[12] = config.cache_entry_lifetime;
-      this.params_data[13] = clamp(config.importance_exploration, 0.01, 1.0);
-      this.params_data[14] = rays_per_patch;
-      this.params_data[15] = Math.max(config.cache_pixel_footprint ?? 3, 1);
-      this.params_data[16] = Math.max(config.cache_lookup_jitter ?? 0, 0);
-      this.params_data[17] = Math.max(config.cache_sample_limit ?? 0, 0);
-      this.params_data[18] = clamp(Math.floor(config.hash_search_count ?? 10), 1, 64);
+      this.params_data[1] = total_patches;
+      this.params_data[2] = width;
+      this.params_data[3] = height;
+      this.params_data[4] = SharedFrameInfoBuffer.get_frame_index();
+      this.params_data[5] = config.max_ray_length;
+      this.params_data[6] = config.history_hysteresis;
+      this.params_data[7] = config.max_history_samples;
+      this.params_data[8] = config.indirect_boost;
+      this.params_data[9] = clamp(Math.floor(config.importance_sample_count), 2, 16);
+      this.params_data[10] = config.cache_entry_lifetime;
+      this.params_data[11] = clamp(config.importance_exploration, 0.01, 1.0);
+      this.params_data[12] = rays_per_patch;
+      this.params_data[13] = Math.max(config.cache_pixel_footprint ?? 3, 1);
+      this.params_data[14] = Math.max(config.cache_lookup_jitter ?? 0, 0);
+      this.params_data[15] = Math.max(config.cache_sample_limit ?? 0, 0);
+      this.params_data[16] = clamp(Math.floor(config.hash_search_count ?? 10), 1, 64);
+      this.params_data[17] = 0;
+      this.params_data[18] = 0;
       this.params_data[19] = 0;
       graph.get_physical_buffer(params).write_raw(this.params_data);
     });
@@ -1587,7 +1586,7 @@ export class PerPixelRadianceCache extends GIModule {
         atrous: compute_shader("gi/ddgi_atrous_diffuse.wgsl"),
       },
     });
-    this.params_data = new Float32Array(16);
+    this.params_data = new Float32Array(12);
   }
 
   _setup_trace_resources(render_graph, context) {
@@ -1791,18 +1790,17 @@ export class PerPixelRadianceCache extends GIModule {
 
     this.add_graph_local_pass(render_graph, "pixel_trace_upload_params", (graph) => {
       this.params_data[0] = context.config.screen_ray_count;
-      this.params_data[1] = context.config.surface_cache_size;
-      this.params_data[2] = context.config.surface_cache_cell_size;
-      this.params_data[3] = context.total_pixels;
-      this.params_data[4] = context.frame_index;
-      this.params_data[5] = context.config.indirect_boost;
-      this.params_data[6] = context.safe_upscale_factor;
-      this.params_data[7] = context.config.surface_cache_lod_count;
-      this.params_data[8] = context.width;
-      this.params_data[9] = context.height;
-      this.params_data[10] = context.gi_width;
-      this.params_data[11] = context.gi_height;
-      this.params_data[12] = context.config.max_ray_length;
+      this.params_data[1] = context.total_pixels;
+      this.params_data[2] = context.frame_index;
+      this.params_data[3] = context.config.indirect_boost;
+      this.params_data[4] = context.safe_upscale_factor;
+      this.params_data[5] = context.width;
+      this.params_data[6] = context.height;
+      this.params_data[7] = context.gi_width;
+      this.params_data[8] = context.gi_height;
+      this.params_data[9] = context.config.max_ray_length;
+      this.params_data[10] = 0;
+      this.params_data[11] = 0;
       graph.get_physical_buffer(params).write_raw(this.params_data);
     });
 

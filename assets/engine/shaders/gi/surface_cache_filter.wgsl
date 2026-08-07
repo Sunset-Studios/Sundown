@@ -34,12 +34,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let center_position = center_patch.position_frame.xyz;
-    let center_normal = safe_normalize(center_patch.normal_lod.xyz);
-    let lod = min(
-        surface_cache_grid_key_lod(center_patch.grid_key),
-        surface_cache_maximum_lod(surface_cache_params)
-    );
-    let cell_size = surface_cache_lod_cell_size(lod, surface_cache_params);
+    let center_normal = safe_normalize(center_patch.normal_cell_exponent.xyz);
+    let cell_exponent = surface_cache_grid_key_cell_exponent(center_patch.grid_key);
+    let cell_size = surface_cache_cell_size(cell_exponent);
     let center_descriptor = center_patch.grid_key.xyz;
     let quantized_normal = surface_cache_quantize_normal(center_normal);
 
@@ -72,7 +69,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 dominant_axis,
                 cell_size
             );
-            let neighbor_index_i = surface_cache_find_patch(descriptor, quantized_normal, lod);
+            let neighbor_index_i = surface_cache_find_patch(
+                descriptor,
+                quantized_normal,
+                cell_exponent
+            );
             if (neighbor_index_i < 0) {
                 continue;
             }
@@ -84,7 +85,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
 
-            let neighbor_normal = safe_normalize(neighbor_patch.normal_lod.xyz);
+            let neighbor_normal = safe_normalize(
+                neighbor_patch.normal_cell_exponent.xyz
+            );
             let normal_alignment = clamp(
                 (dot(center_normal, neighbor_normal) - 0.75) * 4.0,
                 0.0,

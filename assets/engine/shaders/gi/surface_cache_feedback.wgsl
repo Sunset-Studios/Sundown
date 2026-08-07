@@ -27,17 +27,20 @@ fn initialize_patch(
     normal: vec3<f32>,
     quantized_position: vec3<i32>,
     quantized_normal: vec3<i32>,
-    lod: u32
+    cell_exponent: i32
 ) {
     surface_cache[patch_index].position_frame = vec4<f32>(
         position,
         surface_cache_params.frame_index
     );
-    surface_cache[patch_index].normal_lod = vec4<f32>(normal, f32(lod));
+    surface_cache[patch_index].normal_cell_exponent = vec4<f32>(
+        normal,
+        f32(cell_exponent)
+    );
     surface_cache[patch_index].grid_key = surface_cache_make_grid_key(
         quantized_position,
         quantized_normal,
-        lod
+        cell_exponent
     );
     surface_cache[patch_index].metadata = vec4<f32>(0.0);
     surface_cache[patch_index].history = vec4<f32>(0.0);
@@ -66,8 +69,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         u32(frame_info.view_index)
     );
 
-    let lod = surface_cache_select_lod(position, surface_cache_params);
-    let cell_size = surface_cache_lod_cell_size(lod, surface_cache_params);
+    let cell_exponent = surface_cache_cell_exponent(position, surface_cache_params);
+    let cell_size = surface_cache_cell_size(cell_exponent);
     let lookup_position = surface_cache_jitter_lookup_position(
         position,
         normal,
@@ -78,15 +81,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     let quantized_position = surface_cache_quantize_position(
         lookup_position,
-        lod,
-        surface_cache_params
+        cell_exponent
     );
     let quantized_normal = surface_cache_quantize_normal(normal);
     let key = surface_cache_hash_key(
         quantized_position,
         quantized_normal,
-        lod,
-        surface_cache_params
+        cell_exponent
     );
     let capacity = max(u32(surface_cache_params.total_patch_count), 1u);
     let search_count = surface_cache_hash_search_count(surface_cache_params);
@@ -107,7 +108,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             normal,
             quantized_position,
             quantized_normal,
-            lod
+            cell_exponent
         );
         hashmap_publish_claim(
             &surface_cache_hashmap,

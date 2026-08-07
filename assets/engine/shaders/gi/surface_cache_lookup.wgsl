@@ -1,13 +1,12 @@
 fn surface_cache_find_patch(
     quantized_position: vec3<i32>,
     quantized_normal: vec3<i32>,
-    lod: u32
+    cell_exponent: i32
 ) -> i32 {
     let key = surface_cache_hash_key(
         quantized_position,
         quantized_normal,
-        lod,
-        surface_cache_params
+        cell_exponent
     );
     let capacity = max(u32(surface_cache_params.total_patch_count), 1u);
     let patch_index = hashmap_find(
@@ -22,7 +21,7 @@ fn surface_cache_find_patch(
             surface_cache[patch_index].grid_key,
             quantized_position,
             quantized_normal,
-            lod
+            cell_exponent
         )
     ) {
         return i32(patch_index);
@@ -77,11 +76,11 @@ fn surface_cache_sample(
     normal: vec3<f32>
 ) -> vec4<f32> {
     let receiver_normal = safe_normalize(normal);
-    let lod = surface_cache_select_lod(position, surface_cache_params);
+    let cell_exponent = surface_cache_cell_exponent(position, surface_cache_params);
     let patch_index_i = surface_cache_find_patch(
-        surface_cache_quantize_position(position, lod, surface_cache_params),
+        surface_cache_quantize_position(position, cell_exponent),
         surface_cache_quantize_normal(receiver_normal),
-        lod
+        cell_exponent
     );
     if (patch_index_i < 0) {
         return vec4<f32>(0.0);
@@ -90,7 +89,7 @@ fn surface_cache_sample(
     let patch_index = u32(patch_index_i);
     let surface_patch = surface_cache[patch_index];
     let sample_count = surface_patch.history.x;
-    let patch_normal = safe_normalize(surface_patch.normal_lod.xyz);
+    let patch_normal = safe_normalize(surface_patch.normal_cell_exponent.xyz);
     if (
         sample_count < SURFACE_CACHE_MIN_QUERY_SAMPLES ||
         dot(receiver_normal, patch_normal) < 0.75

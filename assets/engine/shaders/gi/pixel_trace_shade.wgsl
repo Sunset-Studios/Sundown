@@ -180,8 +180,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Surface Cache Query (Multi-Bounce Irradiance)
         // ─────────────────────────────────────────────────────────────────────
         let hit_distance_for_cache = pixel_path_state[gid.x].origin_tmin.w;
+        let hit_cell_exponent = surface_cache_cell_exponent(
+            hit_pos,
+            surface_cache_params
+        );
         var cached_radiance = vec3<f32>(0.0);
-        if (hit_distance_for_cache >= surface_cache_params.surface_cache_cell_size * 0.5) {
+        if (
+            hit_distance_for_cache >=
+            surface_cache_cell_size(hit_cell_exponent) * 0.5
+        ) {
             cached_radiance = surface_cache_sample(
                 hit_pos,
                 n

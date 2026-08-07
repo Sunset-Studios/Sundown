@@ -61,7 +61,7 @@ fn trace_surface_cache_ray(
 ) {
     let patch_index = active_indices[active_index];
     let surface_patch = surface_cache[patch_index];
-    let normal = safe_normalize(surface_patch.normal_lod.xyz);
+    let normal = safe_normalize(surface_patch.normal_cell_exponent.xyz);
     let seed = surface_cache_patch_rng(patch_index, surface_patch.grid_key);
     let ray_sample = generate_ray_sample(
         seed,
@@ -71,10 +71,10 @@ fn trace_surface_cache_ray(
     let direction = ray_sample.direction;
 
     var ray: Ray;
-    let lod = surface_cache_grid_key_lod(surface_patch.grid_key);
+    let cell_exponent = surface_cache_grid_key_cell_exponent(surface_patch.grid_key);
     let origin_offset = max(
         0.001,
-        surface_cache_lod_cell_size(lod, surface_cache_params) * 0.002
+        surface_cache_cell_size(cell_exponent) * 0.002
     );
     ray.origin_and_tmin = vec4<f32>(
         surface_patch.position_frame.xyz + normal * origin_offset,

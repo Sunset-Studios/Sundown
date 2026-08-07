@@ -49,19 +49,18 @@ struct GICountersReadOnly {
 // =============================================================================
 
 struct GIParams {
-    screen_ray_count: f32,          // Rays per tile per frame
-    surface_cache_size: f32,          // Number of surface cache entries per LOD
-    surface_cache_cell_size: f32,     // Base cell size in world units
-    total_pixels: f32,              // Total pixels (width * height)
-    frame_index: f32,               // Current frame index
-    indirect_boost: f32,            // Indirect lighting multiplier
-    upscale_factor: f32,            // GI internal resolution scale factor (1, 2, 4, ...)
-    surface_cache_lod_count: f32,     // Number of LOD levels for surface cache
-    full_resolution_x: f32,         // Full-resolution X (GBuffer / lighting target)
-    full_resolution_y: f32,         // Full-resolution Y (GBuffer / lighting target)
-    gi_resolution_x: f32,           // GI internal resolution X (full_resolution / upscale_factor)
-    gi_resolution_y: f32,           // GI internal resolution Y (full_resolution / upscale_factor)
-    max_ray_length: f32,            // Maximum ray travel distance
+    screen_ray_count: f32,   // Rays per tile per frame
+    total_pixels: f32,       // Total pixels (width * height)
+    frame_index: f32,        // Current frame index
+    indirect_boost: f32,     // Indirect lighting multiplier
+    upscale_factor: f32,     // GI internal resolution scale factor (1, 2, 4, ...)
+    full_resolution_x: f32,  // Full-resolution X (GBuffer / lighting target)
+    full_resolution_y: f32,  // Full-resolution Y (GBuffer / lighting target)
+    gi_resolution_x: f32,    // GI internal resolution X (full_resolution / upscale_factor)
+    gi_resolution_y: f32,    // GI internal resolution Y (full_resolution / upscale_factor)
+    max_ray_length: f32,     // Maximum ray travel distance
+    padding0: f32,
+    padding1: f32,
 };
 
 // =============================================================================

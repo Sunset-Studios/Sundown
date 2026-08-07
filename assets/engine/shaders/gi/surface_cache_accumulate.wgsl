@@ -20,7 +20,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let patch_index = active_indices[active_index];
-    let patch_normal = safe_normalize(surface_cache[patch_index].normal_lod.xyz);
+    let patch_normal = safe_normalize(
+        surface_cache[patch_index].normal_cell_exponent.xyz
+    );
     let rays_per_patch = surface_cache_rays_per_patch(surface_cache_params);
     let ray_data_base = active_index * rays_per_patch;
     var sample_sh_sum = sh_l1_rgb_zero();
