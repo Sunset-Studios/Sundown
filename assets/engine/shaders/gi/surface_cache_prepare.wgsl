@@ -3,8 +3,6 @@
 
 @group(1) @binding(0) var<storage, read_write> counters: SurfaceCacheCounters;
 
-// Stale entries are recycled in-place during probing, so frame preparation is
-// constant work rather than a full-table eviction scan.
 @compute @workgroup_size(1, 1, 1)
 fn cs() {
     atomicStore(&counters.active_patch_count, 0u);

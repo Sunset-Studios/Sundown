@@ -9,9 +9,6 @@
 @group(1) @binding(5) var<storage, read> hit_info: array<SurfaceCacheHitInfo>;
 @group(1) @binding(6) var<storage, read> radiance_info: array<SurfaceCacheRadianceInfo>;
 
-// Reduce one ray batch into a single race-free SH update per active patch.
-// Early samples use a running mean; once max_history_samples is reached, the
-// update becomes the configured EMA. Spatial variance is handled by the filter.
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let active_index = gid.x;
@@ -25,6 +22,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     let rays_per_patch = surface_cache_rays_per_patch(surface_cache_params);
     let ray_data_base = active_index * rays_per_patch;
+
     var sample_sh_sum = sh_l1_rgb_zero();
     var luminance_sum = 0.0;
     var luminance_squared_sum = 0.0;
@@ -101,13 +99,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     surface_cache_sh_patch_write(&surface_cache_sh, patch_index, result);
+
     let sample_luminance = luminance_sum * inverse_sample_count;
     let sample_luminance_squared = luminance_squared_sum * inverse_sample_count;
     let moment_alpha = max(running_alpha, blend_alpha);
     let first_moment = mix(history.z, sample_luminance, moment_alpha);
     let second_moment = mix(history.w, sample_luminance_squared, moment_alpha);
     surface_cache[patch_index].history = vec4<f32>(
-        next_sample_count,
+        effective_history_count,
         next_sequence,
         first_moment,
         second_moment

@@ -16,43 +16,6 @@
 @group(1) @binding(10) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(11) var<storage, read> entity_index_lookup: array<u32>;
 
-struct SurfaceCacheRaySample {
-    direction: vec3<f32>,
-    sampling_weight: f32,
-};
-
-fn sample_uniform_hemisphere_surface_cache(normal: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
-    let phi = 2.0 * PI * r1;
-    let cos_theta = r2;
-    let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
-    return surface_cache_hemisphere_frame(normal) * vec3<f32>(
-        sin_theta * cos(phi),
-        sin_theta * sin(phi),
-        cos_theta
-    );
-}
-
-fn generate_ray_sample(
-    seed: u32,
-    normal: vec3<f32>,
-    sample_index: u32
-) -> SurfaceCacheRaySample {
-    // A Cranley-Patterson rotated R2 sequence uniformly covers the hemisphere.
-    // Unlike history-guided RIS it remains unbiased when lighting changes and
-    // cannot reinforce a noisy lobe already present in this cache entry.
-    var rng = random_seed(seed);
-    let rotation_u = rand_float(rng);
-    rng = random_seed(rng);
-    let rotation_v = rand_float(rng);
-    let sequence_value = f32(sample_index);
-    let r1 = fract(rotation_u + sequence_value * 0.7548776662466927);
-    let r2 = fract(rotation_v + sequence_value * 0.5698402909980532);
-    var result: SurfaceCacheRaySample;
-    result.direction = sample_uniform_hemisphere_surface_cache(normal, r1, r2);
-    result.sampling_weight = 2.0 * PI;
-    return result;
-}
-
 fn trace_surface_cache_ray(
     active_index: u32,
     ray_index_in_patch: u32,
@@ -68,13 +31,13 @@ fn trace_surface_cache_ray(
         u32(surface_patch.history.y) + ray_index_in_patch
     );
     let direction = ray_sample.direction;
-
-    var ray: Ray;
     let cell_exponent = surface_cache_grid_key_cell_exponent(surface_patch.grid_key);
     let origin_offset = max(
         0.001,
         surface_cache_cell_size(cell_exponent) * 0.002
     );
+
+    var ray: Ray;
     ray.origin_and_tmin = vec4<f32>(
         surface_patch.position_frame.xyz + normal * origin_offset,
         origin_offset * 0.25
@@ -95,19 +58,17 @@ fn trace_surface_cache_ray(
     hit_info[ray_data_index].hit_barycentrics_t = vec4<f32>(0.0);
 
     let hit_result = trace_ray_closest(&ray);
-    if (hit_result.has_hit == 0u) {
-        return;
+    if (hit_result.has_hit != 0u) {
+        hit_info[ray_data_index].hit_identity = vec4<u32>(
+            entity_index_lookup[hit_result.prim_store],
+            hit_result.tri_indices.xyz
+        );
+        hit_info[ray_data_index].hit_barycentrics_t = vec4<f32>(
+            hit_result.barycentrics,
+            hit_result.t_hit,
+            0.0
+        );
     }
-
-    hit_info[ray_data_index].hit_identity = vec4<u32>(
-        entity_index_lookup[hit_result.prim_store],
-        hit_result.tri_indices.xyz
-    );
-    hit_info[ray_data_index].hit_barycentrics_t = vec4<f32>(
-        hit_result.barycentrics,
-        hit_result.t_hit,
-        0.0
-    );
 }
 
 @compute @workgroup_size(128, 1, 1)

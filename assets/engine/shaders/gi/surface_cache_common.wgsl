@@ -12,7 +12,9 @@ const SURFACE_CACHE_MIN_CELL_EXPONENT: i32 = -16;
 const SURFACE_CACHE_MAX_CELL_EXPONENT: i32 = 15;
 const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.2;
 const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 0.8;
-const SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES: f32 = 32.0;
+const SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES: f32 = 64.0;
+const SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP: f32 = 2.0;
+const SURFACE_CACHE_EMISSIVE_OVERFLOW_SCALE: f32 = 0.1;
 
 struct SurfaceCacheParams {
     surface_cache_size: f32,
@@ -31,10 +33,6 @@ struct SurfaceCacheParams {
     cache_pixel_footprint: f32,
     hash_search_count: f32,
     cache_normal_bias: f32,
-    stable_update_interval: f32,
-    stable_update_min_samples: f32,
-    stable_update_variance_threshold: f32,
-    padding0: f32,
 };
 
 struct SurfaceCacheCellLevels {
@@ -73,22 +71,22 @@ struct SurfaceCacheCountersReadOnly {
     padding2: u32,
 };
 
-// Exact compact primary-hit record. Attribute reconstruction stays in the
-// material pass, keeping traversal output to three naturally aligned vectors.
 struct SurfaceCacheHitInfo {
     ray_direction_sampling_weight: vec4<f32>,
     hit_identity: vec4<u32>,
     hit_barycentrics_t: vec4<f32>,
 };
 
-// Shading owns radiance and the shadow ray it generates. shadow_radiance.w is
-// 0 for none, 1 for pending visibility, and 2 for visible;
-// sample_radiance.w marks a valid traced sample.
 struct SurfaceCacheRadianceInfo {
-    shadow_radiance: vec4<f32>,
-    sample_radiance: vec4<f32>,
+    shadow_radiance: vec4<f32>, // .w = 0 for none, 1 for pending visiblity, 2 for visible
+    sample_radiance: vec4<f32>, // .w = valid sample
     shadow_origin: vec4<f32>,
     shadow_direction: vec4<f32>,
+};
+
+struct SurfaceCacheRaySample {
+    direction: vec3<f32>,
+    sampling_weight: f32,
 };
 
 fn surface_cache_sh_patch_read(
@@ -304,11 +302,7 @@ fn surface_cache_world_cell_center(
 }
 
 fn surface_cache_quantize_normal(normal: vec3<f32>) -> vec3<i32> {
-    let normalized = clamp(
-        safe_normalize(normal),
-        vec3<f32>(-1.0),
-        vec3<f32>(1.0)
-    );
+    let normalized = safe_normalize(normal);
     return vec3<i32>(floor(normalized * 3.0));
 }
 
@@ -393,4 +387,56 @@ fn surface_cache_patch_rng(patch_index: u32, grid_key: vec4<i32>) -> u32 {
         hash(bitcast<u32>(grid_key.w));
     let rng = hash(patch_index ^ descriptor_seed ^ 0x9e3779b9u);
     return random_seed(rng);
+}
+
+fn sample_uniform_hemisphere_surface_cache(normal: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
+    let phi = 2.0 * PI * r1;
+    let cos_theta = r2;
+    let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+    return surface_cache_hemisphere_frame(normal) * vec3<f32>(
+        sin_theta * cos(phi),
+        sin_theta * sin(phi),
+        cos_theta
+    );
+}
+
+fn generate_ray_sample(
+    seed: u32,
+    normal: vec3<f32>,
+    sample_index: u32
+) -> SurfaceCacheRaySample {
+    // A Cranley-Patterson rotated R2 sequence uniformly covers the hemisphere.
+    // Unlike history-guided RIS it remains unbiased when lighting changes and
+    // cannot reinforce a noisy lobe already present in this cache entry.
+    var rng = random_seed(seed);
+    let rotation_u = rand_float(rng);
+    rng = random_seed(rng);
+    let rotation_v = rand_float(rng);
+
+    let sequence_value = f32(sample_index);
+    let r1 = fract(rotation_u + sequence_value * 0.7548776662466927);
+    let r2 = fract(rotation_v + sequence_value * 0.5698402909980532);
+
+    var result: SurfaceCacheRaySample;
+    result.direction = sample_uniform_hemisphere_surface_cache(normal, r1, r2);
+    result.sampling_weight = 2.0 * PI;
+    return result;
+}
+
+fn stabilize_surface_cache_emissive_radiance(
+    raw_emissive_radiance: vec3<f32>
+) -> vec3<f32> {
+    let clamped_radiance = safe_clamp_vec3_max(
+        raw_emissive_radiance,
+        SURFACE_CACHE_MAX_RADIANCE
+    );
+    let emissive_luminance = max(luminance(clamped_radiance), 1e-6);
+    let compressed_luminance = select(
+        emissive_luminance,
+        SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP +
+            (emissive_luminance - SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP) *
+            SURFACE_CACHE_EMISSIVE_OVERFLOW_SCALE,
+        emissive_luminance > SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP
+    );
+    return clamped_radiance * (compressed_luminance / emissive_luminance);
 }

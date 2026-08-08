@@ -301,22 +301,16 @@ export class SCGIStats extends DevConsoleTool {
         `${format_number(stats.width)} x ${format_number(stats.height)}`
       );
       metric_pair(
-        "Update interval",
-        `${format_number(stats.stable_update_interval)} frames`,
         "Rays / patch",
-        format_number(stats.rays_per_patch)
-      );
-      metric_pair(
+        format_number(stats.rays_per_patch),
         "History limit",
-        `${format_number(stats.max_history_samples)} samples`,
-        "Warmup samples",
-        format_number(stats.stable_update_min_samples)
+        `${format_number(stats.max_history_samples)} samples`
       );
       metric_pair(
-        "Variance threshold",
-        Number(stats.stable_update_variance_threshold).toFixed(2),
         "History hysteresis",
-        Number(stats.history_hysteresis).toFixed(3)
+        Number(stats.history_hysteresis).toFixed(3),
+        "Update policy",
+        "All active patches"
       );
 
       section_header("GPU memory");
