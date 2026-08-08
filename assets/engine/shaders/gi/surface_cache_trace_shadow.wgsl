@@ -5,15 +5,14 @@
 
 @group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<storage, read> counters: SurfaceCacheCountersReadOnly;
-@group(1) @binding(2) var<storage, read_write> hit_info: array<SurfaceCacheHitInfo>;
-@group(1) @binding(3) var<storage, read> tlas_bvh2_bounds: array<AABB>;
-@group(1) @binding(4) var<uniform> tlas_bvh_info: BVHInfo;
-@group(1) @binding(5) var<storage, read> blas_bvh2_nodes: array<AABB>;
-@group(1) @binding(6) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
-@group(1) @binding(7) var<storage, read> compact_transforms: array<RayInstanceTransform>;
-@group(1) @binding(8) var<storage, read> index_buffer: array<u32>;
-@group(1) @binding(9) var<storage, read> entity_index_lookup: array<u32>;
-@group(1) @binding(10) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
+@group(1) @binding(2) var<storage, read> tlas_bvh2_bounds: array<AABB>;
+@group(1) @binding(3) var<uniform> tlas_bvh_info: BVHInfo;
+@group(1) @binding(4) var<storage, read> blas_bvh2_nodes: array<AABB>;
+@group(1) @binding(5) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
+@group(1) @binding(6) var<storage, read> compact_transforms: array<RayInstanceTransform>;
+@group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
+@group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(9) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(
@@ -24,16 +23,16 @@ fn cs(
     let ray_data_index = gid.x;
     let active_index = ray_data_index / surface_cache_rays_per_patch(surface_cache_params);
     if (
-        active_index >= counters.active_patch_count ||
+        active_index >= counters.update_patch_count ||
         radiance_info[ray_data_index].shadow_radiance.w != 1.0 ||
-        hit_info[ray_data_index].shadow_direction.w <= 0.0
+        radiance_info[ray_data_index].shadow_direction.w <= 0.0
     ) {
         return;
     }
 
     var ray: Ray;
-    ray.origin_and_tmin = hit_info[ray_data_index].shadow_origin;
-    ray.direction_and_tmax = hit_info[ray_data_index].shadow_direction;
+    ray.origin_and_tmin = radiance_info[ray_data_index].shadow_origin;
+    ray.direction_and_tmax = radiance_info[ray_data_index].shadow_direction;
     ray.inv_direction = vec4<f32>(
         1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
         1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),

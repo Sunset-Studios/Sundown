@@ -68,10 +68,12 @@ fn bvh_trace_blas_closest(
                 let v0 = vertex_position(vertex_buffer[v0i]);
                 let v1 = vertex_position(vertex_buffer[v1i]);
                 let v2 = vertex_position(vertex_buffer[v2i]);
-                let t_tri = intersect_triangle(&current_ray, v0, v1, v2);
+                let triangle_hit = intersect_triangle(&current_ray, v0, v1, v2);
+                let t_tri = triangle_hit.x;
                 let is_better_hit = t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w;
                 if (is_better_hit) {
                     result.t_hit = t_tri;
+                    result.barycentrics = triangle_hit.yz;
                     result.tri_id_local = tri_id;
                     result.tri_indices = vec4<u32>(v0i, v1i, v2i, 0u);
                     result.has_hit = 1u;
@@ -293,7 +295,7 @@ fn bvh_trace_blas_any(
             let v0 = vertex_position(vertex_buffer[v0i]);
             let v1 = vertex_position(vertex_buffer[v1i]);
             let v2 = vertex_position(vertex_buffer[v2i]);
-            let t_tri = intersect_triangle(ray_local, v0, v1, v2);
+            let t_tri = intersect_triangle(ray_local, v0, v1, v2).x;
             if (t_tri >= ray_local.origin_and_tmin.w && t_tri < ray_local.direction_and_tmax.w) {
                 return true;
             }

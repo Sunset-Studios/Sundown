@@ -280,18 +280,22 @@ fn surface_cache_sample_level(
     return vec4<f32>(irradiance_sum, sample_count_sum) / weight_sum;
 }
 
-fn surface_cache_finalize_sample(sample: vec4<f32>) -> vec4<f32> {
+fn surface_cache_finalize_irradiance_sample(sample: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(
-        sample.xyz * (surface_cache_params.indirect_boost / PI),
+        sample.xyz * surface_cache_params.indirect_boost,
         sample.w
     );
 }
 
+fn surface_cache_finalize_sample(sample: vec4<f32>) -> vec4<f32> {
+    return surface_cache_finalize_irradiance_sample(sample);
+}
+
 fn surface_cache_level_confidence(sample_count: f32) -> f32 {
-    return clamp(
-        sample_count / SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES,
-        0.125,
-        1.0
+    return smoothstep(
+        SURFACE_CACHE_MIN_QUERY_SAMPLES,
+        SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES,
+        sample_count
     );
 }
 
@@ -349,9 +353,10 @@ fn surface_cache_sample(
     );
 }
 
-// Cache rays query this path recursively, so retain nearest reconstruction
-// there. The visible resolve uses the bilinear path above.
-fn surface_cache_sample_nearest(
+// Cache rays and the visible deferred resolve both consume incident irradiance.
+// The traced hit applies DDGI's diffuse response during recurrence, while the
+// deferred lighting pass applies the visible surface's material response.
+fn surface_cache_sample_nearest_irradiance(
     position: vec3<f32>,
     normal: vec3<f32>
 ) -> vec4<f32> {
@@ -362,18 +367,28 @@ fn surface_cache_sample_nearest(
         levels.fine_exponent
     );
     if (levels.coarse_exponent == levels.fine_exponent) {
-        return surface_cache_finalize_sample(fine_sample);
+        return surface_cache_finalize_irradiance_sample(fine_sample);
     }
     let coarse_sample = surface_cache_sample_level_nearest(
         position,
         normal,
         levels.coarse_exponent
     );
-    return surface_cache_finalize_sample(
+    return surface_cache_finalize_irradiance_sample(
         surface_cache_blend_level_samples(
             fine_sample,
             coarse_sample,
             levels.blend
         )
+    );
+}
+
+fn surface_cache_sample_nearest(
+    position: vec3<f32>,
+    normal: vec3<f32>
+) -> vec4<f32> {
+    return surface_cache_sample_nearest_irradiance(
+        position,
+        normal
     );
 }

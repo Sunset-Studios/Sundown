@@ -4,7 +4,7 @@
 @group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<storage, read_write> surface_cache: array<SurfacePatch>;
 @group(1) @binding(2) var<storage, read_write> surface_cache_sh: array<u32>;
-@group(1) @binding(3) var<storage, read> active_indices: array<u32>;
+@group(1) @binding(3) var<storage, read> update_indices: array<u32>;
 @group(1) @binding(4) var<storage, read> counters: SurfaceCacheCountersReadOnly;
 @group(1) @binding(5) var<storage, read> hit_info: array<SurfaceCacheHitInfo>;
 @group(1) @binding(6) var<storage, read> radiance_info: array<SurfaceCacheRadianceInfo>;
@@ -15,11 +15,11 @@
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let active_index = gid.x;
-    if (active_index >= counters.active_patch_count) {
+    if (active_index >= counters.update_patch_count) {
         return;
     }
 
-    let patch_index = active_indices[active_index];
+    let patch_index = update_indices[active_index];
     let patch_normal = safe_normalize(
         surface_cache[patch_index].normal_cell_exponent.xyz
     );
@@ -45,11 +45,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             SURFACE_CACHE_MAX_RADIANCE
         );
         let local_direction = safe_normalize(surface_cache_world_to_hemisphere(
-            hit_info[ray_data_index].ray_direction_primitive.xyz,
+            hit_info[ray_data_index].ray_direction_sampling_weight.xyz,
             patch_normal
         ));
         let sampling_weight = max(
-            hit_info[ray_data_index].hit_position_sampling_weight.w,
+            hit_info[ray_data_index].ray_direction_sampling_weight.w,
             0.0
         );
         sample_sh_sum = sh_l1_rgb_add(
@@ -112,4 +112,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         first_moment,
         second_moment
     );
+    surface_cache[patch_index].metadata.x = surface_cache_params.frame_index;
 }

@@ -22,6 +22,11 @@ const PROBE_RAY_DATA_WORD_COUNT = 13;
 // Must match DDGIMSMEProbeStats in ddgi_common.wgsl.
 const PROBE_MSME_STATS_WORD_COUNT = 8;
 const PROBE_COUNTERS_NAME = "probe_volume_gi_counters";
+const SURFACE_CACHE_COUNTERS_NAME = "surface_cache_counters";
+// Must match SurfaceCacheHitInfo and SurfaceCacheRadianceInfo in surface_cache_common.wgsl.
+const SURFACE_CACHE_HIT_WORD_COUNT = 12;
+const SURFACE_CACHE_RADIANCE_WORD_COUNT = 16;
+const EMPTY_EMISSIVE_LIGHT_HEADER = new Uint32Array(4);
 
 const compute_shader = (path) => ({ pipeline_shaders: { compute: { path } } });
 
@@ -1134,6 +1139,7 @@ export class SurfaceRadianceCache extends GIModule {
       representation: "surface-radiance-cache",
       stages,
       shader_setups: {
+        compact_emissive: compute_shader("system_compute/compact_emissive_lights.wgsl"),
         prepare: compute_shader("gi/surface_cache_prepare.wgsl"),
         feedback: compute_shader("gi/surface_cache_feedback.wgsl"),
         trace_hit: compute_shader("gi/surface_cache_trace_hit.wgsl"),
@@ -1146,6 +1152,9 @@ export class SurfaceRadianceCache extends GIModule {
       },
     });
     this.params_data = new Float32Array(20);
+    this.counters_buffer = null;
+    this.counters_data = null;
+    this.stats_enabled = false;
   }
 
   setup(render_graph, context, branch) {
@@ -1203,15 +1212,36 @@ export class SurfaceRadianceCache extends GIModule {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
-    this.create_buffer(render_graph, "counters", {
-      name: "surface_cache_counters",
-      size: 4,
+    this.create_buffer(render_graph, "update_indices", {
+      name: "surface_cache_update_indices",
+      size: context.total_patches,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
+    if (this.stats_enabled || this.counters_buffer) {
+      const needs_stats_buffer = this.stats_enabled && !this.counters_buffer;
+      this._ensure_counters(force_recreate || needs_stats_buffer);
+      // Counter mapping is gated by the stats view so normal rendering avoids
+      // a CPU/GPU synchronization point; the persistent buffer stays bound.
+      this.counters_buffer.config.own_readback = this.stats_enabled;
+      this.import_resource("counters", render_graph.register_buffer(SURFACE_CACHE_COUNTERS_NAME));
+    } else {
+      this.create_buffer(render_graph, "counters", {
+        name: SURFACE_CACHE_COUNTERS_NAME,
+        size: 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        force: force_recreate,
+      });
+    }
     this.create_buffer(render_graph, "hit_info", {
       name: "surface_cache_hit_info",
-      size: context.total_ray_count * 28,
+      size: context.total_ray_count * SURFACE_CACHE_HIT_WORD_COUNT,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+    this.create_buffer(render_graph, "emissive_lights", {
+      name: "surface_cache_emissive_lights",
+      size: 4 + Math.max(1, Math.floor(config.max_emissive_lights ?? 32768)) * 12,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -1224,13 +1254,43 @@ export class SurfaceRadianceCache extends GIModule {
   _setup_shading_resources(render_graph, context, _branch) {
     this.create_buffer(render_graph, "radiance_info", {
       name: "surface_cache_radiance_info",
-      size: context.total_ray_count * 8,
+      size: context.total_ray_count * SURFACE_CACHE_RADIANCE_WORD_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
     this.material_buffers = register_material_buffers(render_graph);
     this.texture_pools = register_texture_pools(render_graph);
     this.scene_lighting_data = register_scene_lighting_data(render_graph);
+  }
+
+  _ensure_counters(force_recreate) {
+    if (!force_recreate && this.counters_buffer) {
+      return;
+    }
+
+    if (this.counters_buffer) {
+      this.counters_buffer.destroy();
+    }
+
+    this.counters_data = new Uint32Array(4);
+    this.counters_buffer = Buffer.create({
+      name: SURFACE_CACHE_COUNTERS_NAME,
+      raw_data: this.counters_data,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+      cpu_readback: true,
+      own_readback: true,
+      force: force_recreate,
+    });
+  }
+
+  set_stats_enabled(enabled) {
+    const next_enabled = !!enabled;
+    if (this.stats_enabled === next_enabled) return;
+
+    this.stats_enabled = next_enabled;
+    if (this.counters_buffer) {
+      this.counters_buffer.config.own_readback = next_enabled;
+    }
   }
 
   _setup_accumulation_resources(render_graph, context, branch) {
@@ -1282,6 +1342,7 @@ export class SurfaceRadianceCache extends GIModule {
     const surface_cache = this.get_resource("surface_cache");
     const hashmap_entries = this.get_resource("hashmap_entries");
     const active_indices = this.get_resource("active_indices");
+    const update_indices = this.get_resource("update_indices");
     const counters = this.get_resource("counters");
     const hit_info = this.get_resource("hit_info");
     const entity_index_lookup = this.get_resource("entity_index_lookup");
@@ -1303,11 +1364,11 @@ export class SurfaceRadianceCache extends GIModule {
       this.params_data[11] = clamp(config.importance_exploration, 0.01, 1.0);
       this.params_data[12] = rays_per_patch;
       this.params_data[13] = Math.max(config.cache_pixel_footprint ?? 3, 1);
-      this.params_data[14] = Math.max(config.cache_lookup_jitter ?? 0, 0);
-      this.params_data[15] = clamp(Math.floor(config.hash_search_count ?? 10), 1, 64);
-      this.params_data[16] = Math.max(config.cache_normal_bias ?? 0, 0);
-      this.params_data[17] = 0;
-      this.params_data[18] = 0;
+      this.params_data[14] = clamp(Math.floor(config.hash_search_count ?? 10), 1, 64);
+      this.params_data[15] = Math.max(config.cache_normal_bias ?? 0, 0);
+      this.params_data[16] = clamp(Math.floor(config.stable_update_interval ?? 1), 1, 64);
+      this.params_data[17] = Math.max(Math.floor(config.stable_update_min_samples ?? 0), 0);
+      this.params_data[18] = Math.max(config.stable_update_variance_threshold ?? 0, 0);
       this.params_data[19] = 0;
       graph.get_physical_buffer(params).write_raw(this.params_data);
     });
@@ -1335,11 +1396,20 @@ export class SurfaceRadianceCache extends GIModule {
           sh_filtered,
           counters,
           active_indices,
+          update_indices,
           inputs.depth_texture,
           inputs.gbuffer_normal,
           hashmap_entries,
         ],
-        outputs: [surface_cache, sh, sh_filtered, counters, active_indices, hashmap_entries],
+        outputs: [
+          surface_cache,
+          sh,
+          sh_filtered,
+          counters,
+          active_indices,
+          update_indices,
+          hashmap_entries,
+        ],
       },
       (graph, frame_data) =>
         graph
@@ -1355,8 +1425,7 @@ export class SurfaceRadianceCache extends GIModule {
         inputs: [
           params,
           surface_cache,
-          sh,
-          active_indices,
+          update_indices,
           counters,
           hit_info,
           inputs.tlas_bvh2_bounds,
@@ -1381,16 +1450,51 @@ export class SurfaceRadianceCache extends GIModule {
     const params = trace.get_resource("params");
     const surface_cache = trace.get_resource("surface_cache");
     const hashmap_entries = trace.get_resource("hashmap_entries");
-    const active_indices = trace.get_resource("active_indices");
+    const update_indices = trace.get_resource("update_indices");
     const counters = trace.get_resource("counters");
     const hit_info = trace.get_resource("hit_info");
+    const emissive_lights = trace.get_resource("emissive_lights");
     const entity_index_lookup = trace.get_resource("entity_index_lookup");
     const radiance_info = this.get_resource("radiance_info");
-    const sh = this.get_resource("surface_cache_sh");
+    const sh_filtered = this.get_resource("surface_cache_sh_filtered");
     const { inputs, total_ray_count } = context;
     const materials = this.material_buffers;
     const textures = this.texture_pools;
     const lighting = this.scene_lighting_data;
+
+    this.add_compute_pass(
+      render_graph,
+      "compact_emissive",
+      "surface_cache_compact_emissive_lights",
+      {
+        inputs: [
+          inputs.tlas_bvh2_bounds,
+          inputs.tlas_bvh_info,
+          inputs.blas_directory,
+          inputs.index_buffer,
+          inputs.entity_transforms,
+          materials.params_gpu_buffer,
+          materials.material_offsets_buffer,
+          materials.material_palette_buffer,
+          entity_index_lookup,
+          emissive_lights,
+          textures.albedo,
+          textures.emission,
+        ],
+        outputs: [emissive_lights],
+      },
+      (graph, frame_data) => {
+        const bounds_buffer = graph.get_physical_buffer(inputs.tlas_bvh2_bounds);
+        graph.get_physical_buffer(emissive_lights).write_raw(EMPTY_EMISSIVE_LIGHT_HEADER, 0);
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(
+            Math.ceil(Math.floor(bounds_buffer.config.size / 32) / COMPUTE_WORKGROUP_SIZE),
+            1,
+            1
+          );
+      }
+    );
 
     this.add_compute_pass(
       render_graph,
@@ -1401,15 +1505,16 @@ export class SurfaceRadianceCache extends GIModule {
           params,
           lighting.scene_lighting_buffer,
           surface_cache,
-          sh,
-          active_indices,
+          sh_filtered,
+          update_indices,
           counters,
           hit_info,
           materials.params_gpu_buffer,
           materials.material_offsets_buffer,
           materials.material_palette_buffer,
-          entity_index_lookup,
+          inputs.compact_transforms,
           inputs.dense_lights,
+          emissive_lights,
           textures.albedo,
           textures.normal,
           textures.roughness,
@@ -1422,7 +1527,7 @@ export class SurfaceRadianceCache extends GIModule {
           radiance_info,
           hashmap_entries,
         ],
-        outputs: [hit_info, radiance_info],
+        outputs: [radiance_info],
       },
       (graph, frame_data) =>
         graph
@@ -1437,7 +1542,6 @@ export class SurfaceRadianceCache extends GIModule {
         inputs: [
           params,
           counters,
-          hit_info,
           inputs.tlas_bvh2_bounds,
           inputs.tlas_bvh_info,
           inputs.blas_bvh2_nodes,
@@ -1463,6 +1567,7 @@ export class SurfaceRadianceCache extends GIModule {
     const surface_cache = trace.get_resource("surface_cache");
     const hashmap_entries = trace.get_resource("hashmap_entries");
     const active_indices = trace.get_resource("active_indices");
+    const update_indices = trace.get_resource("update_indices");
     const counters = trace.get_resource("counters");
     const hit_info = trace.get_resource("hit_info");
     const radiance_info = shade.get_resource("radiance_info");
@@ -1478,7 +1583,7 @@ export class SurfaceRadianceCache extends GIModule {
       "accumulate",
       "surface_cache_sh_accumulate",
       {
-        inputs: [params, surface_cache, sh, active_indices, counters, hit_info, radiance_info],
+        inputs: [params, surface_cache, sh, update_indices, counters, hit_info, radiance_info],
         outputs: [surface_cache, sh],
       },
       (graph, frame_data) =>
@@ -1559,6 +1664,61 @@ export class SurfaceRadianceCache extends GIModule {
           .dispatch(Math.ceil(context.width / 8), Math.ceil(context.height / 8), 1)
     );
     return output;
+  }
+
+  get_stats(context = this.frame_context) {
+    if (!this.counters_data || !context?.total_patches) return null;
+
+    const active_patch_count = Math.min(this.counters_data[0] || 0, context.total_patches);
+    const update_patch_count = Math.min(this.counters_data[1] || 0, active_patch_count);
+    const surface_cache_bytes = context.total_patches * 20 * 4;
+    const hashmap_bytes = context.total_patches * 3 * 4;
+    const sh_bytes = context.total_patches * 6 * 4 * 2;
+    const ray_working_set_bytes =
+      context.total_ray_count *
+      (SURFACE_CACHE_HIT_WORD_COUNT + SURFACE_CACHE_RADIANCE_WORD_COUNT) *
+      4;
+    const emissive_light_bytes =
+      (4 + Math.max(1, Math.floor(context.config.max_emissive_lights ?? 32768)) * 12) * 4;
+    const scheduling_bytes = this.params_data.byteLength + context.total_patches * 8 + 16;
+    const output_bytes = context.width * context.height * 8 * 3;
+
+    return {
+      strategy: "scgi",
+      width: context.width,
+      height: context.height,
+      total_patch_count: context.total_patches,
+      active_patch_count,
+      update_patch_count,
+      rays_per_patch: context.rays_per_patch,
+      total_rays_fired: update_patch_count * context.rays_per_patch,
+      maximum_ray_count: context.total_ray_count,
+      max_ray_length: context.config.max_ray_length,
+      cache_entry_lifetime: context.config.cache_entry_lifetime,
+      cache_pixel_footprint: context.config.cache_pixel_footprint,
+      cache_normal_bias: context.config.cache_normal_bias,
+      hash_search_count: context.config.hash_search_count,
+      history_hysteresis: context.config.history_hysteresis,
+      max_history_samples: context.config.max_history_samples,
+      stable_update_interval: context.config.stable_update_interval,
+      stable_update_min_samples: context.config.stable_update_min_samples,
+      stable_update_variance_threshold: context.config.stable_update_variance_threshold,
+      surface_cache_bytes,
+      hashmap_bytes,
+      sh_bytes,
+      ray_working_set_bytes,
+      emissive_light_bytes,
+      scheduling_bytes,
+      output_bytes,
+      total_memory_bytes:
+        surface_cache_bytes +
+        hashmap_bytes +
+        sh_bytes +
+        ray_working_set_bytes +
+        emissive_light_bytes +
+        scheduling_bytes +
+        output_bytes,
+    };
   }
 }
 

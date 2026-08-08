@@ -10,14 +10,54 @@
 @group(1) @binding(3) var<storage, read_write> surface_cache_sh_filtered: array<u32>;
 @group(1) @binding(4) var<storage, read_write> counters: SurfaceCacheCounters;
 @group(1) @binding(5) var<storage, read_write> active_indices: array<u32>;
-@group(1) @binding(6) var depth_texture: texture_2d<f32>;
-@group(1) @binding(7) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(8) var<storage, read_write> surface_cache_hashmap: array<atomic<u32>>;
+@group(1) @binding(6) var<storage, read_write> update_indices: array<u32>;
+@group(1) @binding(7) var depth_texture: texture_2d<f32>;
+@group(1) @binding(8) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(9) var<storage, read_write> surface_cache_hashmap: array<atomic<u32>>;
+
+// Keep spatial residency independent from tracing frequency. Young and noisy
+// patches converge continuously; mature patches rotate through bounded update
+// phases while an age guard prevents intermittently visible entries starving.
+fn patch_requires_ray_update(patch_index: u32) -> bool {
+    let surface_patch = surface_cache[patch_index];
+    let minimum_samples = max(surface_cache_params.stable_update_min_samples, 0.0);
+    if (surface_patch.history.x < minimum_samples) {
+        return true;
+    }
+
+    let interval = max(u32(surface_cache_params.stable_update_interval), 1u);
+    if (interval <= 1u) {
+        return true;
+    }
+
+    let variance = max(surface_patch.history.w - surface_patch.history.z * surface_patch.history.z, 0.0);
+    let normalized_variance = variance / max(surface_patch.history.z * surface_patch.history.z, 0.01);
+    let variance_threshold = max(
+        surface_cache_params.stable_update_variance_threshold,
+        0.0
+    );
+    if (variance_threshold > 0.0 && normalized_variance >= variance_threshold) {
+        return true;
+    }
+
+    let frame = u32(surface_cache_params.frame_index);
+    let last_update_frame = min(u32(surface_patch.metadata.x), frame);
+    let update_age = frame - last_update_frame;
+    let update_phase = hash(patch_index ^ 0x85ebca6bu) % interval;
+    return frame % interval == update_phase || update_age >= interval * 2u;
+}
 
 fn append_active_patch(patch_index: u32) {
     let active_index = atomicAdd(&counters.active_patch_count, 1u);
     if (active_index < u32(surface_cache_params.total_patch_count)) {
         active_indices[active_index] = patch_index;
+    }
+
+    if (patch_requires_ray_update(patch_index)) {
+        let update_index = atomicAdd(&counters.update_patch_count, 1u);
+        if (update_index < u32(surface_cache_params.total_patch_count)) {
+            update_indices[update_index] = patch_index;
+        }
     }
 }
 
@@ -51,21 +91,11 @@ fn initialize_patch(
 fn feedback_surface_level(
     position: vec3<f32>,
     normal: vec3<f32>,
-    pixel_coord: vec2<u32>,
     frame: u32,
     cell_exponent: i32
 ) {
-    let cell_size = surface_cache_cell_size(cell_exponent);
-    let lookup_position = surface_cache_jitter_lookup_position(
-        position,
-        normal,
-        pixel_coord,
-        frame,
-        cell_size,
-        surface_cache_params
-    );
     let quantized_position = surface_cache_quantize_position(
-        lookup_position,
+        position,
         normal,
         cell_exponent,
         surface_cache_params
@@ -99,7 +129,42 @@ fn feedback_surface_level(
         );
         append_active_patch(result.index);
     } else if (result.status == HASHMAP_RESULT_FOUND) {
-        surface_cache[result.index].position_frame.w = surface_cache_params.frame_index;
+        let previous_normal = safe_normalize(
+            surface_cache[result.index].normal_cell_exponent.xyz
+        );
+        if (dot(previous_normal, normal) < 0.999999) {
+            let raw_sh = surface_cache_rotate_sh_between_hemispheres(
+                surface_cache_sh_patch_read(&surface_cache_sh, result.index),
+                previous_normal,
+                normal
+            );
+            let filtered_sh = surface_cache_rotate_sh_between_hemispheres(
+                surface_cache_sh_patch_read(
+                    &surface_cache_sh_filtered,
+                    result.index
+                ),
+                previous_normal,
+                normal
+            );
+            surface_cache_sh_patch_write(
+                &surface_cache_sh,
+                result.index,
+                raw_sh
+            );
+            surface_cache_sh_patch_write(
+                &surface_cache_sh_filtered,
+                result.index,
+                filtered_sh
+            );
+        }
+        surface_cache[result.index].position_frame = vec4<f32>(
+            position,
+            surface_cache_params.frame_index
+        );
+        surface_cache[result.index].normal_cell_exponent.x = normal.x;
+        surface_cache[result.index].normal_cell_exponent.y = normal.y;
+        surface_cache[result.index].normal_cell_exponent.z = normal.z;
+
         append_active_patch(result.index);
     }
 }
@@ -129,7 +194,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     feedback_surface_level(
         position,
         normal,
-        pixel_coord,
         frame,
         levels.fine_exponent
     );
@@ -137,7 +201,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         feedback_surface_level(
             position,
             normal,
-            pixel_coord,
             frame,
             levels.coarse_exponent
         );

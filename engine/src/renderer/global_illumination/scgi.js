@@ -9,19 +9,22 @@ export class SCGI {
   debug_texture = null;
 
   config = {
-    surface_cache_size: 262144,
-    rays_per_patch: 4,
+    surface_cache_size: 131072,
+    rays_per_patch: 8,
     cache_entry_lifetime: 1,
     hash_search_count: 10,
     cache_pixel_footprint: 12.0,
-    cache_lookup_jitter: 0.0,
     cache_normal_bias: 0.005,
+    stable_update_interval: 1,
+    stable_update_min_samples: 64,
+    stable_update_variance_threshold: 1.0,
     history_hysteresis: 0.99,
     max_history_samples: 128,
     importance_sample_count: 8,
     importance_exploration: 0.01,
     indirect_boost: 1.0,
     max_ray_length: 128.0,
+    max_emissive_lights: 32768,
   };
 
   constructor(params = {}) {
@@ -109,6 +112,14 @@ export class SCGI {
       },
     });
     return this.debug_texture;
+  }
+
+  get_stats() {
+    return this.pipeline.get_module("surface").get_stats();
+  }
+
+  set_stats_enabled(enabled) {
+    this.pipeline.get_module("surface").set_stats_enabled(enabled);
   }
 
   set_config(new_config) {

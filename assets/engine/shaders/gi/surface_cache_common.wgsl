@@ -12,7 +12,7 @@ const SURFACE_CACHE_MIN_CELL_EXPONENT: i32 = -16;
 const SURFACE_CACHE_MAX_CELL_EXPONENT: i32 = 15;
 const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.2;
 const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 0.8;
-const SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES: f32 = 16.0;
+const SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES: f32 = 32.0;
 
 struct SurfaceCacheParams {
     surface_cache_size: f32,
@@ -29,12 +29,12 @@ struct SurfaceCacheParams {
     importance_exploration: f32,
     rays_per_patch: f32,
     cache_pixel_footprint: f32,
-    cache_lookup_jitter: f32,
     hash_search_count: f32,
     cache_normal_bias: f32,
+    stable_update_interval: f32,
+    stable_update_min_samples: f32,
+    stable_update_variance_threshold: f32,
     padding0: f32,
-    padding1: f32,
-    padding2: f32,
 };
 
 struct SurfaceCacheCellLevels {
@@ -61,37 +61,34 @@ struct SurfacePatchReadOnly {
 
 struct SurfaceCacheCounters {
     active_patch_count: atomic<u32>,
-    padding0: atomic<u32>,
+    update_patch_count: atomic<u32>,
     padding1: atomic<u32>,
     padding2: atomic<u32>,
 };
 
 struct SurfaceCacheCountersReadOnly {
     active_patch_count: u32,
-    padding0: u32,
+    update_patch_count: u32,
     padding1: u32,
     padding2: u32,
 };
 
-// Compact geometric result for one active surface-cache ray. The hit-position
-// w lane carries the RIS correction into the SH update; radiance remains in a
-// separate buffer so geometry-only consumers do not pull radiance cache lines.
+// Exact compact primary-hit record. Attribute reconstruction stays in the
+// material pass, keeping traversal output to three naturally aligned vectors.
 struct SurfaceCacheHitInfo {
-    hit_position_sampling_weight: vec4<f32>,
-    ray_direction_primitive: vec4<f32>,
-    normal_section_index: vec4<f32>,
-    hit_attr0: vec4<f32>,
-    hit_attr1: vec4<f32>,
-    shadow_origin: vec4<f32>,
-    shadow_direction: vec4<f32>,
+    ray_direction_sampling_weight: vec4<f32>,
+    hit_identity: vec4<u32>,
+    hit_barycentrics_t: vec4<f32>,
 };
 
-// Radiance and its small cross-pass state machine are kept separately from hit
-// geometry. shadow_radiance.w is 0 for none, 1 for pending visibility, and 2
-// for visible; sample_radiance.w marks a valid traced sample.
+// Shading owns radiance and the shadow ray it generates. shadow_radiance.w is
+// 0 for none, 1 for pending visibility, and 2 for visible;
+// sample_radiance.w marks a valid traced sample.
 struct SurfaceCacheRadianceInfo {
     shadow_radiance: vec4<f32>,
     sample_radiance: vec4<f32>,
+    shadow_origin: vec4<f32>,
+    shadow_direction: vec4<f32>,
 };
 
 fn surface_cache_sh_patch_read(
@@ -385,29 +382,6 @@ fn surface_cache_hash_search_count(params: SurfaceCacheParams) -> u32 {
     return hashmap_search_count(
         max(u32(params.hash_search_count), 1u),
         max(u32(params.total_patch_count), 1u)
-    );
-}
-
-fn surface_cache_jitter_lookup_position(
-    position: vec3<f32>,
-    normal: vec3<f32>,
-    pixel_coord: vec2<u32>,
-    frame: u32,
-    cell_size: f32,
-    params: SurfaceCacheParams
-) -> vec3<f32> {
-    let seed = random_seed(
-        pixel_coord.x ^
-        (pixel_coord.y * 0x9e3779b9u) ^
-        (frame * 0x85ebca6bu)
-    );
-    let jitter = vec2<f32>(
-        rand_float(seed),
-        rand_float(random_seed(seed))
-    ) * 2.0 - vec2<f32>(1.0);
-    let tangent_frame = surface_cache_hemisphere_frame(normal);
-    return position + params.cache_lookup_jitter * cell_size * (
-        jitter.x * tangent_frame[0] + jitter.y * tangent_frame[1]
     );
 }
 

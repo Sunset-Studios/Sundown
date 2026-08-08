@@ -8,7 +8,7 @@
 @compute @workgroup_size(1, 1, 1)
 fn cs() {
     atomicStore(&counters.active_patch_count, 0u);
-    atomicStore(&counters.padding0, 0u);
+    atomicStore(&counters.update_patch_count, 0u);
     atomicStore(&counters.padding1, 0u);
     atomicStore(&counters.padding2, 0u);
 }

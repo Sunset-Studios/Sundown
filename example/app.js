@@ -3230,20 +3230,12 @@ export class BackroomsScene extends Scene {
   geometry_batches = new Map();
   cube_mesh = null;
   flicker_material = null;
-  fixture_lights = [];
-  flicker_light_indices = [];
-  fixture_light_entity = null;
-  flicker_time = 0.0;
 
   init(parent_context) {
     super.init(parent_context);
 
     this.entities.length = 0;
     this.geometry_batches.clear();
-    this.fixture_lights.length = 0;
-    this.flicker_light_indices.length = 0;
-    this.fixture_light_entity = null;
-    this.flicker_time = 0.0;
 
     const camera_control = this.add_layer(FreeformArcballControlProcessor);
     camera_control.move_speed = 7.0;
@@ -3259,13 +3251,23 @@ export class BackroomsScene extends Scene {
     view_data.near = 0.05;
     view_data.far = 180.0;
 
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1.0, 1.0, 1.0];  // Warm daylight tint
+    light_fragment_view.intensity = 0.0;
+    light_fragment_view.position = [0.0, 5.0, -10.0];
+    light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
+
     this.cube_mesh = Mesh.cube();
     const materials = this.create_materials();
 
     this.create_room_network(materials);
     this.create_liminal_details(materials);
     this.flush_geometry_batches();
-    this.create_lighting();
 
     const geometry_count = [...this.geometry_batches.values()].reduce(
       (count, batch) => count + batch.length,
@@ -3273,7 +3275,7 @@ export class BackroomsScene extends Scene {
     );
     log(
       `[${this.name}] Initialized ${geometry_count} pieces in ` +
-        `${this.geometry_batches.size} material batches with ${this.fixture_lights.length} fixtures.`
+        `${this.geometry_batches.size} material batches.`
     );
   }
 
@@ -3678,7 +3680,6 @@ export class BackroomsScene extends Scene {
     if (fixture_type === "dead") panel_material = materials.dark_void;
 
     this.queue_box([x, height - 0.095, z], [1.52, 0.025, 0.42], panel_material);
-    this.fixture_lights.push({ x, y: height - 0.42, z, fixture_type });
   }
 
   create_liminal_details(materials) {
@@ -3904,65 +3905,6 @@ export class BackroomsScene extends Scene {
     this.queue_box([x + 1.35, 0.5, z + 0.72], [0.09, 0.5, 0.09], materials.metal);
   }
 
-  create_lighting() {
-    const ambient_light_entity = EntityManager.create_entity([LightFragment]);
-    const ambient_light = EntityManager.get_fragment(ambient_light_entity, LightFragment);
-    ambient_light.type = LightType.DIRECTIONAL;
-    ambient_light.color = [0.68, 0.67, 0.43, 1.0];
-    ambient_light.intensity = 0.16;
-    ambient_light.position = [0.15, 1.0, 0.08, 0.0];
-    ambient_light.active = true;
-    ambient_light.is_primary_sun = 1;
-    ambient_light.shadow_casting = 0;
-    this.entities.push(ambient_light_entity);
-
-    const active_fixtures = this.fixture_lights.filter(
-      (fixture) => fixture.fixture_type !== "dead"
-    );
-    if (active_fixtures.length === 0) return;
-
-    this.fixture_light_entity = EntityManager.create_entity([LightFragment]);
-    EntityManager.set_entity_instance_count(this.fixture_light_entity, active_fixtures.length);
-    this.entities.push(this.fixture_light_entity);
-
-    for (let i = 0; i < active_fixtures.length; i++) {
-      const fixture = active_fixtures[i];
-      const light = EntityManager.get_fragment(this.fixture_light_entity, LightFragment, i);
-      const is_flicker = fixture.fixture_type === "flicker";
-
-      light.type = LightType.POINT;
-      light.color = is_flicker ? [0.76, 0.79, 0.43, 1.0] : [1.0, 0.86, 0.48, 1.0];
-      light.intensity = is_flicker ? 3.8 : 5.2;
-      light.position = [fixture.x, fixture.y, fixture.z, 1.0];
-      light.radius = is_flicker ? 7.5 : 9.5;
-      light.active = true;
-      light.shadow_casting = 0;
-
-      if (is_flicker) this.flicker_light_indices.push(i);
-    }
-  }
-
-  update(delta_time) {
-    super.update(delta_time);
-
-    if (!this.fixture_light_entity || !this.flicker_material) return;
-
-    this.flicker_time += delta_time;
-    const slow_hum = Math.sin(this.flicker_time * 18.0) * 0.08;
-    const dropout = Math.sin(this.flicker_time * 3.71) > 0.93 ? 0.16 : 1.0;
-    const flicker = Math.max(0.08, (0.9 + slow_hum) * dropout);
-
-    this.flicker_material.set_emission(34.0 * flicker);
-    for (let i = 0; i < this.flicker_light_indices.length; i++) {
-      const light = EntityManager.get_fragment(
-        this.fixture_light_entity,
-        LightFragment,
-        this.flicker_light_indices[i]
-      );
-      light.intensity = 3.8 * flicker;
-    }
-  }
-
   cleanup() {
     PostProcessStack.clear_view(0);
 
@@ -3971,11 +3913,7 @@ export class BackroomsScene extends Scene {
     }
     this.entities.length = 0;
     this.geometry_batches.clear();
-    this.fixture_lights.length = 0;
-    this.flicker_light_indices.length = 0;
-    this.fixture_light_entity = null;
     this.flicker_material = null;
-    this.flicker_time = 0.0;
     this.cube_mesh = null;
 
     this.remove_layer(FreeformArcballControlProcessor);
@@ -4565,9 +4503,9 @@ export class UI3DTestScene extends Scene {
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(ui_3d_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
-  await scene_switcher.add_scene(backrooms_scene);
+  //await scene_switcher.add_scene(backrooms_scene);
   //await scene_switcher.add_scene(city_scene);
   //await scene_switcher.add_scene(scifi_city_scene);
 

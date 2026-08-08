@@ -4,14 +4,14 @@ import { InputProvider } from "../input/input_provider.js";
 import { InputKey } from "../input/input_types.js";
 import { panel, label } from "../ui/2d/immediate.js";
 
-const accent = "#69d5ff";
-const accent_soft = "rgba(105, 213, 255, 0.14)";
-const secondary_accent = "#a99cff";
-const panel_surface = "rgba(8, 13, 20, 0.94)";
+const accent = "#64e6b5";
+const accent_soft = "rgba(100, 230, 181, 0.14)";
+const secondary_accent = "#ffbd69";
+const panel_surface = "rgba(8, 16, 17, 0.94)";
 const row_surface = "rgba(255, 255, 255, 0.035)";
-const track_surface = "rgba(2, 7, 13, 0.82)";
-const body_text = "#dce9f0";
-const subdued_text = "#8297a3";
+const track_surface = "rgba(2, 9, 10, 0.82)";
+const body_text = "#def2eb";
+const subdued_text = "#829d94";
 
 const stats_panel_config = {
   layout: "column",
@@ -23,7 +23,7 @@ const stats_panel_config = {
   background_color: panel_surface,
   width: 640,
   padding: 14,
-  border: "1px solid rgba(105, 213, 255, 0.24)",
+  border: "1px solid rgba(100, 230, 181, 0.24)",
   corner_radius: 9,
   box_shadow: "0 14px 36px rgba(0, 0, 0, 0.48)",
 };
@@ -33,8 +33,9 @@ function format_number(value) {
 }
 
 function format_bytes(value) {
-  const mib = Number(value) / (1024 * 1024);
-  return `${mib.toFixed(mib < 10 ? 2 : 1)} MiB`;
+  const bytes = Number(value);
+  const mib = bytes / (1024 * 1024);
+  return mib >= 1 ? `${mib.toFixed(mib < 10 ? 2 : 1)} MiB` : `${(bytes / 1024).toFixed(1)} KiB`;
 }
 
 function metric_card(label_text, value_text, value_color = accent) {
@@ -163,9 +164,10 @@ function activity_row(label_text, current, maximum, detail_text, color = accent)
   );
 }
 
-export class DDGIStats extends DevConsoleTool {
+export class SCGIStats extends DevConsoleTool {
   is_open = false;
   scene = null;
+  stats_source = null;
 
   update(delta_time) {
     if (!this.is_open) return;
@@ -175,9 +177,10 @@ export class DDGIStats extends DevConsoleTool {
   render() {
     const render_strategy = Renderer.get().get_render_strategy();
     const gi_instance = render_strategy ? render_strategy.gi : null;
+    this._set_stats_enabled(true, gi_instance);
     const raw_stats =
       gi_instance && typeof gi_instance.get_stats === "function" ? gi_instance.get_stats() : null;
-    const stats = raw_stats?.probe_grid_dims ? raw_stats : null;
+    const stats = raw_stats?.strategy === "scgi" ? raw_stats : null;
 
     const panel_state = panel(stats_panel_config, () => {
       panel(
@@ -189,12 +192,12 @@ export class DDGIStats extends DevConsoleTool {
           x: 0,
         },
         () => {
-          label("DDGI  //  RADIANCE CACHE", {
+          label("SCGI  //  SURFACE CACHE", {
             width: 420,
             height: "100%",
             x: 0,
             font: "18px monospace",
-            text_color: "#edfaff",
+            text_color: "#effff9",
             text_align: "left",
             text_valign: "middle",
             text_padding: 4,
@@ -207,13 +210,13 @@ export class DDGIStats extends DevConsoleTool {
             text_color: stats ? accent : subdued_text,
             text_align: "center",
             text_valign: "middle",
-            background_color: stats ? accent_soft : "rgba(130, 151, 163, 0.1)",
+            background_color: stats ? accent_soft : "rgba(130, 157, 148, 0.1)",
             border: `1px solid ${stats ? accent : subdued_text}`,
             corner_radius: 14,
           });
         }
       );
-      label("Dynamic diffuse global illumination and sparse probe depth storage", {
+      label("Hashed surface patches, ray tracing, and filtered radiance storage", {
         width: "100%",
         height: 20,
         x: 0,
@@ -235,7 +238,7 @@ export class DDGIStats extends DevConsoleTool {
             corner_radius: 5,
           },
           () => {
-            label("DDGI runtime statistics are not available for the active renderer.", {
+            label("SCGI runtime statistics are not available for the active renderer.", {
               width: "100%",
               height: "100%",
               x: 0,
@@ -252,79 +255,95 @@ export class DDGIStats extends DevConsoleTool {
 
       section_header("Runtime activity");
       activity_row(
-        "Active probes",
-        stats.active_probe_count,
-        stats.total_probe_count,
-        `${format_number(stats.active_probe_count)} / ${format_number(stats.total_probe_count)}`
+        "Active patches",
+        stats.active_patch_count,
+        stats.total_patch_count,
+        `${format_number(stats.active_patch_count)} / ${format_number(stats.total_patch_count)}`
       );
       activity_row(
-        "Frame updates",
-        stats.probe_update_count,
-        stats.probes_per_frame,
-        `${format_number(stats.probe_update_count)} / ${format_number(stats.probes_per_frame)}`,
+        "Ray workload",
+        stats.total_rays_fired,
+        stats.maximum_ray_count,
+        `${format_number(stats.total_rays_fired)} / ${format_number(stats.maximum_ray_count)}`,
         secondary_accent
       );
       metric_pair(
-        "Rays / probe",
-        format_number(stats.max_rays_per_probe),
+        "Updated patches",
+        `${format_number(stats.update_patch_count)} / ${format_number(stats.active_patch_count)}`,
         "Rays fired",
         format_number(stats.total_rays_fired),
         secondary_accent
       );
 
-      section_header("Probe volume");
+      section_header("Cache configuration");
       metric_pair(
-        "Grid dimensions",
-        `${format_number(stats.probe_grid_dims[0])} x ${format_number(stats.probe_grid_dims[1])} x ${format_number(stats.probe_grid_dims[2])}`,
-        "Cascades",
-        format_number(stats.cascade_count)
+        "Patch capacity",
+        format_number(stats.total_patch_count),
+        "Occupancy",
+        `${((stats.active_patch_count / Math.max(1, stats.total_patch_count)) * 100).toFixed(1)}%`
       );
       metric_pair(
-        "Total probes",
-        format_number(stats.total_probe_count),
-        "Probes / cascade",
-        format_number(stats.probes_per_cascade)
+        "Entry lifetime",
+        `${format_number(stats.cache_entry_lifetime)} frames`,
+        "Hash probes",
+        format_number(stats.hash_search_count)
       );
       metric_pair(
-        "Probe spacing",
-        `${stats.probe_spacing.toFixed(2)} m`,
-        "Probe radius",
-        `${stats.probe_radius.toFixed(2)} m`
+        "Pixel footprint",
+        `${Number(stats.cache_pixel_footprint).toFixed(1)} px`,
+        "Normal bias",
+        Number(stats.cache_normal_bias).toFixed(4)
       );
       metric_pair(
-        "Frame budget",
-        `${format_number(stats.probes_per_frame)} probes`,
         "Maximum ray length",
-        `${stats.max_ray_length.toFixed(2)} m`
+        `${Number(stats.max_ray_length).toFixed(1)} m`,
+        "Resolution",
+        `${format_number(stats.width)} x ${format_number(stats.height)}`
+      );
+      metric_pair(
+        "Update interval",
+        `${format_number(stats.stable_update_interval)} frames`,
+        "Rays / patch",
+        format_number(stats.rays_per_patch)
+      );
+      metric_pair(
+        "History limit",
+        `${format_number(stats.max_history_samples)} samples`,
+        "Warmup samples",
+        format_number(stats.stable_update_min_samples)
+      );
+      metric_pair(
+        "Variance threshold",
+        Number(stats.stable_update_variance_threshold).toFixed(2),
+        "History hysteresis",
+        Number(stats.history_hysteresis).toFixed(3)
       );
 
-      section_header("Scene inputs");
+      section_header("GPU memory");
       metric_pair(
-        "Lights",
-        format_number(stats.light_count),
-        "Depth slots",
-        format_number(stats.depth_slot_count)
+        "Surface patches",
+        format_bytes(stats.surface_cache_bytes),
+        "Hash table",
+        format_bytes(stats.hashmap_bytes)
       );
       metric_pair(
-        "Slot retention",
-        `${format_number(stats.depth_slot_retention_frames)} frames`,
-        "Sparse slot coverage",
-        `${((stats.depth_slot_count / Math.max(1, stats.total_probe_count)) * 100).toFixed(1)}%`,
+        "SH history",
+        format_bytes(stats.sh_bytes),
+        "Ray working set",
+        format_bytes(stats.ray_working_set_bytes),
         secondary_accent
       );
-
-      section_header("Depth storage");
       metric_pair(
-        "Sparse moments",
-        format_bytes(stats.depth_sparse_bytes),
-        "Slot metadata",
-        format_bytes(stats.depth_sparse_metadata_bytes)
+        "Scheduling",
+        format_bytes(stats.scheduling_bytes),
+        "GI outputs",
+        format_bytes(stats.output_bytes)
       );
       metric_pair(
-        "Dense packed",
-        format_bytes(stats.depth_dense_packed_bytes),
-        "Previous layout",
-        format_bytes(stats.depth_dense_previous_bytes),
+        "Total footprint",
+        format_bytes(stats.total_memory_bytes),
+        "Maximum ray count",
+        format_number(stats.maximum_ray_count),
         secondary_accent
       );
     });
@@ -341,8 +360,26 @@ export class DDGIStats extends DevConsoleTool {
     this.toggle();
   }
 
+  _set_stats_enabled(enabled, gi_instance = null) {
+    if (!gi_instance) {
+      const render_strategy = Renderer.get().get_render_strategy();
+      gi_instance = render_strategy ? render_strategy.gi : null;
+    }
+
+    if (this.stats_source && (!enabled || this.stats_source !== gi_instance)) {
+      this.stats_source.set_stats_enabled(false);
+      this.stats_source = null;
+    }
+
+    if (enabled && typeof gi_instance?.set_stats_enabled === "function") {
+      gi_instance.set_stats_enabled(true);
+      this.stats_source = gi_instance;
+    }
+  }
+
   toggle() {
     this.is_open = !this.is_open;
+    this._set_stats_enabled(this.is_open);
     if (this.scene) {
       if (this.is_open && typeof this.scene.show_dev_cursor === "function") {
         this.scene.show_dev_cursor();
@@ -354,6 +391,7 @@ export class DDGIStats extends DevConsoleTool {
 
   show() {
     this.is_open = true;
+    this._set_stats_enabled(true);
     if (this.scene && typeof this.scene.show_dev_cursor === "function") {
       this.scene.show_dev_cursor();
     }
@@ -361,6 +399,7 @@ export class DDGIStats extends DevConsoleTool {
 
   hide() {
     this.is_open = false;
+    this._set_stats_enabled(false);
     if (this.scene && typeof this.scene.hide_dev_cursor === "function") {
       this.scene.hide_dev_cursor();
     }

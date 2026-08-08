@@ -43,6 +43,7 @@ struct RayHitCompact {
     mesh_id: u32,
     tri_id_local: u32,
     tri_indices: vec4<u32>,
+    barycentrics: vec2<f32>,
     has_hit: u32,
 };
 
@@ -54,6 +55,7 @@ struct RayHitCompact {
 fn make_miss_ray_hit_compact(t_max: f32) -> RayHitCompact {
     var result: RayHitCompact;
     result.t_hit = t_max;
+    result.barycentrics = vec2<f32>(0.0);
     result.prim_store = 0xffffffffu;
     result.mesh_id = 0xffffffffu;
     result.tri_id_local = 0xffffffffu;
@@ -159,7 +161,7 @@ fn merge_aabbs(a_min: vec3<f32>, a_max: vec3<f32>, b_min: vec3<f32>, b_max: vec3
 }
 
 // Intersection with a triangle
-fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>) -> f32 {
+fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>) -> vec3<f32> {
     let dir  = (*ray).direction_and_tmax.xyz;
     let orig = (*ray).origin_and_tmin.xyz;
 
@@ -185,9 +187,14 @@ fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2:
         && u_scaled + v_scaled < det_abs;
 
     if (!valid) {
-        return -1.0;
+        return vec3<f32>(-1.0, 0.0, 0.0);
     }
-    return t_scaled / det_abs;
+    let inverse_determinant = 1.0 / det_abs;
+    return vec3<f32>(
+        t_scaled * inverse_determinant,
+        u_scaled * inverse_determinant,
+        v_scaled * inverse_determinant
+    );
 }
 
 fn build_local_ray(
