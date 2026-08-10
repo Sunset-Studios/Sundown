@@ -43,17 +43,24 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         cell_exponent,
         surface_cache_params
     );
-    let descriptor_normal = surface_cache_quantize_normal(normal);
+    let directional_bin = surface_cache_directional_bin(normal);
     let patch_index = surface_cache_find_patch(
         descriptor_position,
-        descriptor_normal,
+        directional_bin,
         cell_exponent
     );
 
     var cached_radiance = vec3<f32>(0.0);
     if (patch_index >= 0) {
-        cached_radiance = surface_cache_evaluate_local_sh_irradiance(
-            surface_cache_sh_patch_read(&surface_cache_sh, u32(patch_index))
+        cached_radiance = max(
+            sh_l1_rgb_calculate_irradiance(
+                surface_cache_sh_patch_read(
+                    &surface_cache_sh,
+                    u32(patch_index)
+                ),
+                normal
+            ),
+            vec3<f32>(0.0)
         ) * (surface_cache_params.indirect_boost / PI);
     }
 

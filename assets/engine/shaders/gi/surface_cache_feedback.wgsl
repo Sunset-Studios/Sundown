@@ -3,20 +3,14 @@
 
 @group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<storage, read_write> surface_cache: array<SurfacePatch>;
-@group(1) @binding(2) var<storage, read_write> surface_cache_sh: array<u32>;
-@group(1) @binding(3) var<storage, read_write> surface_cache_sh_filtered: array<u32>;
-@group(1) @binding(4) var<storage, read_write> counters: SurfaceCacheCounters;
-@group(1) @binding(5) var<storage, read_write> active_indices: array<u32>;
-@group(1) @binding(6) var<storage, read_write> update_indices: array<u32>;
-@group(1) @binding(7) var depth_texture: texture_2d<f32>;
-@group(1) @binding(8) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(9) var<storage, read_write> surface_cache_hashmap: array<atomic<u32>>;
+@group(1) @binding(2) var<storage, read_write> counters: SurfaceCacheCounters;
+@group(1) @binding(3) var<storage, read_write> update_indices: array<u32>;
+@group(1) @binding(4) var depth_texture: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(6) var<storage, read_write> surface_cache_hashmap: array<atomic<u32>>;
 
 fn append_active_patch(patch_index: u32) {
-    let active_index = atomicAdd(&counters.active_patch_count, 1u);
-    if (active_index < u32(surface_cache_params.total_patch_count)) {
-        active_indices[active_index] = patch_index;
-    }
+    atomicAdd(&counters.active_patch_count, 1u);
 
     let update_index = atomicAdd(&counters.update_patch_count, 1u);
     if (update_index < u32(surface_cache_params.total_patch_count)) {
@@ -29,7 +23,7 @@ fn initialize_patch(
     position: vec3<f32>,
     normal: vec3<f32>,
     quantized_position: vec3<i32>,
-    quantized_normal: vec3<i32>,
+    directional_bin: u32,
     cell_exponent: i32
 ) {
     surface_cache[patch_index].position_frame = vec4<f32>(
@@ -42,7 +36,7 @@ fn initialize_patch(
     );
     surface_cache[patch_index].grid_key = surface_cache_make_grid_key(
         quantized_position,
-        quantized_normal,
+        directional_bin,
         cell_exponent
     );
     surface_cache[patch_index].metadata = vec4<f32>(0.0);
@@ -61,10 +55,10 @@ fn feedback_surface_level(
         cell_exponent,
         surface_cache_params
     );
-    let quantized_normal = surface_cache_quantize_normal(normal);
+    let directional_bin = surface_cache_directional_bin(normal);
     let key = surface_cache_hash_key(
         quantized_position,
-        quantized_normal,
+        directional_bin,
         cell_exponent
     );
     let capacity = max(u32(surface_cache_params.total_patch_count), 1u);
@@ -85,7 +79,7 @@ fn feedback_surface_level(
             position,
             normal,
             quantized_position,
-            quantized_normal,
+            directional_bin,
             cell_exponent
         );
         append_active_patch(result.index);

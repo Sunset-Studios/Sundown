@@ -2,17 +2,23 @@
 #include "sh_common.wgsl"
 #include "hashmap.wgsl"
 
-const SURFACE_CACHE_MIN_QUERY_SAMPLES: f32 = 2.0;
+const SURFACE_CACHE_MIN_QUERY_SAMPLES: f32 = 4.0;
 const SURFACE_CACHE_MAX_RADIANCE: f32 = 10.0;
 const SURFACE_CACHE_SH_PATCH_SIZE_U32: u32 = 6u;
-const SURFACE_CACHE_NORMAL_BIN_COUNT: u32 = 7u;
-const SURFACE_CACHE_NORMAL_DESCRIPTOR_COUNT: u32 = 343u;
+// Static cache-key configuration. Supported values are 1, 4, 8, and 16.
+// Changing it alters every cache key and therefore requires a cache reset.
+const SURFACE_CACHE_DIRECTIONAL_BIN_COUNT: u32 = 8u;
+const_assert
+    SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 1u ||
+    SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 4u ||
+    SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 8u ||
+    SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 16u;
 const SURFACE_CACHE_CELL_EXPONENT_BIAS: i32 = 16;
 const SURFACE_CACHE_MIN_CELL_EXPONENT: i32 = -16;
 const SURFACE_CACHE_MAX_CELL_EXPONENT: i32 = 15;
 const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.2;
 const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 0.8;
-const SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES: f32 = 64.0;
+const SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES: f32 = 128.0;
 const SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP: f32 = 2.0;
 const SURFACE_CACHE_EMISSIVE_OVERFLOW_SCALE: f32 = 0.1;
 
@@ -115,29 +121,6 @@ fn surface_cache_sh_patch_write(
 
 fn surface_cache_hemisphere_frame(normal: vec3<f32>) -> mat3x3<f32> {
     return orthonormalize(safe_normalize(normal));
-}
-
-fn surface_cache_world_to_hemisphere(direction: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
-    return transpose(surface_cache_hemisphere_frame(normal)) * direction;
-}
-
-fn surface_cache_rotate_sh_between_hemispheres(
-    sh: SH_L1_RGB,
-    source_normal: vec3<f32>,
-    receiver_normal: vec3<f32>
-) -> SH_L1_RGB {
-    let source_to_world = surface_cache_hemisphere_frame(source_normal);
-    let world_to_receiver = transpose(surface_cache_hemisphere_frame(receiver_normal));
-    return sh_l1_rgb_rotate(sh, world_to_receiver * source_to_world);
-}
-
-fn surface_cache_evaluate_local_sh_irradiance(sh: SH_L1_RGB) -> vec3<f32> {
-    return max(
-        // orthonormalize() constructs a frame whose Z axis is the supplied
-        // normal. All traced directions and stored SH use that convention.
-        sh_l1_rgb_calculate_irradiance(sh, vec3<f32>(0.0, 0.0, 1.0)),
-        vec3<f32>(0.0)
-    );
 }
 
 fn surface_cache_full_resolution(params: SurfaceCacheParams) -> vec2<u32> {
@@ -301,31 +284,69 @@ fn surface_cache_world_cell_center(
     return cell_center;
 }
 
-fn surface_cache_quantize_normal(normal: vec3<f32>) -> vec3<i32> {
+fn surface_cache_octahedral_direction(normal: vec3<f32>) -> vec2<f32> {
     let normalized = safe_normalize(normal);
-    return vec3<i32>(floor(normalized * 3.0));
+    let projected = normalized / max(
+        abs(normalized.x) + abs(normalized.y) + abs(normalized.z),
+        1e-6
+    );
+    var octahedral = projected.xy;
+    if (projected.z < 0.0) {
+        let signs = vec2<f32>(
+            select(-1.0, 1.0, projected.x >= 0.0),
+            select(-1.0, 1.0, projected.y >= 0.0)
+        );
+        octahedral = (vec2<f32>(1.0) - abs(projected.yx)) * signs;
+    }
+    return clamp(
+        octahedral * 0.5 + vec2<f32>(0.5),
+        vec2<f32>(0.0),
+        vec2<f32>(1.0)
+    );
+}
+
+fn surface_cache_directional_bin(normal: vec3<f32>) -> u32 {
+    if (SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 1u) {
+        return 0u;
+    }
+
+    let normalized = safe_normalize(normal);
+    if (SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 8u) {
+        return
+            select(0u, 1u, normalized.x >= 0.0) |
+            (select(0u, 1u, normalized.y >= 0.0) << 1u) |
+            (select(0u, 1u, normalized.z >= 0.0) << 2u);
+    }
+
+    let resolution = select(
+        2u,
+        4u,
+        SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 16u
+    );
+    let encoded = surface_cache_octahedral_direction(normal);
+    let coordinate = min(
+        vec2<u32>(encoded * f32(resolution)),
+        vec2<u32>(resolution - 1u)
+    );
+    return coordinate.x + coordinate.y * resolution;
 }
 
 fn surface_cache_hash_key(
     quantized_position: vec3<i32>,
-    quantized_normal: vec3<i32>,
+    directional_bin: u32,
     cell_exponent: i32
 ) -> HashMapKey {
     // The encoded exponent is the exact identity of the automatically selected
     // power-of-two cell size, including sizes smaller than one world unit.
     let encoded_exponent = surface_cache_encode_cell_exponent(cell_exponent);
 
-    var index_hash = hashmap_pcg(bitcast<u32>(quantized_normal.z));
-    index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_normal.y), index_hash);
-    index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_normal.x), index_hash);
+    var index_hash = hashmap_pcg(directional_bin);
     index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_position.z), index_hash);
     index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_position.y), index_hash);
     index_hash = hashmap_pcg_combine(bitcast<u32>(quantized_position.x), index_hash);
     index_hash = hashmap_pcg_combine(encoded_exponent, index_hash);
 
-    var checksum = hashmap_xxhash32(bitcast<u32>(quantized_normal.z));
-    checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_normal.y), checksum);
-    checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_normal.x), checksum);
+    var checksum = hashmap_xxhash32(directional_bin);
     checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_position.z), checksum);
     checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_position.y), checksum);
     checksum = hashmap_xxhash32_combine(bitcast<u32>(quantized_position.x), checksum);
@@ -336,38 +357,33 @@ fn surface_cache_hash_key(
 
 fn surface_cache_make_grid_key(
     quantized_position: vec3<i32>,
-    quantized_normal: vec3<i32>,
+    directional_bin: u32,
     cell_exponent: i32
 ) -> vec4<i32> {
-    let normal_descriptor =
-        u32(quantized_normal.x + 3) +
-        SURFACE_CACHE_NORMAL_BIN_COUNT * u32(quantized_normal.y + 3) +
-        SURFACE_CACHE_NORMAL_BIN_COUNT * SURFACE_CACHE_NORMAL_BIN_COUNT *
-            u32(quantized_normal.z + 3);
     return vec4<i32>(
         quantized_position,
         i32(
             surface_cache_encode_cell_exponent(cell_exponent) *
-            SURFACE_CACHE_NORMAL_DESCRIPTOR_COUNT + normal_descriptor
+            SURFACE_CACHE_DIRECTIONAL_BIN_COUNT + directional_bin
         )
     );
 }
 
 fn surface_cache_grid_key_cell_exponent(grid_key: vec4<i32>) -> i32 {
     let encoded_exponent =
-        u32(max(grid_key.w, 0)) / SURFACE_CACHE_NORMAL_DESCRIPTOR_COUNT;
+        u32(max(grid_key.w, 0)) / SURFACE_CACHE_DIRECTIONAL_BIN_COUNT;
     return surface_cache_decode_cell_exponent(encoded_exponent);
 }
 
 fn surface_cache_patch_descriptor_matches(
     patch_grid_key: vec4<i32>,
     quantized_position: vec3<i32>,
-    quantized_normal: vec3<i32>,
+    directional_bin: u32,
     cell_exponent: i32
 ) -> bool {
     return all(patch_grid_key == surface_cache_make_grid_key(
         quantized_position,
-        quantized_normal,
+        directional_bin,
         cell_exponent
     ));
 }

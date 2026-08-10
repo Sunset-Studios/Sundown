@@ -1,11 +1,11 @@
 fn surface_cache_find_patch(
     quantized_position: vec3<i32>,
-    quantized_normal: vec3<i32>,
+    directional_bin: u32,
     cell_exponent: i32
 ) -> i32 {
     let key = surface_cache_hash_key(
         quantized_position,
-        quantized_normal,
+        directional_bin,
         cell_exponent
     );
     let capacity = max(u32(surface_cache_params.total_patch_count), 1u);
@@ -20,7 +20,7 @@ fn surface_cache_find_patch(
         surface_cache_patch_descriptor_matches(
             surface_cache[patch_index].grid_key,
             quantized_position,
-            quantized_normal,
+            directional_bin,
             cell_exponent
         )
     ) {
@@ -108,7 +108,7 @@ fn surface_cache_tangent_components(value: vec3<f32>, dominant_axis: u32) -> vec
 
 fn surface_cache_sample_descriptor(
     descriptor: vec3<i32>,
-    quantized_normal: vec3<i32>,
+    directional_bin: u32,
     receiver_position: vec3<f32>,
     receiver_normal: vec3<f32>,
     cell_exponent: i32,
@@ -116,7 +116,7 @@ fn surface_cache_sample_descriptor(
 ) -> SurfaceCacheTapSample {
     let patch_index_i = surface_cache_find_patch(
         descriptor,
-        quantized_normal,
+        directional_bin,
         cell_exponent
     );
     if (patch_index_i < 0) {
@@ -154,13 +154,10 @@ fn surface_cache_sample_descriptor(
         return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
     }
 
-    let receiver_direction = safe_normalize(
-        surface_cache_world_to_hemisphere(receiver_normal, patch_normal)
-    );
     let irradiance = max(
         sh_l1_rgb_calculate_irradiance(
             surface_cache_sh_patch_read(&surface_cache_sh, patch_index),
-            receiver_direction
+            receiver_normal
         ),
         vec3<f32>(0.0)
     );
@@ -180,7 +177,7 @@ fn surface_cache_sample_level_nearest(
             cell_exponent,
             surface_cache_params
         ),
-        surface_cache_quantize_normal(receiver_normal),
+        surface_cache_directional_bin(receiver_normal),
         cell_exponent
     );
     if (patch_index_i < 0) {
@@ -198,13 +195,10 @@ fn surface_cache_sample_level_nearest(
         return vec4<f32>(0.0);
     }
 
-    let receiver_direction = safe_normalize(
-        surface_cache_world_to_hemisphere(receiver_normal, patch_normal)
-    );
     let irradiance = max(
         sh_l1_rgb_calculate_irradiance(
             surface_cache_sh_patch_read(&surface_cache_sh, patch_index),
-            receiver_direction
+            receiver_normal
         ),
         vec3<f32>(0.0)
     );
@@ -221,7 +215,7 @@ fn surface_cache_sample_level(
     cell_exponent: i32
 ) -> vec4<f32> {
     let receiver_normal = safe_normalize(normal);
-    let quantized_normal = surface_cache_quantize_normal(receiver_normal);
+    let directional_bin = surface_cache_directional_bin(receiver_normal);
     let cell_size = surface_cache_cell_size(cell_exponent);
     let dominant_axis = surface_cache_dominant_axis(receiver_normal);
     let descriptor_position = position + surface_cache_descriptor_offset(
@@ -252,7 +246,7 @@ fn surface_cache_sample_level(
             );
             let tap = surface_cache_sample_descriptor(
                 descriptor,
-                quantized_normal,
+                directional_bin,
                 position,
                 receiver_normal,
                 cell_exponent,

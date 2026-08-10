@@ -37,5 +37,4 @@ fn cs() {
 
     write_dispatch_args(0u, surface_cache_workgroup_count(ray_count));
     write_dispatch_args(3u, surface_cache_workgroup_count(update_patch_count));
-    write_dispatch_args(6u, surface_cache_workgroup_count(active_patch_count));
 }

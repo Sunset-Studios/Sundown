@@ -23,14 +23,9 @@ const PROBE_RAY_DATA_WORD_COUNT = 13;
 const PROBE_MSME_STATS_WORD_COUNT = 8;
 const PROBE_COUNTERS_NAME = "probe_volume_gi_counters";
 const SURFACE_CACHE_COUNTERS_NAME = "surface_cache_counters";
-const SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT = 9;
+const SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT = 6;
 const SURFACE_CACHE_TRACE_DISPATCH_OFFSET = 0;
 const SURFACE_CACHE_UPDATE_DISPATCH_OFFSET = 3 * Uint32Array.BYTES_PER_ELEMENT;
-const SURFACE_CACHE_ACTIVE_DISPATCH_OFFSET = 6 * Uint32Array.BYTES_PER_ELEMENT;
-const SURFACE_CACHE_SPATIAL_DIRECTIONS = Object.freeze([
-  Object.freeze([1, 0]),
-  Object.freeze([0, 1]),
-]);
 // Must match SurfaceCacheHitInfo and SurfaceCacheRadianceInfo in surface_cache_common.wgsl.
 const SURFACE_CACHE_HIT_WORD_COUNT = 12;
 const SURFACE_CACHE_RADIANCE_WORD_COUNT = 16;
@@ -1137,7 +1132,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
 }
 
 /**
- * Hashed surface tracing, hit shading, and filtered SH accumulation.
+ * Hashed surface tracing, hit shading, and SH accumulation.
  * Disable shading and accumulation to record only the tracing portion.
  */
 export class SurfaceRadianceCache extends GIModule {
@@ -1155,16 +1150,13 @@ export class SurfaceRadianceCache extends GIModule {
         shade: compute_shader("gi/surface_cache_trace_shade.wgsl"),
         shadow: compute_shader("gi/surface_cache_trace_shadow.wgsl"),
         accumulate: compute_shader("gi/surface_cache_accumulate.wgsl"),
-        filter: compute_shader("gi/surface_cache_filter.wgsl"),
         resolve: compute_shader("gi/surface_cache_resolve.wgsl"),
         temporal: compute_shader("gi/surface_cache_temporal.wgsl"),
-        spatial: compute_shader("gi/surface_cache_spatial_filter.wgsl"),
         debug: compute_shader("gi/surface_cache_debug.wgsl"),
       },
     });
     this.params_data = new Float32Array(16);
     this.temporal_params_data = new Float32Array(4);
-    this.spatial_params_data = new Float32Array(8);
     this.counters_buffer = null;
     this.counters_data = null;
     this.stats_enabled = false;
@@ -1226,12 +1218,6 @@ export class SurfaceRadianceCache extends GIModule {
     this.create_buffer(render_graph, "hashmap_entries", {
       name: "surface_cache_hashmap_entries",
       size: context.total_patches * 3,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-    this.create_buffer(render_graph, "active_indices", {
-      name: "surface_cache_active_indices",
-      size: context.total_patches,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -1330,15 +1316,6 @@ export class SurfaceRadianceCache extends GIModule {
           clear_value: { r: 0, g: 0, b: 0, a: 0 },
           force: force_recreate,
         });
-        this.create_image(render_graph, `diffuse_spatial_${frame}`, {
-          name: `surface_cache_diffuse_spatial_${frame}`,
-          format: "rgba16float",
-          width,
-          height,
-          usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-          clear_value: { r: 0, g: 0, b: 0, a: 0 },
-          force: force_recreate,
-        });
       }
       this.create_buffer(render_graph, "temporal_params", {
         name: "surface_cache_temporal_params",
@@ -1346,21 +1323,9 @@ export class SurfaceRadianceCache extends GIModule {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         force: force_recreate,
       });
-      this.create_buffer(render_graph, "spatial_params", {
-        name: "surface_cache_spatial_params",
-        size: this.spatial_params_data.length,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        force: force_recreate,
-      });
     }
     this.create_buffer(render_graph, "surface_cache_sh", {
       name: "surface_cache_sh",
-      size: sh_size,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-    this.create_buffer(render_graph, "surface_cache_sh_filtered", {
-      name: "surface_cache_sh_filtered",
       size: sh_size,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -1372,14 +1337,11 @@ export class SurfaceRadianceCache extends GIModule {
     const params = this.get_resource("params");
     const surface_cache = this.get_resource("surface_cache");
     const hashmap_entries = this.get_resource("hashmap_entries");
-    const active_indices = this.get_resource("active_indices");
     const update_indices = this.get_resource("update_indices");
     const counters = this.get_resource("counters");
     const dispatch_args = this.get_resource("dispatch_args");
     const hit_info = this.get_resource("hit_info");
     const entity_index_lookup = this.get_resource("entity_index_lookup");
-    const sh = this.get_resource("surface_cache_sh");
-    const sh_filtered = this.get_resource("surface_cache_sh_filtered");
 
     this.add_graph_local_pass(render_graph, "surface_cache_upload_params", (graph) => {
       this.params_data[0] = total_patches;
@@ -1420,10 +1382,7 @@ export class SurfaceRadianceCache extends GIModule {
         inputs: [
           params,
           surface_cache,
-          sh,
-          sh_filtered,
           counters,
-          active_indices,
           update_indices,
           inputs.depth_texture,
           inputs.gbuffer_normal,
@@ -1431,10 +1390,7 @@ export class SurfaceRadianceCache extends GIModule {
         ],
         outputs: [
           surface_cache,
-          sh,
-          sh_filtered,
           counters,
-          active_indices,
           update_indices,
           hashmap_entries,
         ],
@@ -1500,7 +1456,7 @@ export class SurfaceRadianceCache extends GIModule {
     const emissive_lights = trace.get_resource("emissive_lights");
     const entity_index_lookup = trace.get_resource("entity_index_lookup");
     const radiance_info = this.get_resource("radiance_info");
-    const sh_filtered = this.get_resource("surface_cache_sh_filtered");
+    const sh = this.get_resource("surface_cache_sh");
     const { inputs } = context;
     const materials = this.material_buffers;
     const textures = this.texture_pools;
@@ -1549,7 +1505,7 @@ export class SurfaceRadianceCache extends GIModule {
           params,
           lighting.scene_lighting_buffer,
           surface_cache,
-          sh_filtered,
+          sh,
           update_indices,
           counters,
           hit_info,
@@ -1618,14 +1574,12 @@ export class SurfaceRadianceCache extends GIModule {
     const params = trace.get_resource("params");
     const surface_cache = trace.get_resource("surface_cache");
     const hashmap_entries = trace.get_resource("hashmap_entries");
-    const active_indices = trace.get_resource("active_indices");
     const update_indices = trace.get_resource("update_indices");
     const counters = trace.get_resource("counters");
     const dispatch_args = trace.get_resource("dispatch_args");
     const hit_info = trace.get_resource("hit_info");
     const radiance_info = shade.get_resource("radiance_info");
     const sh = this.get_resource("surface_cache_sh");
-    const sh_filtered = this.get_resource("surface_cache_sh_filtered");
     const direct = this.get_resource("direct_output");
     const diffuse = this.get_resource("diffuse_output");
     const specular = this.get_resource("specular_output");
@@ -1658,38 +1612,13 @@ export class SurfaceRadianceCache extends GIModule {
     );
     this.add_compute_pass(
       render_graph,
-      "filter",
-      "surface_cache_sh_filter",
-      {
-        inputs: [
-          params,
-          surface_cache,
-          sh,
-          sh_filtered,
-          active_indices,
-          counters,
-          hashmap_entries,
-          dispatch_args,
-        ],
-        outputs: [sh_filtered],
-      },
-      (graph, frame_data) =>
-        graph
-          .get_physical_pass(frame_data.current_pass)
-          .dispatch_indirect(
-            graph.get_physical_buffer(dispatch_args),
-            SURFACE_CACHE_ACTIVE_DISPATCH_OFFSET
-          )
-    );
-    this.add_compute_pass(
-      render_graph,
       "resolve",
       "surface_cache_sh_resolve",
       {
         inputs: [
           params,
           surface_cache,
-          sh_filtered,
+          sh,
           inputs.depth_texture,
           inputs.gbuffer_normal,
           direct,
@@ -1712,73 +1641,10 @@ export class SurfaceRadianceCache extends GIModule {
     const history_frame = SharedFrameInfoBuffer.get_frame_index() & 1;
     const history_prev = this.get_resource(`diffuse_history_${history_frame}`);
     const history_curr = this.get_resource(`diffuse_history_${1 - history_frame}`);
-    let temporal_input = diffuse;
-    if (context.config.spatial_filter_enabled !== false) {
-      const spatial_params = this.get_resource("spatial_params");
-      let spatial_read = diffuse;
-      for (
-        let pass_index = 0;
-        pass_index < SURFACE_CACHE_SPATIAL_DIRECTIONS.length;
-        pass_index++
-      ) {
-        const spatial_write = this.get_resource(`diffuse_spatial_${pass_index}`);
-        const direction = SURFACE_CACHE_SPATIAL_DIRECTIONS[pass_index];
-        this.add_graph_local_pass(
-          render_graph,
-          `surface_cache_spatial_upload_params_${pass_index}`,
-          (graph) => {
-            this.spatial_params_data[0] = Math.max(
-              context.config.spatial_depth_sigma ?? 0.025,
-              0.0001
-            );
-            this.spatial_params_data[1] = clamp(
-              context.config.spatial_normal_threshold ?? 0.8,
-              0,
-              0.9999
-            );
-            this.spatial_params_data[2] = Math.max(
-              context.config.spatial_luminance_sigma ?? 1,
-              0.0001
-            );
-            this.spatial_params_data[3] = clamp(
-              context.config.spatial_filter_strength ?? 1,
-              0,
-              1
-            );
-            this.spatial_params_data[4] = direction[0];
-            this.spatial_params_data[5] = direction[1];
-            this.spatial_params_data[6] = 0;
-            this.spatial_params_data[7] = 0;
-            graph.get_physical_buffer(spatial_params).write_raw(this.spatial_params_data);
-          }
-        );
-        this.add_compute_pass(
-          render_graph,
-          "spatial",
-          `surface_cache_spatial_${pass_index}`,
-          {
-            inputs: [
-              spatial_params,
-              spatial_read,
-              inputs.depth_texture,
-              inputs.gbuffer_normal,
-              spatial_write,
-            ],
-            outputs: [spatial_write],
-          },
-          (graph, frame_data) =>
-            graph
-              .get_physical_pass(frame_data.current_pass)
-              .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1)
-        );
-        spatial_read = spatial_write;
-      }
-      temporal_input = spatial_read;
-    }
 
     const temporal_params = this.get_resource("temporal_params");
     this.add_graph_local_pass(render_graph, "surface_cache_temporal_upload_params", (graph) => {
-      this.temporal_params_data[0] = clamp(context.config.temporal_response ?? 0.02, 0.005, 1);
+      this.temporal_params_data[0] = clamp(context.config.temporal_response ?? 0.02, 0.0, 1);
       this.temporal_params_data[1] = Math.max(
         1,
         Math.floor(context.config.temporal_max_history_frames ?? 64)
@@ -1801,7 +1667,7 @@ export class SurfaceRadianceCache extends GIModule {
       {
         inputs: [
           temporal_params,
-          temporal_input,
+          diffuse,
           history_prev,
           inputs.depth_texture,
           inputs.prev_depth_texture,
@@ -1885,7 +1751,7 @@ export class SurfaceRadianceCache extends GIModule {
     const update_patch_count = Math.min(this.counters_data[1] || 0, active_patch_count);
     const surface_cache_bytes = context.total_patches * 20 * 4;
     const hashmap_bytes = context.total_patches * 3 * 4;
-    const sh_bytes = context.total_patches * 6 * 4 * 2;
+    const sh_bytes = context.total_patches * 6 * 4;
     const ray_working_set_bytes =
       context.total_ray_count *
       (SURFACE_CACHE_HIT_WORD_COUNT + SURFACE_CACHE_RADIANCE_WORD_COUNT) *
@@ -1894,10 +1760,10 @@ export class SurfaceRadianceCache extends GIModule {
       (4 + Math.max(1, Math.floor(context.config.max_emissive_lights ?? 32768)) * 12) * 4;
     const scheduling_bytes =
       this.params_data.byteLength +
-      context.total_patches * 8 +
+      context.total_patches * 4 +
       16 +
       SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT * Uint32Array.BYTES_PER_ELEMENT;
-    const output_texture_count = context.config.screen_reconstruction_enabled === false ? 3 : 7;
+    const output_texture_count = context.config.screen_reconstruction_enabled === false ? 3 : 5;
     const output_bytes = context.width * context.height * 8 * output_texture_count;
 
     return {
@@ -2299,7 +2165,7 @@ export class PerPixelRadianceCache extends GIModule {
           textures.emission,
           lighting.skybox_image,
           surface.get_resource("params"),
-          surface.get_resource("surface_cache_sh_filtered"),
+          surface.get_resource("surface_cache_sh"),
           surface.get_resource("hashmap_entries"),
         ],
         outputs: [path_state],

@@ -17,9 +17,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let patch_index = update_indices[active_index];
-    let patch_normal = safe_normalize(
-        surface_cache[patch_index].normal_cell_exponent.xyz
-    );
     let rays_per_patch = surface_cache_rays_per_patch(surface_cache_params);
     let ray_data_base = active_index * rays_per_patch;
 
@@ -42,10 +39,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             sample_radiance,
             SURFACE_CACHE_MAX_RADIANCE
         );
-        let local_direction = safe_normalize(surface_cache_world_to_hemisphere(
-            hit_info[ray_data_index].ray_direction_sampling_weight.xyz,
-            patch_normal
-        ));
+        // Store the cell's directional signal in world space. Ray origins and
+        // hemisphere normals intentionally move across the cell, so a basis
+        // tied to the current representative surface sample cannot persist.
+        let sample_direction = safe_normalize(
+            hit_info[ray_data_index].ray_direction_sampling_weight.xyz
+        );
         let sampling_weight = max(
             hit_info[ray_data_index].ray_direction_sampling_weight.w,
             0.0
@@ -53,7 +52,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         sample_sh_sum = sh_l1_rgb_add(
             sample_sh_sum,
             sh_project_onto_l1_rgb(
-                local_direction,
+                sample_direction,
                 sample_radiance * sampling_weight
             )
         );
@@ -69,24 +68,50 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let inverse_sample_count = 1.0 / valid_sample_count;
     let sample_sh = sh_l1_rgb_multiply_scalar(sample_sh_sum, inverse_sample_count);
+    let sample_luminance = luminance_sum * inverse_sample_count;
+    let sample_luminance_squared = luminance_squared_sum * inverse_sample_count;
 
     let history = surface_cache[patch_index].history;
     let previous_sample_count = history.x;
-    let maximum_history = max(surface_cache_params.max_history_samples, 1.0);
-    // Keep the true sample total for the article's trace-stopping threshold;
-    // only the statistical blend window is bounded by max_history_samples.
-    let next_sample_count = previous_sample_count + valid_sample_count;
-    let effective_history_count = min(next_sample_count, maximum_history);
-    let next_sequence = f32((u32(history.y) + u32(valid_sample_count)) & 4095u);
-    let running_alpha = min(
-        valid_sample_count / max(effective_history_count, 1.0),
+    let change_detection_min_samples = max(
+        surface_cache_params.max_history_samples,
         1.0
     );
-    // Once the running-mean history is mature, keep a bounded EMA response so
-    // lighting changes do not remain trapped for hundreds of frames.
+    let next_sample_count = previous_sample_count + valid_sample_count;
+    let next_sequence = f32((u32(history.y) + u32(valid_sample_count)) & 4095u);
+    let running_alpha = min(
+        valid_sample_count / max(next_sample_count, 1.0),
+        1.0
+    );
+
+    // A permanent EMA floor leaves stationary Monte Carlo noise visible. Let
+    // stable cells use a true progressive mean, and only enable the configured
+    // response when the new batch differs from history by more than its
+    // estimated sampling error.
+    let previous_variance = max(
+        history.w - history.z * history.z,
+        0.0
+    );
+    let sample_variance = max(
+        sample_luminance_squared - sample_luminance * sample_luminance,
+        0.0
+    );
+    let mean_variance =
+        previous_variance / max(previous_sample_count, 1.0) +
+        sample_variance / max(valid_sample_count, 1.0);
+    let change_threshold = max(3.0 * sqrt(mean_variance), 0.01);
+    let history_is_mature =
+        previous_sample_count >= change_detection_min_samples;
+    let lighting_changed = history_is_mature &&
+        abs(sample_luminance - history.z) > change_threshold;
+    let response_alpha = 1.0 - clamp(
+        surface_cache_params.history_hysteresis,
+        0.0,
+        0.999
+    );
     let blend_alpha = max(
         running_alpha,
-        1.0 - clamp(surface_cache_params.history_hysteresis, 0.0, 0.999)
+        select(0.0, response_alpha, lighting_changed)
     );
 
     var result = sample_sh;
@@ -100,13 +125,22 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     surface_cache_sh_patch_write(&surface_cache_sh, patch_index, result);
 
-    let sample_luminance = luminance_sum * inverse_sample_count;
-    let sample_luminance_squared = luminance_squared_sum * inverse_sample_count;
-    let moment_alpha = max(running_alpha, blend_alpha);
-    let first_moment = mix(history.z, sample_luminance, moment_alpha);
-    let second_moment = mix(history.w, sample_luminance_squared, moment_alpha);
+    let first_moment = mix(history.z, sample_luminance, blend_alpha);
+    let second_moment = mix(
+        history.w,
+        sample_luminance_squared,
+        blend_alpha
+    );
+    // When a change is detected, retain a sample count consistent with the
+    // faster response so the following stable batches can converge again.
+    let responsive_sample_count = valid_sample_count / max(blend_alpha, 1e-6);
+    let stored_sample_count = select(
+        next_sample_count,
+        min(next_sample_count, responsive_sample_count),
+        lighting_changed
+    );
     surface_cache[patch_index].history = vec4<f32>(
-        effective_history_count,
+        stored_sample_count,
         next_sequence,
         first_moment,
         second_moment
