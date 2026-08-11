@@ -22,7 +22,11 @@ fn cs(
 ) {
     bvh_stack_lane = local_idx;
     let local_ray_index = gid.x;
-    let active_index = local_ray_index / max(ray_batch.rays_per_patch, 1u);
+    let rays_per_patch = surface_cache_ray_batch_rays_per_patch(
+        counters,
+        ray_batch
+    );
+    let active_index = local_ray_index / rays_per_patch;
     if (
         active_index >= surface_cache_ray_batch_patch_count(counters, ray_batch)
     ) {

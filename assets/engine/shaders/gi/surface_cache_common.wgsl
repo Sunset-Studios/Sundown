@@ -77,14 +77,14 @@ struct SurfaceCacheCounters {
     active_patch_count: atomic<u32>,
     update_patch_count: atomic<u32>,
     bootstrap_patch_count: atomic<u32>,
-    padding: atomic<u32>,
+    bootstrap_rays_per_patch: atomic<u32>,
 };
 
 struct SurfaceCacheCountersReadOnly {
     active_patch_count: u32,
     update_patch_count: u32,
     bootstrap_patch_count: u32,
-    padding: u32,
+    bootstrap_rays_per_patch: u32,
 };
 
 struct SurfaceCacheHitInfo {
@@ -149,6 +149,20 @@ fn surface_cache_ray_batch_patch_count(
         counters.update_patch_count,
         counters.bootstrap_patch_count,
         batch.bootstrap_batch != 0u
+    );
+}
+
+fn surface_cache_ray_batch_rays_per_patch(
+    counters: SurfaceCacheCountersReadOnly,
+    batch: SurfaceCacheRayBatchParams
+) -> u32 {
+    return max(
+        select(
+            batch.rays_per_patch,
+            counters.bootstrap_rays_per_patch,
+            batch.bootstrap_batch != 0u
+        ),
+        1u
     );
 }
 

@@ -1215,7 +1215,7 @@ export class SurfaceRadianceCache extends GIModule {
     context.bootstrap_patch_capacity = clamp(
       Math.floor(config.bootstrap_patch_capacity ?? 0),
       0,
-      Math.floor(context.total_ray_count / context.bootstrap_rays_per_patch)
+      context.total_patches
     );
     context.bootstrap_enabled =
       context.bootstrap_patch_capacity > 0 &&
@@ -1247,6 +1247,8 @@ export class SurfaceRadianceCache extends GIModule {
     });
     this.create_buffer(render_graph, "bootstrap_indices", {
       name: "surface_cache_bootstrap_indices",
+      // One u32 per eligible patch lets the GPU share bootstrap rays across a
+      // complete disocclusion. At the default SCGI capacity this is 256 KiB.
       size: Math.max(1, context.bootstrap_patch_capacity),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -1954,6 +1956,13 @@ export class SurfaceRadianceCache extends GIModule {
       this.counters_data[2] || 0,
       context.bootstrap_patch_capacity
     );
+    const bootstrap_rays_per_patch = bootstrap_patch_count > 0
+      ? clamp(
+          this.counters_data[3] || context.rays_per_patch,
+          context.rays_per_patch,
+          context.bootstrap_rays_per_patch
+        )
+      : 0;
     const surface_cache_bytes = context.total_patches * 20 * 4;
     const hashmap_bytes = context.total_patches * 3 * 4;
     const sh_bytes = context.total_patches * 6 * 4;
@@ -1982,11 +1991,12 @@ export class SurfaceRadianceCache extends GIModule {
       update_patch_count,
       bootstrap_patch_count,
       rays_per_patch: context.rays_per_patch,
-      bootstrap_rays_per_patch: context.bootstrap_rays_per_patch,
+      bootstrap_rays_per_patch,
+      maximum_bootstrap_rays_per_patch: context.bootstrap_rays_per_patch,
       bootstrap_patch_capacity: context.bootstrap_patch_capacity,
       total_rays_fired:
         update_patch_count * context.rays_per_patch +
-        bootstrap_patch_count * context.bootstrap_rays_per_patch,
+        bootstrap_patch_count * bootstrap_rays_per_patch,
       maximum_ray_count: context.total_ray_count,
       max_ray_length: context.config.max_ray_length,
       cache_entry_lifetime: context.config.cache_entry_lifetime,

@@ -33,28 +33,45 @@ fn cs() {
             atomicLoad(&counters.bootstrap_patch_count),
             bootstrap_batch.patch_capacity
         ),
-        total_ray_capacity / max(bootstrap_batch.rays_per_patch, 1u)
+        active_patch_count
     );
-    let bootstrap_ray_count = bootstrap_patch_count *
-        bootstrap_batch.rays_per_patch;
-    let remaining_ray_capacity = total_ray_capacity - bootstrap_ray_count;
-    // New cells own the front of both the patch and ray arrays. Regular work
-    // is trimmed to the remaining budget and consumes both arrays backwards,
-    // so the two batches cannot overlap and no bootstrap working set is needed.
     let update_patch_count = min(
-        min(
-            atomicLoad(&counters.update_patch_count),
-            active_patch_count
-        ),
-        remaining_ray_capacity / max(regular_batch.rays_per_patch, 1u)
+        atomicLoad(&counters.update_patch_count),
+        active_patch_count - bootstrap_patch_count
     );
-    let ray_count = update_patch_count * regular_batch.rays_per_patch;
+    let regular_rays_per_patch = max(regular_batch.rays_per_patch, 1u);
+    let regular_ray_count = update_patch_count * regular_rays_per_patch;
+    let bootstrap_minimum_ray_count = bootstrap_patch_count *
+        regular_rays_per_patch;
+    let remaining_ray_capacity = total_ray_capacity -
+        regular_ray_count - bootstrap_minimum_ray_count;
+
+    // Every new patch first receives the same baseline as a mature patch. The
+    // remaining fixed ray budget is then divided evenly across all new patches,
+    // avoiding the clean/noisy cell mosaic produced by boosting an arbitrary
+    // prefix at a fixed ray count.
+    var bootstrap_rays_per_patch = 0u;
+    if (bootstrap_patch_count > 0u) {
+        let maximum_extra_rays =
+            max(bootstrap_batch.rays_per_patch, regular_rays_per_patch) -
+            regular_rays_per_patch;
+        bootstrap_rays_per_patch = regular_rays_per_patch + min(
+            maximum_extra_rays,
+            remaining_ray_capacity / bootstrap_patch_count
+        );
+    }
+    let bootstrap_ray_count = bootstrap_patch_count *
+        bootstrap_rays_per_patch;
 
     atomicStore(&counters.update_patch_count, update_patch_count);
     atomicStore(&counters.bootstrap_patch_count, bootstrap_patch_count);
     atomicStore(&counters.active_patch_count, active_patch_count);
+    atomicStore(
+        &counters.bootstrap_rays_per_patch,
+        bootstrap_rays_per_patch
+    );
 
-    write_dispatch_args(0u, surface_cache_workgroup_count(ray_count));
+    write_dispatch_args(0u, surface_cache_workgroup_count(regular_ray_count));
     write_dispatch_args(3u, surface_cache_workgroup_count(update_patch_count));
     write_dispatch_args(6u, surface_cache_workgroup_count(bootstrap_ray_count));
     write_dispatch_args(9u, surface_cache_workgroup_count(bootstrap_patch_count));

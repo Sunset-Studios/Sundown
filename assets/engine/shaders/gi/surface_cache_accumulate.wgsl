@@ -18,7 +18,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let patch_index = update_indices[active_index];
-    let rays_per_patch = max(ray_batch.rays_per_patch, 1u);
+    let rays_per_patch = surface_cache_ray_batch_rays_per_patch(
+        counters,
+        ray_batch
+    );
     let local_ray_base = active_index * rays_per_patch;
 
     var sample_sh_sum = sh_l1_rgb_zero();
@@ -159,10 +162,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         second_moment
     );
     surface_cache[patch_index].metadata.x = surface_cache_params.frame_index;
-    // Bootstrap batches should improve the first estimate without jumping the
-    // footprint across every intermediate LOD in one frame. Accumulate at most
-    // one regular batch of footprint history per update so adjacent cell scales
-    // remain available for trilinear blending while the cell matures.
+    // A large bootstrap batch improves the first estimate without jumping the
+    // footprint across every intermediate LOD in one frame.
     let footprint_history_increment = min(
         valid_sample_count,
         max(surface_cache_params.rays_per_patch, 1.0)

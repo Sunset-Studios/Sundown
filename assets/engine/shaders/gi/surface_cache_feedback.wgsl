@@ -31,6 +31,8 @@ fn append_active_patch(patch_index: u32, bootstrap: bool) {
             return;
         }
     }
+    // Capacity normally covers the complete cache. If a caller deliberately
+    // limits it, overflow still receives the regular batch instead of going black.
     append_regular_patch(patch_index);
 }
 
