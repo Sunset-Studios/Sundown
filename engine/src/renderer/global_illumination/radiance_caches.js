@@ -12,10 +12,6 @@ import {
 } from "../render_graph_utils.js";
 
 const COMPUTE_WORKGROUP_SIZE = 128;
-// At the default 131k-patch capacity, eight rays keep the largest per-ray
-// buffer below WebGPU's commonly available 128 MiB storage-binding limit.
-const SURFACE_CACHE_MAX_RAYS_PER_PATCH = 8;
-const SURFACE_CACHE_MAX_BOOTSTRAP_RAYS_PER_PATCH = 128;
 const PROBE_SCHEDULER_PRIORITY_COUNT = 2;
 const MAX_PROBE_CASCADES = 6;
 // Must match the scalar-aligned DDGIProbeRayData layout in ddgi_common.wgsl.
@@ -1201,16 +1197,14 @@ export class SurfaceRadianceCache extends GIModule {
     const { config, width, height, force_recreate } = context;
 
     context.total_patches = Math.max(16, floor_to_multiple(config.surface_cache_size, 16));
-    context.rays_per_patch = clamp(
+    context.rays_per_patch = Math.max(
       Math.floor(config.rays_per_patch ?? 1),
       1,
-      SURFACE_CACHE_MAX_RAYS_PER_PATCH
     );
     context.total_ray_count = context.total_patches * context.rays_per_patch;
-    context.bootstrap_rays_per_patch = clamp(
+    context.bootstrap_rays_per_patch = Math.max(
       Math.floor(config.bootstrap_rays_per_patch ?? context.rays_per_patch),
       context.rays_per_patch,
-      SURFACE_CACHE_MAX_BOOTSTRAP_RAYS_PER_PATCH
     );
     context.bootstrap_patch_capacity = clamp(
       Math.floor(config.bootstrap_patch_capacity ?? 0),
@@ -1247,8 +1241,6 @@ export class SurfaceRadianceCache extends GIModule {
     });
     this.create_buffer(render_graph, "bootstrap_indices", {
       name: "surface_cache_bootstrap_indices",
-      // One u32 per eligible patch lets the GPU share bootstrap rays across a
-      // complete disocclusion. At the default SCGI capacity this is 256 KiB.
       size: Math.max(1, context.bootstrap_patch_capacity),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -1277,6 +1269,12 @@ export class SurfaceRadianceCache extends GIModule {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
+    this.create_buffer(render_graph, "dispatch_args", {
+      name: "surface_cache_dispatch_args",
+      size: SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT,
+      force: force_recreate,
+    });
     this.import_resource(
       "entity_index_lookup",
       render_graph.register_buffer(FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name)
@@ -1295,12 +1293,6 @@ export class SurfaceRadianceCache extends GIModule {
         force: force_recreate,
       });
     }
-    this.create_buffer(render_graph, "dispatch_args", {
-      name: "surface_cache_dispatch_args",
-      size: SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT,
-      force: force_recreate,
-    });
   }
 
   _setup_shading_resources(render_graph, context, _branch) {
@@ -1343,6 +1335,18 @@ export class SurfaceRadianceCache extends GIModule {
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
+    this.create_buffer(render_graph, "surface_cache_sh", {
+      name: "surface_cache_sh",
+      size: sh_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+    this.create_buffer(render_graph, "temporal_params", {
+      name: "surface_cache_temporal_params",
+      size: this.temporal_params_data.length,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
     if (context.config.screen_reconstruction_enabled !== false) {
       for (let frame = 0; frame < 2; frame++) {
         this.create_image(render_graph, `diffuse_history_${frame}`, {
@@ -1355,19 +1359,7 @@ export class SurfaceRadianceCache extends GIModule {
           force: force_recreate,
         });
       }
-      this.create_buffer(render_graph, "temporal_params", {
-        name: "surface_cache_temporal_params",
-        size: this.temporal_params_data.length,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        force: force_recreate,
-      });
     }
-    this.create_buffer(render_graph, "surface_cache_sh", {
-      name: "surface_cache_sh",
-      size: sh_size,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
   }
 
   _record_trace_passes(render_graph, context, branch) {

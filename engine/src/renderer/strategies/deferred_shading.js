@@ -298,6 +298,7 @@ export class DeferredShadingStrategy {
       const renderer = Renderer.get();
 
       const current_view = SharedFrameInfoBuffer.get_view_index();
+      const current_buffered_frame = renderer.get_buffered_frame_number();;
       const draw_count = RenderTaskQueue.get_total_draw_count();
       const meshlet_draw_count = RenderTaskQueue.get_total_meshlet_count();
       const visibility_all_buckets = RenderTaskQueue.get_visibility_all_buckets();
@@ -987,7 +988,7 @@ export class DeferredShadingStrategy {
         }
 
         render_graph.add_pass(
-          lighting_pass_name,
+          `${lighting_pass_name}_${current_buffered_frame}`,
           RenderPassFlags.Graphics,
           {
             inputs: lighting_inputs,
