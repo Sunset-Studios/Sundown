@@ -7,7 +7,7 @@ const SURFACE_CACHE_MAX_RADIANCE: f32 = 10.0;
 const SURFACE_CACHE_SH_PATCH_SIZE_U32: u32 = 6u;
 // Static cache-key configuration. Supported values are 1, 4, 8, and 16.
 // Changing it alters every cache key and therefore requires a cache reset.
-const SURFACE_CACHE_DIRECTIONAL_BIN_COUNT: u32 = 8u;
+const SURFACE_CACHE_DIRECTIONAL_BIN_COUNT: u32 = 16u;
 const_assert
     SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 1u ||
     SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 4u ||
@@ -16,9 +16,8 @@ const_assert
 const SURFACE_CACHE_CELL_EXPONENT_BIAS: i32 = 16;
 const SURFACE_CACHE_MIN_CELL_EXPONENT: i32 = -16;
 const SURFACE_CACHE_MAX_CELL_EXPONENT: i32 = 15;
-const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.2;
-const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 0.8;
-const SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES: f32 = 128.0;
+const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.0;
+const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 1.0;
 const SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP: f32 = 2.0;
 const SURFACE_CACHE_EMISSIVE_OVERFLOW_SCALE: f32 = 0.1;
 
@@ -39,6 +38,17 @@ struct SurfaceCacheParams {
     cache_pixel_footprint: f32,
     hash_search_count: f32,
     cache_normal_bias: f32,
+    history_footprint_start_samples: f32,
+    history_footprint_end_samples: f32,
+    history_footprint_max_scale: f32,
+    bootstrap_patch_capacity: f32,
+};
+
+struct SurfaceCacheRayBatchParams {
+    rays_per_patch: u32,
+    bootstrap_batch: u32,
+    patch_capacity: u32,
+    reverse_order: u32,
 };
 
 struct SurfaceCacheCellLevels {
@@ -66,15 +76,15 @@ struct SurfacePatchReadOnly {
 struct SurfaceCacheCounters {
     active_patch_count: atomic<u32>,
     update_patch_count: atomic<u32>,
-    padding1: atomic<u32>,
-    padding2: atomic<u32>,
+    bootstrap_patch_count: atomic<u32>,
+    padding: atomic<u32>,
 };
 
 struct SurfaceCacheCountersReadOnly {
     active_patch_count: u32,
     update_patch_count: u32,
-    padding1: u32,
-    padding2: u32,
+    bootstrap_patch_count: u32,
+    padding: u32,
 };
 
 struct SurfaceCacheHitInfo {
@@ -131,6 +141,48 @@ fn surface_cache_rays_per_patch(params: SurfaceCacheParams) -> u32 {
     return max(u32(params.rays_per_patch), 1u);
 }
 
+fn surface_cache_ray_batch_patch_count(
+    counters: SurfaceCacheCountersReadOnly,
+    batch: SurfaceCacheRayBatchParams
+) -> u32 {
+    return select(
+        counters.update_patch_count,
+        counters.bootstrap_patch_count,
+        batch.bootstrap_batch != 0u
+    );
+}
+
+fn surface_cache_ray_batch_data_index(
+    local_index: u32,
+    data_count: u32,
+    batch: SurfaceCacheRayBatchParams
+) -> u32 {
+    return select(
+        local_index,
+        data_count - 1u - local_index,
+        batch.reverse_order != 0u
+    );
+}
+
+fn surface_cache_history_footprint_scale(
+    sample_count: f32,
+    params: SurfaceCacheParams
+) -> f32 {
+    let maximum_scale = max(params.history_footprint_max_scale, 1.0);
+    if (maximum_scale <= 1.0) {
+        return 1.0;
+    }
+    let history_readiness = smoothstep(
+        max(params.history_footprint_start_samples, 0.0),
+        max(
+            params.history_footprint_end_samples,
+            params.history_footprint_start_samples + 1.0
+        ),
+        max(sample_count, 0.0)
+    );
+    return mix(maximum_scale, 1.0, history_readiness);
+}
+
 // Convert the configured screen-space feature size into a continuous
 // world-space exponent. Keeping the fractional component lets adjacent cache
 // levels overlap instead of replacing one another at a hard power-of-two line.
@@ -149,7 +201,8 @@ fn surface_cache_cell_exponent_value(
         view_depth / projection_y_scale,
         is_perspective
     );
-    let world_space_footprint = max(params.cache_pixel_footprint, 1.0) * (
+    let effective_pixel_footprint = max(params.cache_pixel_footprint, 1.0);
+    let world_space_footprint = effective_pixel_footprint * (
         (half_view_height * 2.0) / max(params.full_resolution_y, 1.0)
     );
     let minimum_cell_size = exp2(f32(SURFACE_CACHE_MIN_CELL_EXPONENT));
@@ -169,6 +222,38 @@ fn surface_cache_cell_levels(
     params: SurfaceCacheParams
 ) -> SurfaceCacheCellLevels {
     let exponent_value = surface_cache_cell_exponent_value(position, params);
+    let fine_exponent = i32(floor(exponent_value));
+    let coarse_exponent = min(
+        fine_exponent + 1,
+        SURFACE_CACHE_MAX_CELL_EXPONENT
+    );
+    let level_fraction = fract(exponent_value);
+    let blend = select(
+        smoothstep(
+            SURFACE_CACHE_LEVEL_BLEND_START,
+            SURFACE_CACHE_LEVEL_BLEND_END,
+            level_fraction
+        ),
+        0.0,
+        fine_exponent == coarse_exponent
+    );
+    return SurfaceCacheCellLevels(fine_exponent, coarse_exponent, blend);
+}
+
+fn surface_cache_history_cell_levels(
+    position: vec3<f32>,
+    sample_count: f32,
+    params: SurfaceCacheParams
+) -> SurfaceCacheCellLevels {
+    let footprint_scale = surface_cache_history_footprint_scale(
+        sample_count,
+        params
+    );
+    let exponent_value = clamp(
+        surface_cache_cell_exponent_value(position, params) + log2(footprint_scale),
+        f32(SURFACE_CACHE_MIN_CELL_EXPONENT),
+        f32(SURFACE_CACHE_MAX_CELL_EXPONENT)
+    );
     let fine_exponent = i32(floor(exponent_value));
     let coarse_exponent = min(
         fine_exponent + 1,

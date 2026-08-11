@@ -13,6 +13,7 @@
 @group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
 @group(1) @binding(9) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
+@group(1) @binding(10) var<uniform> ray_batch: SurfaceCacheRayBatchParams;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(
@@ -20,10 +21,19 @@ fn cs(
     @builtin(local_invocation_index) local_idx: u32,
 ) {
     bvh_stack_lane = local_idx;
-    let ray_data_index = gid.x;
-    let active_index = ray_data_index / surface_cache_rays_per_patch(surface_cache_params);
+    let local_ray_index = gid.x;
+    let active_index = local_ray_index / max(ray_batch.rays_per_patch, 1u);
     if (
-        active_index >= counters.update_patch_count ||
+        active_index >= surface_cache_ray_batch_patch_count(counters, ray_batch)
+    ) {
+        return;
+    }
+    let ray_data_index = surface_cache_ray_batch_data_index(
+        local_ray_index,
+        arrayLength(&radiance_info),
+        ray_batch
+    );
+    if (
         radiance_info[ray_data_index].shadow_radiance.w != 1.0 ||
         radiance_info[ray_data_index].shadow_direction.w <= 0.0
     ) {

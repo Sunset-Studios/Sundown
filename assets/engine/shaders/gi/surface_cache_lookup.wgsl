@@ -29,6 +29,81 @@ fn surface_cache_find_patch(
     return -1;
 }
 
+fn surface_cache_level_history(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    cell_exponent: i32
+) -> f32 {
+    let receiver_normal = safe_normalize(normal);
+    let patch_index_i = surface_cache_find_patch(
+        surface_cache_quantize_position(
+            position,
+            receiver_normal,
+            cell_exponent,
+            surface_cache_params
+        ),
+        surface_cache_directional_bin(receiver_normal),
+        cell_exponent
+    );
+    if (patch_index_i < 0) {
+        return 0.0;
+    }
+    let surface_patch = surface_cache[u32(patch_index_i)];
+    if (dot(
+        receiver_normal,
+        safe_normalize(surface_patch.normal_cell_exponent.xyz)
+    ) < SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD) {
+        return 0.0;
+    }
+    let position_delta = surface_patch.position_frame.xyz - position;
+    let plane_distance = max(
+        abs(dot(position_delta, receiver_normal)),
+        abs(dot(position_delta, safe_normalize(
+            surface_patch.normal_cell_exponent.xyz
+        )))
+    );
+    if (
+        plane_distance > max(
+            surface_cache_cell_size(cell_exponent) *
+                SURFACE_CACHE_LOOKUP_PLANE_LIMIT_SCALE,
+            0.002
+        )
+    ) {
+        return 0.0;
+    }
+    // Feedback snapshots history before this frame's accumulation. Using that
+    // value keeps newly allocated cells on the coarse footprint through the
+    // resolve that first consumes them, even after their bootstrap rays land.
+    return select(
+        surface_patch.metadata.w,
+        surface_patch.metadata.y,
+        u32(surface_patch.metadata.z) == u32(surface_cache_params.frame_index)
+    );
+}
+
+fn surface_cache_native_history(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    levels: SurfaceCacheCellLevels
+) -> f32 {
+    let fine_history = surface_cache_level_history(
+        position,
+        normal,
+        levels.fine_exponent
+    );
+    if (levels.coarse_exponent == levels.fine_exponent) {
+        return fine_history;
+    }
+    return min(
+        fine_history,
+        surface_cache_level_history(
+            position,
+            normal,
+            levels.coarse_exponent
+        )
+    );
+}
+
 fn surface_cache_corner_descriptor(
     position: vec3<f32>,
     normal: vec3<f32>,
@@ -87,6 +162,15 @@ struct SurfaceCacheTapSample {
     geometry_weight: f32,
 };
 
+struct SurfaceCacheLevelSample {
+    value: vec4<f32>,
+    confidence: f32,
+};
+
+const SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD: f32 = 0.82;
+const SURFACE_CACHE_LOOKUP_PLANE_LIMIT_SCALE: f32 = 0.45;
+const SURFACE_CACHE_LOOKUP_PLANE_SIGMA_SCALE: f32 = 0.2;
+
 fn surface_cache_dominant_axis(normal: vec3<f32>) -> u32 {
     let absolute_normal = abs(normal);
     return select(
@@ -129,27 +213,43 @@ fn surface_cache_sample_descriptor(
     let patch_normal = safe_normalize(surface_patch.normal_cell_exponent.xyz);
     let normal_alignment = dot(receiver_normal, patch_normal);
     if (
-        sample_count < SURFACE_CACHE_MIN_QUERY_SAMPLES ||
-        normal_alignment < 0.75
+        sample_count <= 0.0 ||
+        normal_alignment < SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD
     ) {
         return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
     }
 
-    let plane_distance = abs(dot(
-        surface_patch.position_frame.xyz - receiver_position,
-        receiver_normal
-    ));
-    let plane_sigma = max(cell_size * 0.35, 0.001);
+    let position_delta = surface_patch.position_frame.xyz - receiver_position;
+    let plane_distance = max(
+        abs(dot(position_delta, receiver_normal)),
+        abs(dot(position_delta, patch_normal))
+    );
+    let plane_limit = max(
+        cell_size * SURFACE_CACHE_LOOKUP_PLANE_LIMIT_SCALE,
+        0.002
+    );
+    if (plane_distance > plane_limit) {
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+    }
+    let plane_sigma = max(
+        cell_size * SURFACE_CACHE_LOOKUP_PLANE_SIGMA_SCALE,
+        0.001
+    );
     let normalized_plane_distance = plane_distance / plane_sigma;
     let plane_weight = exp(
         -0.5 * normalized_plane_distance * normalized_plane_distance
     );
-    let normal_weight = clamp(
-        (normal_alignment - 0.75) * 4.0,
-        0.0,
-        1.0
+    let normal_weight = smoothstep(
+        SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD,
+        0.98,
+        normal_alignment
     );
-    let geometry_weight = plane_weight * normal_weight * normal_weight;
+    let history_weight = smoothstep(
+        0.0,
+        SURFACE_CACHE_MIN_QUERY_SAMPLES,
+        sample_count
+    );
+    let geometry_weight = plane_weight * normal_weight * normal_weight * history_weight;
     if (geometry_weight <= 1e-5) {
         return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
     }
@@ -168,9 +268,9 @@ fn surface_cache_sample_level_nearest(
     position: vec3<f32>,
     normal: vec3<f32>,
     cell_exponent: i32
-) -> vec4<f32> {
+) -> SurfaceCacheLevelSample {
     let receiver_normal = safe_normalize(normal);
-    let patch_index_i = surface_cache_find_patch(
+    let tap = surface_cache_sample_descriptor(
         surface_cache_quantize_position(
             position,
             receiver_normal,
@@ -178,31 +278,15 @@ fn surface_cache_sample_level_nearest(
             surface_cache_params
         ),
         surface_cache_directional_bin(receiver_normal),
-        cell_exponent
+        position,
+        receiver_normal,
+        cell_exponent,
+        surface_cache_cell_size(cell_exponent)
     );
-    if (patch_index_i < 0) {
-        return vec4<f32>(0.0);
-    }
-
-    let patch_index = u32(patch_index_i);
-    let surface_patch = surface_cache[patch_index];
-    let sample_count = surface_patch.history.x;
-    let patch_normal = safe_normalize(surface_patch.normal_cell_exponent.xyz);
-    if (
-        sample_count < SURFACE_CACHE_MIN_QUERY_SAMPLES ||
-        dot(receiver_normal, patch_normal) < 0.75
-    ) {
-        return vec4<f32>(0.0);
-    }
-
-    let irradiance = max(
-        sh_l1_rgb_calculate_irradiance(
-            surface_cache_sh_patch_read(&surface_cache_sh, patch_index),
-            receiver_normal
-        ),
-        vec3<f32>(0.0)
+    return SurfaceCacheLevelSample(
+        vec4<f32>(tap.irradiance, tap.sample_count),
+        clamp(tap.geometry_weight, 0.0, 1.0)
     );
-    return vec4<f32>(irradiance, sample_count);
 }
 
 // Reconstruct the cache as samples located at surface-constrained cell
@@ -213,7 +297,7 @@ fn surface_cache_sample_level(
     position: vec3<f32>,
     normal: vec3<f32>,
     cell_exponent: i32
-) -> vec4<f32> {
+) -> SurfaceCacheLevelSample {
     let receiver_normal = safe_normalize(normal);
     let directional_bin = surface_cache_directional_bin(receiver_normal);
     let cell_size = surface_cache_cell_size(cell_exponent);
@@ -271,7 +355,10 @@ fn surface_cache_sample_level(
             cell_exponent
         );
     }
-    return vec4<f32>(irradiance_sum, sample_count_sum) / weight_sum;
+    return SurfaceCacheLevelSample(
+        vec4<f32>(irradiance_sum, sample_count_sum) / weight_sum,
+        clamp(weight_sum, 0.0, 1.0)
+    );
 }
 
 fn surface_cache_finalize_irradiance_sample(sample: vec4<f32>) -> vec4<f32> {
@@ -285,52 +372,49 @@ fn surface_cache_finalize_sample(sample: vec4<f32>) -> vec4<f32> {
     return surface_cache_finalize_irradiance_sample(sample);
 }
 
-fn surface_cache_level_confidence(sample_count: f32) -> f32 {
-    return smoothstep(
-        SURFACE_CACHE_MIN_QUERY_SAMPLES,
-        SURFACE_CACHE_LEVEL_CONFIDENCE_SAMPLES,
-        sample_count
-    );
-}
-
 fn surface_cache_blend_level_samples(
-    fine_sample: vec4<f32>,
-    coarse_sample: vec4<f32>,
+    fine_sample: SurfaceCacheLevelSample,
+    coarse_sample: SurfaceCacheLevelSample,
     blend: f32
 ) -> vec4<f32> {
-    let fine_valid = fine_sample.w >= SURFACE_CACHE_MIN_QUERY_SAMPLES;
-    let coarse_valid = coarse_sample.w >= SURFACE_CACHE_MIN_QUERY_SAMPLES;
-    if (!fine_valid) {
-        return select(vec4<f32>(0.0), coarse_sample, coarse_valid);
-    }
-    if (!coarse_valid) {
-        return fine_sample;
+    let lod_blend = clamp(blend, 0.0, 1.0);
+    let fine_weight = (1.0 - lod_blend) * fine_sample.confidence;
+    let coarse_weight = lod_blend * coarse_sample.confidence;
+    let weight_sum = fine_weight + coarse_weight;
+    if (weight_sum > 1e-5) {
+        return (
+            fine_sample.value * fine_weight +
+            coarse_sample.value * coarse_weight
+        ) / weight_sum;
     }
 
-    let fine_weight = (1.0 - blend) *
-        surface_cache_level_confidence(fine_sample.w);
-    let coarse_weight = blend *
-        surface_cache_level_confidence(coarse_sample.w);
-    let weight_sum = fine_weight + coarse_weight;
-    if (weight_sum <= 1e-6) {
-        return select(fine_sample, coarse_sample, blend >= 0.5);
-    }
-    return (fine_sample * fine_weight + coarse_sample * coarse_weight) /
-        weight_sum;
+    // At a sparse edge the nominal LOD can have no geometrically compatible
+    // taps. Select the better-supported neighbor without treating a missing
+    // level as black irradiance.
+    return select(
+        fine_sample.value,
+        coarse_sample.value,
+        coarse_sample.confidence > fine_sample.confidence
+    );
 }
 
 fn surface_cache_sample(
     position: vec3<f32>,
     normal: vec3<f32>
 ) -> vec4<f32> {
-    let levels = surface_cache_cell_levels(position, surface_cache_params);
+    let base_levels = surface_cache_cell_levels(position, surface_cache_params);
+    let levels = surface_cache_history_cell_levels(
+        position,
+        surface_cache_native_history(position, normal, base_levels),
+        surface_cache_params
+    );
     let fine_sample = surface_cache_sample_level(
         position,
         normal,
         levels.fine_exponent
     );
     if (levels.coarse_exponent == levels.fine_exponent) {
-        return surface_cache_finalize_sample(fine_sample);
+        return surface_cache_finalize_sample(fine_sample.value);
     }
 
     let coarse_sample = surface_cache_sample_level(
@@ -354,14 +438,19 @@ fn surface_cache_sample_nearest_irradiance(
     position: vec3<f32>,
     normal: vec3<f32>
 ) -> vec4<f32> {
-    let levels = surface_cache_cell_levels(position, surface_cache_params);
+    let base_levels = surface_cache_cell_levels(position, surface_cache_params);
+    let levels = surface_cache_history_cell_levels(
+        position,
+        surface_cache_native_history(position, normal, base_levels),
+        surface_cache_params
+    );
     let fine_sample = surface_cache_sample_level_nearest(
         position,
         normal,
         levels.fine_exponent
     );
     if (levels.coarse_exponent == levels.fine_exponent) {
-        return surface_cache_finalize_irradiance_sample(fine_sample);
+        return surface_cache_finalize_irradiance_sample(fine_sample.value);
     }
     let coarse_sample = surface_cache_sample_level_nearest(
         position,

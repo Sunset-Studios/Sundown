@@ -7,6 +7,6 @@
 fn cs() {
     atomicStore(&counters.active_patch_count, 0u);
     atomicStore(&counters.update_patch_count, 0u);
-    atomicStore(&counters.padding1, 0u);
-    atomicStore(&counters.padding2, 0u);
+    atomicStore(&counters.bootstrap_patch_count, 0u);
+    atomicStore(&counters.padding, 0u);
 }

@@ -270,8 +270,8 @@ export class SCGIStats extends DevConsoleTool {
       metric_pair(
         "Updated patches",
         `${format_number(stats.update_patch_count)} / ${format_number(stats.active_patch_count)}`,
-        "Rays fired",
-        format_number(stats.total_rays_fired),
+        "Bootstrap patches",
+        `${format_number(stats.bootstrap_patch_count)} / ${format_number(stats.bootstrap_patch_capacity)}`,
         secondary_accent
       );
 
@@ -290,9 +290,17 @@ export class SCGIStats extends DevConsoleTool {
       );
       metric_pair(
         "Pixel footprint",
-        `${Number(stats.cache_pixel_footprint).toFixed(1)} px`,
+        `${Number(stats.cache_pixel_footprint).toFixed(1)}-${(
+          Number(stats.cache_pixel_footprint) * Number(stats.history_footprint_max_scale)
+        ).toFixed(1)} px`,
         "Normal bias",
         Number(stats.cache_normal_bias).toFixed(4)
+      );
+      metric_pair(
+        "History footprint",
+        `${format_number(stats.history_footprint_start_samples)}-${format_number(stats.history_footprint_end_samples)} samples`,
+        "Low-history scale",
+        `${Number(stats.history_footprint_max_scale).toFixed(1)}x`
       );
       metric_pair(
         "Maximum ray length",
@@ -303,14 +311,14 @@ export class SCGIStats extends DevConsoleTool {
       metric_pair(
         "Rays / patch",
         format_number(stats.rays_per_patch),
-        "History limit",
-        `${format_number(stats.max_history_samples)} samples`
+        "Bootstrap rays",
+        format_number(stats.bootstrap_rays_per_patch)
       );
       metric_pair(
         "History hysteresis",
         Number(stats.history_hysteresis).toFixed(3),
         "Update policy",
-        "All active patches"
+        "Budgeted ray stealing"
       );
 
       section_header("GPU memory");

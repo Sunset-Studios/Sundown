@@ -29,6 +29,7 @@
 @group(1) @binding(21) var skybox_texture: texture_cube<f32>;
 @group(1) @binding(22) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
 @group(1) @binding(23) var<storage, read> surface_cache_hashmap: array<HashMapEntry>;
+@group(1) @binding(24) var<uniform> ray_batch: SurfaceCacheRayBatchParams;
 
 fn sample_weighted_surface_cache_emissive_light(
     rng: ptr<function, u32>,
@@ -87,12 +88,17 @@ fn sample_weighted_surface_cache_emissive_light(
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let rays_per_patch = surface_cache_rays_per_patch(surface_cache_params);
-    let ray_data_index = gid.x;
-    let active_index = ray_data_index / rays_per_patch;
-    if (active_index >= counters.update_patch_count) {
+    let rays_per_patch = max(ray_batch.rays_per_patch, 1u);
+    let local_ray_index = gid.x;
+    let active_index = local_ray_index / rays_per_patch;
+    if (active_index >= surface_cache_ray_batch_patch_count(counters, ray_batch)) {
         return;
     }
+    let ray_data_index = surface_cache_ray_batch_data_index(
+        local_ray_index,
+        arrayLength(&radiance_info),
+        ray_batch
+    );
 
     let ray_direction = hit_info[ray_data_index].ray_direction_sampling_weight.xyz;
     let hit_identity = hit_info[ray_data_index].hit_identity;
@@ -219,7 +225,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // frame time. Intermittently updated patches therefore retain the same
     // light-sampling sequence regardless of their scheduling phase.
     let light_sample_index = u32(surface_cache[patch_index].history.y) +
-        (ray_data_index % rays_per_patch);
+        (local_ray_index % rays_per_patch);
     var rng = random_seed(surface_cache_patch_rng(
         patch_index,
         surface_cache[patch_index].grid_key

@@ -8,14 +8,30 @@
 @group(1) @binding(4) var depth_texture: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(6) var<storage, read_write> surface_cache_hashmap: array<atomic<u32>>;
+@group(1) @binding(7) var<storage, read_write> bootstrap_indices: array<u32>;
 
-fn append_active_patch(patch_index: u32) {
-    atomicAdd(&counters.active_patch_count, 1u);
-
+fn append_regular_patch(patch_index: u32) {
     let update_index = atomicAdd(&counters.update_patch_count, 1u);
-    if (update_index < u32(surface_cache_params.total_patch_count)) {
+    if (update_index < arrayLength(&update_indices)) {
         update_indices[update_index] = patch_index;
     }
+}
+
+fn append_active_patch(patch_index: u32, bootstrap: bool) {
+    atomicAdd(&counters.active_patch_count, 1u);
+
+    let bootstrap_capacity = min(
+        u32(surface_cache_params.bootstrap_patch_capacity),
+        arrayLength(&bootstrap_indices)
+    );
+    if (bootstrap && bootstrap_capacity > 0u) {
+        let bootstrap_index = atomicAdd(&counters.bootstrap_patch_count, 1u);
+        if (bootstrap_index < bootstrap_capacity) {
+            bootstrap_indices[bootstrap_index] = patch_index;
+            return;
+        }
+    }
+    append_regular_patch(patch_index);
 }
 
 fn initialize_patch(
@@ -39,7 +55,12 @@ fn initialize_patch(
         directional_bin,
         cell_exponent
     );
-    surface_cache[patch_index].metadata = vec4<f32>(0.0);
+    surface_cache[patch_index].metadata = vec4<f32>(
+        0.0,
+        0.0,
+        surface_cache_params.frame_index,
+        0.0
+    );
     surface_cache[patch_index].history = vec4<f32>(0.0);
 }
 
@@ -48,7 +69,7 @@ fn feedback_surface_level(
     normal: vec3<f32>,
     frame: u32,
     cell_exponent: i32
-) {
+) -> f32 {
     let quantized_position = surface_cache_quantize_position(
         position,
         normal,
@@ -82,8 +103,12 @@ fn feedback_surface_level(
             directional_bin,
             cell_exponent
         );
-        append_active_patch(result.index);
+        append_active_patch(result.index, true);
+        return 0.0;
     } else if (result.status == HASHMAP_RESULT_FOUND) {
+        let sample_count = surface_cache[result.index].metadata.w;
+        surface_cache[result.index].metadata.y = sample_count;
+        surface_cache[result.index].metadata.z = surface_cache_params.frame_index;
         surface_cache[result.index].position_frame = vec4<f32>(
             position,
             surface_cache_params.frame_index
@@ -92,8 +117,12 @@ fn feedback_surface_level(
         surface_cache[result.index].normal_cell_exponent.y = normal.y;
         surface_cache[result.index].normal_cell_exponent.z = normal.z;
         surface_cache[result.index].normal_cell_exponent.w = f32(cell_exponent);
-        append_active_patch(result.index);
+        append_active_patch(result.index, false);
+        return sample_count;
+    } else if (result.status == HASHMAP_RESULT_ALREADY_UPDATED) {
+        return surface_cache[result.index].metadata.w;
     }
+    return 0.0;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -117,19 +146,53 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         u32(frame_info.view_index)
     );
 
-    let levels = surface_cache_cell_levels(position, surface_cache_params);
-    feedback_surface_level(
+    // Always request the native footprint so it can accumulate history. While
+    // either native level is new or underconverged, also request a temporary
+    // coarser footprint used by lookup to hide its initial gathering noise.
+    let base_levels = surface_cache_cell_levels(position, surface_cache_params);
+    let fine_history = feedback_surface_level(
         position,
         normal,
         frame,
-        levels.fine_exponent
+        base_levels.fine_exponent
     );
-    if (levels.coarse_exponent != levels.fine_exponent) {
+    var cell_history = fine_history;
+    if (base_levels.coarse_exponent != base_levels.fine_exponent) {
+        let coarse_history = feedback_surface_level(
+            position,
+            normal,
+            frame,
+            base_levels.coarse_exponent
+        );
+        cell_history = min(cell_history, coarse_history);
+    }
+
+    let history_levels = surface_cache_history_cell_levels(
+        position,
+        cell_history,
+        surface_cache_params
+    );
+    if (
+        history_levels.fine_exponent != base_levels.fine_exponent &&
+        history_levels.fine_exponent != base_levels.coarse_exponent
+    ) {
         feedback_surface_level(
             position,
             normal,
             frame,
-            levels.coarse_exponent
+            history_levels.fine_exponent
+        );
+    }
+    if (
+        history_levels.coarse_exponent != history_levels.fine_exponent &&
+        history_levels.coarse_exponent != base_levels.fine_exponent &&
+        history_levels.coarse_exponent != base_levels.coarse_exponent
+    ) {
+        feedback_surface_level(
+            position,
+            normal,
+            frame,
+            history_levels.coarse_exponent
         );
     }
 }

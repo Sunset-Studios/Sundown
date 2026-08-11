@@ -8,17 +8,18 @@
 @group(1) @binding(4) var<storage, read> counters: SurfaceCacheCountersReadOnly;
 @group(1) @binding(5) var<storage, read> hit_info: array<SurfaceCacheHitInfo>;
 @group(1) @binding(6) var<storage, read> radiance_info: array<SurfaceCacheRadianceInfo>;
+@group(1) @binding(7) var<uniform> ray_batch: SurfaceCacheRayBatchParams;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let active_index = gid.x;
-    if (active_index >= counters.update_patch_count) {
+    if (active_index >= surface_cache_ray_batch_patch_count(counters, ray_batch)) {
         return;
     }
 
     let patch_index = update_indices[active_index];
-    let rays_per_patch = surface_cache_rays_per_patch(surface_cache_params);
-    let ray_data_base = active_index * rays_per_patch;
+    let rays_per_patch = max(ray_batch.rays_per_patch, 1u);
+    let local_ray_base = active_index * rays_per_patch;
 
     var sample_sh_sum = sh_l1_rgb_zero();
     var luminance_sum = 0.0;
@@ -26,7 +27,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var valid_sample_count = 0.0;
 
     for (var ray_index = 0u; ray_index < rays_per_patch; ray_index = ray_index + 1u) {
-        let ray_data_index = ray_data_base + ray_index;
+        let ray_data_index = surface_cache_ray_batch_data_index(
+            local_ray_base + ray_index,
+            arrayLength(&radiance_info),
+            ray_batch
+        );
         if (radiance_info[ray_data_index].sample_radiance.w <= 0.0) {
             continue;
         }
@@ -73,11 +78,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let history = surface_cache[patch_index].history;
     let previous_sample_count = history.x;
-    let change_detection_min_samples = max(
+    let maximum_history_samples = max(
         surface_cache_params.max_history_samples,
         1.0
     );
-    let next_sample_count = previous_sample_count + valid_sample_count;
+    // Bound the statistical memory used by the running mean. Without this,
+    // mature cells eventually give a new lighting batch almost zero weight and
+    // can take tens of seconds to converge after a lighting change.
+    let effective_previous_sample_count = min(
+        previous_sample_count,
+        maximum_history_samples
+    );
+    let next_sample_count =
+        effective_previous_sample_count + valid_sample_count;
     let next_sequence = f32((u32(history.y) + u32(valid_sample_count)) & 4095u);
     let running_alpha = min(
         valid_sample_count / max(next_sample_count, 1.0),
@@ -97,11 +110,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         0.0
     );
     let mean_variance =
-        previous_variance / max(previous_sample_count, 1.0) +
+        previous_variance / max(effective_previous_sample_count, 1.0) +
         sample_variance / max(valid_sample_count, 1.0);
     let change_threshold = max(3.0 * sqrt(mean_variance), 0.01);
     let history_is_mature =
-        previous_sample_count >= change_detection_min_samples;
+        previous_sample_count >= maximum_history_samples;
     let lighting_changed = history_is_mature &&
         abs(sample_luminance - history.z) > change_threshold;
     let response_alpha = 1.0 - clamp(
@@ -140,10 +153,22 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         lighting_changed
     );
     surface_cache[patch_index].history = vec4<f32>(
-        stored_sample_count,
+        min(stored_sample_count, maximum_history_samples),
         next_sequence,
         first_moment,
         second_moment
     );
     surface_cache[patch_index].metadata.x = surface_cache_params.frame_index;
+    // Bootstrap batches should improve the first estimate without jumping the
+    // footprint across every intermediate LOD in one frame. Accumulate at most
+    // one regular batch of footprint history per update so adjacent cell scales
+    // remain available for trilinear blending while the cell matures.
+    let footprint_history_increment = min(
+        valid_sample_count,
+        max(surface_cache_params.rays_per_patch, 1.0)
+    );
+    surface_cache[patch_index].metadata.w = min(
+        surface_cache[patch_index].metadata.w + footprint_history_increment,
+        max(surface_cache_params.history_footprint_end_samples, 1.0)
+    );
 }

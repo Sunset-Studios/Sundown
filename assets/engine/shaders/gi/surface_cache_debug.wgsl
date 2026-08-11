@@ -14,7 +14,7 @@
 
 // Displays the single cache patch addressed by the current surface. Unlike
 // surface_cache_resolve, this deliberately performs no neighboring-cell lookup or
-// geometry/confidence weighting, exposing the raw spatial cache population.
+// geometry or LOD weighting, exposing the raw spatial cache population.
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let resolution = textureDimensions(output_debug);
@@ -36,7 +36,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureLoad(depth_texture, pixel_coord, 0).r,
         view_index
     );
-    let cell_exponent = surface_cache_cell_exponent(position, surface_cache_params);
+    let base_levels = surface_cache_cell_levels(position, surface_cache_params);
+    let history_levels = surface_cache_history_cell_levels(
+        position,
+        surface_cache_native_history(position, normal, base_levels),
+        surface_cache_params
+    );
+    let cell_exponent = history_levels.fine_exponent;
     let descriptor_position = surface_cache_quantize_position(
         position,
         normal,

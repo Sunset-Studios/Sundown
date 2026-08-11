@@ -15,6 +15,7 @@
 @group(1) @binding(9) var<storage, read> compact_transforms: array<RayInstanceTransform>;
 @group(1) @binding(10) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(11) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(12) var<uniform> ray_batch: SurfaceCacheRayBatchParams;
 
 fn trace_surface_cache_ray(
     active_index: u32,
@@ -77,15 +78,20 @@ fn cs(
     @builtin(local_invocation_index) local_idx: u32,
 ) {
     bvh_stack_lane = local_idx;
-    let rays_per_patch = surface_cache_rays_per_patch(surface_cache_params);
-    let ray_data_index = gid.x;
-    let active_index = ray_data_index / rays_per_patch;
-    if (active_index >= counters.update_patch_count) {
+    let rays_per_patch = max(ray_batch.rays_per_patch, 1u);
+    let local_ray_index = gid.x;
+    let active_index = local_ray_index / rays_per_patch;
+    if (active_index >= surface_cache_ray_batch_patch_count(counters, ray_batch)) {
         return;
     }
+    let ray_data_index = surface_cache_ray_batch_data_index(
+        local_ray_index,
+        arrayLength(&hit_info),
+        ray_batch
+    );
     trace_surface_cache_ray(
         active_index,
-        ray_data_index % rays_per_patch,
+        local_ray_index % rays_per_patch,
         ray_data_index
     );
 }
