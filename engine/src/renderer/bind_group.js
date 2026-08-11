@@ -93,12 +93,20 @@ export class BindGroup {
         this.binding_table = new GroupBindingTable();
     }
 
-    init_with_layout(name, layout, index, bindings, force = false) {
+    init_with_layout(
+        name,
+        layout,
+        index,
+        bindings,
+        force = false,
+        layout_name = name,
+        force_layout = force
+    ) {
         const renderer = Renderer.get();
 
         this.name = name;
         this.index = index;
-        this.layout = BindGroup.create_layout(name, layout, force);
+        this.layout = BindGroup.create_layout(layout_name, layout, force_layout);
         this.bind_group = renderer.device.createBindGroup({
             label: name,
             layout: this.layout,
@@ -138,7 +146,15 @@ export class BindGroup {
         return bind_group;
     }
 
-    static create_with_layout(name, layout, index, bindings, force = false) {
+    static create_with_layout(
+        name,
+        layout,
+        index,
+        bindings,
+        force = false,
+        layout_name = name,
+        force_layout = force
+    ) {
         let bind_group = ResourceCache.get().fetch(CacheTypes.BIND_GROUP, Name.from(name));
 
         if (bind_group && force) {
@@ -148,7 +164,15 @@ export class BindGroup {
 
         if (!bind_group) {
             bind_group = new BindGroup();
-            bind_group.init_with_layout(name, layout, index, bindings, force);
+            bind_group.init_with_layout(
+                name,
+                layout,
+                index,
+                bindings,
+                force,
+                layout_name,
+                force_layout
+            );
             ResourceCache.get().store(CacheTypes.BIND_GROUP, Name.from(name), bind_group);
         }
 

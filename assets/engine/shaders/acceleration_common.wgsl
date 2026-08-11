@@ -132,8 +132,17 @@ fn intersect_aabb(ray: ptr<function, Ray>, min_point: vec3<f32>, max_point: vec3
     let tz1 = (min_z - (*ray).origin_and_tmin.z) * (*ray).inv_direction.z;
     let tz2 = (max_z - (*ray).origin_and_tmin.z) * (*ray).inv_direction.z;
 
-    let tmin = max((*ray).origin_and_tmin.w, max(min(tx1, tx2), max(min(ty1, ty2), min(tz1, tz2))));
-    let tmax = min((*ray).direction_and_tmax.w, min(max(tx1, tx2), min(max(ty1, ty2), max(tz1, tz2))));
+    // The endpoints above are already ordered by the inverse-direction sign:
+    // t*1 is the near plane and t*2 is the far plane on every axis. Avoid six
+    // redundant min/max operations for every BVH node visited by every ray.
+    let tmin = max(
+        (*ray).origin_and_tmin.w,
+        max(tx1, max(ty1, tz1))
+    );
+    let tmax = min(
+        (*ray).direction_and_tmax.w,
+        min(tx2, min(ty2, tz2))
+    );
     return vec2<f32>(tmin, tmax);
 }
 
@@ -195,6 +204,44 @@ fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2:
         u_scaled * inverse_determinant,
         v_scaled * inverse_determinant
     );
+}
+
+// Any-hit traversal only needs interval membership. Preserve the exact
+// triangle and distance tests while avoiding barycentric result construction
+// and its two reciprocal-dependent multiplies on accepted candidates.
+fn intersect_triangle_any(
+    ray: ptr<function, Ray>,
+    v0: vec3<f32>,
+    v1: vec3<f32>,
+    v2: vec3<f32>
+) -> bool {
+    let direction = (*ray).direction_and_tmax.xyz;
+    let origin = (*ray).origin_and_tmin.xyz;
+    let edge_1 = v1 - v0;
+    let edge_2 = v2 - v0;
+    let p_vector = cross(direction, edge_2);
+    let determinant = dot(edge_1, p_vector);
+    let t_vector = origin - v0;
+    let q_vector = cross(t_vector, edge_1);
+    let determinant_absolute = abs(determinant);
+    let determinant_sign = select(-1.0, 1.0, determinant > 0.0);
+    let u_scaled = dot(t_vector, p_vector) * determinant_sign;
+    let v_scaled = dot(direction, q_vector) * determinant_sign;
+    let t_scaled = dot(edge_2, q_vector) * determinant_sign;
+
+    if (
+        determinant_absolute <= 0.00001 ||
+        t_scaled <= 0.0001 * determinant_absolute ||
+        u_scaled <= 0.0 ||
+        v_scaled <= 0.0 ||
+        u_scaled + v_scaled >= determinant_absolute
+    ) {
+        return false;
+    }
+    let inverse_determinant = 1.0 / determinant_absolute;
+    let t_hit = t_scaled * inverse_determinant;
+    return t_hit >= (*ray).origin_and_tmin.w &&
+        t_hit < (*ray).direction_and_tmax.w;
 }
 
 fn build_local_ray(

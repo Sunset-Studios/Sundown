@@ -319,6 +319,7 @@ const RGBufferConfig = Object.freeze({
  * @property {Array<number>} output_views - Per-output attachment view indices.
  * @property {Array<number>} pass_inputs - Non-bindless inputs classified during realization.
  * @property {Array<number>} bindless_inputs - Bindless inputs classified during realization.
+ * @property {string|null} bind_group_cache_key - Optional bind-group cache identity.
  * @property {boolean} b_skip_pass_bind_group_setup - Let the executor own its pass bind group.
  * @property {boolean} b_skip_pass_pipeline_setup - Let the executor own its pipeline.
  * @property {boolean} b_force_keep_pass - Preserve the pass even when its outputs are unused.
@@ -331,6 +332,7 @@ const RGPassParameters = Object.freeze({
   output_views: [],
   pass_inputs: [],
   bindless_inputs: [],
+  bind_group_cache_key: null,
   b_skip_pass_bind_group_setup: false,
   b_skip_pass_pipeline_setup: false,
   b_force_keep_pass: false,
@@ -1666,11 +1668,13 @@ export class RenderGraph {
   _setup_pass_bind_groups(pass) {
     const is_compute_pass =
       (pass.pass_config.flags & RenderPassFlags.Compute) !== RenderPassFlags.None;
+    const bind_group_cache_key =
+      pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
 
-    const pass_binds = this.pass_cache.bind_groups.get(pass.pass_config.name) || {
+    const pass_binds = this.pass_cache.bind_groups.get(bind_group_cache_key) || {
       bind_groups: Array(this.max_bind_groups).fill(null),
     };
-    this.pass_cache.bind_groups.set(pass.pass_config.name, pass_binds);
+    this.pass_cache.bind_groups.set(bind_group_cache_key, pass_binds);
 
     this._setup_global_bind_group(pass);
 
@@ -1834,12 +1838,18 @@ export class RenderGraph {
         entries = entries.slice(0, layouts.length);
       }
 
+      const bind_group_name = `${bind_group_cache_key}_bindgroup_${BindGroupType.Pass}`;
+      const bind_group_layout_name = `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`;
       const pass_bind_group = BindGroup.create_with_layout(
-        `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`,
+        bind_group_name,
         layouts,
         BindGroupType.Pass,
         entries,
-        true /* Rebuild the named group after dependency or reflection changes. */
+        true, /* Rebuild the named group after dependency or reflection changes. */
+        bind_group_layout_name,
+        pass.parameters.bind_group_cache_key != null
+          ? this.pass_cache_pipeline_states_need_recreate
+          : true
       );
 
       pass_binds.bind_groups[BindGroupType.Pass] = pass_bind_group;
@@ -1862,7 +1872,9 @@ export class RenderGraph {
       return;
     }
 
-    const pass_binds = this.pass_cache.bind_groups.get(pass.pass_config.name);
+    const bind_group_cache_key =
+      pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
+    const pass_binds = this.pass_cache.bind_groups.get(bind_group_cache_key);
     const shader_setup = pass.parameters.shader_setup;
 
     if (shader_setup.pipeline_shaders) {
@@ -1978,7 +1990,9 @@ export class RenderGraph {
    * Rebuilds the shared global bind group only when no cached group exists or writes are pending.
    */
   _setup_global_bind_group(pass) {
-    const pass_binds = this.pass_cache.bind_groups.get(pass.pass_config.name);
+    const bind_group_cache_key =
+      pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
+    const pass_binds = this.pass_cache.bind_groups.get(bind_group_cache_key);
 
     pass_binds.bind_groups[BindGroupType.Global] = this.pass_cache.global_bind_group;
 
@@ -2075,7 +2089,9 @@ export class RenderGraph {
    */
   _bind_pass_bind_groups(pass) {
     const physical_pass = ResourceCache.get().fetch(CacheTypes.PASS, pass.physical_id);
-    const pass_bind_groups = this.pass_cache.bind_groups.get(pass.pass_config.name);
+    const bind_group_cache_key =
+      pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
+    const pass_bind_groups = this.pass_cache.bind_groups.get(bind_group_cache_key);
 
     if (pass_bind_groups.bind_groups.length > 0) {
       this.pass_cache.global_bind_group.bind(physical_pass);

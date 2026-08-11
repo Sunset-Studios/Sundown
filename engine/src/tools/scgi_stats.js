@@ -263,13 +263,13 @@ export class SCGIStats extends DevConsoleTool {
       activity_row(
         "Ray workload",
         stats.total_rays_fired,
-        stats.maximum_ray_count,
-        `${format_number(stats.total_rays_fired)} / ${format_number(stats.maximum_ray_count)}`,
+        stats.active_set_ray_budget,
+        `${format_number(stats.total_rays_fired)} / ${format_number(stats.active_set_ray_budget)}`,
         secondary_accent
       );
       metric_pair(
-        "Updated patches",
-        `${format_number(stats.update_patch_count)} / ${format_number(stats.active_patch_count)}`,
+        "Updates / deferred",
+        `${format_number(stats.update_patch_count)} / ${format_number(stats.deferred_patch_count)}`,
         "Bootstrap patches",
         `${format_number(stats.bootstrap_patch_count)} / ${format_number(stats.bootstrap_patch_capacity)}`,
         secondary_accent
@@ -315,10 +315,19 @@ export class SCGIStats extends DevConsoleTool {
         format_number(stats.bootstrap_rays_per_patch)
       );
       metric_pair(
+        "Mature cadence",
+        stats.mature_patch_update_period > 1
+          ? `1 / ${format_number(stats.mature_patch_update_period)} frames`
+          : "Full rate",
+        "Scene wake",
+        stats.force_full_update ? "Full rate" : "Scheduled",
+        stats.force_full_update ? secondary_accent : accent
+      );
+      metric_pair(
         "History hysteresis",
         Number(stats.history_hysteresis).toFixed(3),
-        "Update policy",
-        "Budgeted ray stealing"
+        "Bootstrap ceiling",
+        `${(Number(stats.bootstrap_ray_budget_fraction) * 100).toFixed(0)}% of rays`
       );
 
       section_header("GPU memory");

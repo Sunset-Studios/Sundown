@@ -27,12 +27,14 @@ export class MaterialAllocationTable {
   static params_buffer = null;
   static palette_buffer = null;
   static palette_allocations = new Map();
+  static radiance_revision = 1;
 
   static reset() {
     this.local_palette.clear();
     this.dirty_palette_pages.clear();
     this.palette_allocations.clear();
     this.free_palette_ranges.reset();
+    this.radiance_revision = (this.radiance_revision + 1) >>> 0;
   }
 
   /**
@@ -119,6 +121,10 @@ export class MaterialAllocationTable {
    * Upload the allocation and palette buffers to the GPU.
    */
   static upload_buffers() {
+    if (this.dirty_params_pages.length > 0 || this.dirty_palette_pages.length > 0) {
+      this.radiance_revision = (this.radiance_revision + 1) >>> 0;
+    }
+
     if (!this.params_buffer) {
       this.params_buffer = Buffer.create({
         name: "material_params",

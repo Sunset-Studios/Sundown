@@ -20,6 +20,7 @@ const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.0;
 const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 1.0;
 const SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP: f32 = 2.0;
 const SURFACE_CACHE_EMISSIVE_OVERFLOW_SCALE: f32 = 0.1;
+const SURFACE_CACHE_PARALLEL_BOOTSTRAP_THRESHOLD: u32 = 64u;
 
 struct SurfaceCacheParams {
     surface_cache_size: f32,
@@ -31,10 +32,10 @@ struct SurfaceCacheParams {
     history_hysteresis: f32,
     max_history_samples: f32,
     indirect_boost: f32,
-    importance_sample_count: f32,
+    regular_rays_per_patch: u32,
     cache_entry_lifetime: f32,
-    importance_exploration: f32,
-    rays_per_patch: f32,
+    maximum_bootstrap_rays_per_patch: u32,
+    bootstrap_ray_budget_fraction: f32,
     cache_pixel_footprint: f32,
     hash_search_count: f32,
     cache_normal_bias: f32,
@@ -42,19 +43,17 @@ struct SurfaceCacheParams {
     history_footprint_end_samples: f32,
     history_footprint_max_scale: f32,
     bootstrap_patch_capacity: f32,
-};
-
-struct SurfaceCacheRayBatchParams {
-    rays_per_patch: u32,
-    bootstrap_batch: u32,
-    patch_capacity: u32,
-    reverse_order: u32,
+    mature_patch_update_period: u32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
 };
 
 struct SurfaceCacheCellLevels {
     fine_exponent: i32,
     coarse_exponent: i32,
     blend: f32,
+    exponent_value: f32,
 };
 
 struct SurfacePatch {
@@ -78,6 +77,8 @@ struct SurfaceCacheCounters {
     update_patch_count: atomic<u32>,
     bootstrap_patch_count: atomic<u32>,
     bootstrap_rays_per_patch: atomic<u32>,
+    regular_schedule_offset: atomic<u32>,
+    force_full_update: atomic<u32>,
 };
 
 struct SurfaceCacheCountersReadOnly {
@@ -85,6 +86,8 @@ struct SurfaceCacheCountersReadOnly {
     update_patch_count: u32,
     bootstrap_patch_count: u32,
     bootstrap_rays_per_patch: u32,
+    regular_schedule_offset: u32,
+    force_full_update: u32,
 };
 
 struct SurfaceCacheHitInfo {
@@ -105,8 +108,27 @@ struct SurfaceCacheRaySample {
     sampling_weight: f32,
 };
 
+struct SurfaceCacheRayWork {
+    active_index: u32,
+    ray_index_in_patch: u32,
+    data_index: u32,
+    bootstrap_batch: u32,
+};
+
 fn surface_cache_sh_patch_read(
     buffer: ptr<storage, array<u32>, read_write>,
+    patch_index: u32
+) -> SH_L1_RGB {
+    let base_offset = patch_index * SURFACE_CACHE_SH_PATCH_SIZE_U32;
+    var packed: SH_L1_RGB_Packed;
+    for (var coefficient = 0u; coefficient < SURFACE_CACHE_SH_PATCH_SIZE_U32; coefficient = coefficient + 1u) {
+        packed.data[coefficient] = (*buffer)[base_offset + coefficient];
+    }
+    return sh_l1_rgb_unpack(packed);
+}
+
+fn surface_cache_sh_patch_read_only(
+    buffer: ptr<storage, array<u32>, read>,
     patch_index: u32
 ) -> SH_L1_RGB {
     let base_offset = patch_index * SURFACE_CACHE_SH_PATCH_SIZE_U32;
@@ -137,44 +159,186 @@ fn surface_cache_full_resolution(params: SurfaceCacheParams) -> vec2<u32> {
     return vec2<u32>(u32(params.full_resolution_x), u32(params.full_resolution_y));
 }
 
-fn surface_cache_rays_per_patch(params: SurfaceCacheParams) -> u32 {
-    return max(u32(params.rays_per_patch), 1u);
+fn surface_cache_regular_rays_per_patch(params: SurfaceCacheParams) -> u32 {
+    return max(params.regular_rays_per_patch, 1u);
 }
 
-fn surface_cache_ray_batch_patch_count(
+fn surface_cache_regular_ray_count(
     counters: SurfaceCacheCountersReadOnly,
-    batch: SurfaceCacheRayBatchParams
+    params: SurfaceCacheParams
 ) -> u32 {
-    return select(
-        counters.update_patch_count,
-        counters.bootstrap_patch_count,
-        batch.bootstrap_batch != 0u
-    );
+    return counters.update_patch_count * surface_cache_regular_rays_per_patch(params);
 }
 
-fn surface_cache_ray_batch_rays_per_patch(
+fn surface_cache_total_ray_count(
     counters: SurfaceCacheCountersReadOnly,
-    batch: SurfaceCacheRayBatchParams
+    params: SurfaceCacheParams
 ) -> u32 {
-    return max(
-        select(
-            batch.rays_per_patch,
-            counters.bootstrap_rays_per_patch,
-            batch.bootstrap_batch != 0u
-        ),
-        1u
-    );
+    return surface_cache_regular_ray_count(counters, params) +
+        counters.bootstrap_patch_count * max(counters.bootstrap_rays_per_patch, 1u);
 }
 
-fn surface_cache_ray_batch_data_index(
+fn surface_cache_ray_data_index(
     local_index: u32,
     data_count: u32,
-    batch: SurfaceCacheRayBatchParams
+    bootstrap_batch: bool
 ) -> u32 {
     return select(
         local_index,
         data_count - 1u - local_index,
-        batch.reverse_order != 0u
+        bootstrap_batch
+    );
+}
+
+fn surface_cache_regular_schedule_index(
+    scheduled_index: u32,
+    counters: SurfaceCacheCountersReadOnly
+) -> u32 {
+    let available_patch_count = max(
+        counters.active_patch_count - counters.bootstrap_patch_count,
+        1u
+    );
+    if (counters.update_patch_count >= available_patch_count) {
+        return scheduled_index;
+    }
+
+    let rotated_index = scheduled_index + counters.regular_schedule_offset;
+    return select(
+        rotated_index,
+        rotated_index - available_patch_count,
+        rotated_index >= available_patch_count
+    );
+}
+
+fn surface_cache_ray_work(
+    work_index: u32,
+    data_count: u32,
+    counters: SurfaceCacheCountersReadOnly,
+    params: SurfaceCacheParams
+) -> SurfaceCacheRayWork {
+    let regular_ray_count = surface_cache_regular_ray_count(counters, params);
+    let bootstrap_batch = work_index >= regular_ray_count;
+    let local_index = select(
+        work_index,
+        work_index - regular_ray_count,
+        bootstrap_batch
+    );
+    let rays_per_patch = select(
+        surface_cache_regular_rays_per_patch(params),
+        max(counters.bootstrap_rays_per_patch, 1u),
+        bootstrap_batch
+    );
+    return SurfaceCacheRayWork(
+        local_index / rays_per_patch,
+        local_index % rays_per_patch,
+        surface_cache_ray_data_index(local_index, data_count, bootstrap_batch),
+        select(0u, 1u, bootstrap_batch)
+    );
+}
+
+fn surface_cache_commit_accumulation(
+    cache_buffer: ptr<storage, array<SurfacePatch>, read_write>,
+    sh_buffer: ptr<storage, array<u32>, read_write>,
+    params: SurfaceCacheParams,
+    patch_index: u32,
+    sample_sh_sum: SH_L1_RGB,
+    luminance_sum: f32,
+    luminance_squared_sum: f32,
+    valid_sample_count: f32
+) {
+    if (valid_sample_count <= 0.0) {
+        return;
+    }
+
+    let inverse_sample_count = 1.0 / valid_sample_count;
+    let sample_sh = sh_l1_rgb_multiply_scalar(
+        sample_sh_sum,
+        inverse_sample_count
+    );
+    let sample_luminance = luminance_sum * inverse_sample_count;
+    let sample_luminance_squared =
+        luminance_squared_sum * inverse_sample_count;
+
+    let history = (*cache_buffer)[patch_index].history;
+    let previous_sample_count = history.x;
+    let maximum_history_samples = max(params.max_history_samples, 1.0);
+    let effective_previous_sample_count = min(
+        previous_sample_count,
+        maximum_history_samples
+    );
+    let next_sample_count =
+        effective_previous_sample_count + valid_sample_count;
+    let next_sequence = f32(
+        (u32(history.y) + u32(valid_sample_count)) & 4095u
+    );
+    let running_alpha = min(
+        valid_sample_count / max(next_sample_count, 1.0),
+        1.0
+    );
+
+    let previous_variance = max(
+        history.w - history.z * history.z,
+        0.0
+    );
+    let sample_variance = max(
+        sample_luminance_squared - sample_luminance * sample_luminance,
+        0.0
+    );
+    let mean_variance =
+        previous_variance / max(effective_previous_sample_count, 1.0) +
+        sample_variance / max(valid_sample_count, 1.0);
+    let change_threshold = max(3.0 * sqrt(mean_variance), 0.01);
+    let history_is_mature =
+        previous_sample_count >= maximum_history_samples;
+    let lighting_changed = history_is_mature &&
+        abs(sample_luminance - history.z) > change_threshold;
+    let response_alpha = 1.0 - clamp(
+        params.history_hysteresis,
+        0.0,
+        0.999
+    );
+    let blend_alpha = max(
+        running_alpha,
+        select(0.0, response_alpha, lighting_changed)
+    );
+
+    var result = sample_sh;
+    if (previous_sample_count > 0.0) {
+        result = sh_l1_rgb_lerp(
+            surface_cache_sh_patch_read(sh_buffer, patch_index),
+            sample_sh,
+            blend_alpha
+        );
+    }
+    surface_cache_sh_patch_write(sh_buffer, patch_index, result);
+
+    let first_moment = mix(history.z, sample_luminance, blend_alpha);
+    let second_moment = mix(
+        history.w,
+        sample_luminance_squared,
+        blend_alpha
+    );
+    let responsive_sample_count =
+        valid_sample_count / max(blend_alpha, 1e-6);
+    let stored_sample_count = select(
+        next_sample_count,
+        min(next_sample_count, responsive_sample_count),
+        lighting_changed
+    );
+    (*cache_buffer)[patch_index].history = vec4<f32>(
+        min(stored_sample_count, maximum_history_samples),
+        next_sequence,
+        first_moment,
+        second_moment
+    );
+    (*cache_buffer)[patch_index].metadata.x = params.frame_index;
+    let footprint_history_increment = min(
+        valid_sample_count,
+        f32(surface_cache_regular_rays_per_patch(params))
+    );
+    (*cache_buffer)[patch_index].metadata.w = min(
+        (*cache_buffer)[patch_index].metadata.w + footprint_history_increment,
+        max(params.history_footprint_end_samples, 1.0)
     );
 }
 
@@ -251,11 +415,16 @@ fn surface_cache_cell_levels(
         0.0,
         fine_exponent == coarse_exponent
     );
-    return SurfaceCacheCellLevels(fine_exponent, coarse_exponent, blend);
+    return SurfaceCacheCellLevels(
+        fine_exponent,
+        coarse_exponent,
+        blend,
+        exponent_value
+    );
 }
 
-fn surface_cache_history_cell_levels(
-    position: vec3<f32>,
+fn surface_cache_history_cell_levels_from_base(
+    base_exponent_value: f32,
     sample_count: f32,
     params: SurfaceCacheParams
 ) -> SurfaceCacheCellLevels {
@@ -264,7 +433,7 @@ fn surface_cache_history_cell_levels(
         params
     );
     let exponent_value = clamp(
-        surface_cache_cell_exponent_value(position, params) + log2(footprint_scale),
+        base_exponent_value + log2(footprint_scale),
         f32(SURFACE_CACHE_MIN_CELL_EXPONENT),
         f32(SURFACE_CACHE_MAX_CELL_EXPONENT)
     );
@@ -283,7 +452,24 @@ fn surface_cache_history_cell_levels(
         0.0,
         fine_exponent == coarse_exponent
     );
-    return SurfaceCacheCellLevels(fine_exponent, coarse_exponent, blend);
+    return SurfaceCacheCellLevels(
+        fine_exponent,
+        coarse_exponent,
+        blend,
+        exponent_value
+    );
+}
+
+fn surface_cache_history_cell_levels(
+    position: vec3<f32>,
+    sample_count: f32,
+    params: SurfaceCacheParams
+) -> SurfaceCacheCellLevels {
+    return surface_cache_history_cell_levels_from_base(
+        surface_cache_cell_exponent_value(position, params),
+        sample_count,
+        params
+    );
 }
 
 fn surface_cache_cell_exponent(position: vec3<f32>, params: SurfaceCacheParams) -> i32 {
@@ -302,12 +488,11 @@ fn surface_cache_decode_cell_exponent(encoded_exponent: u32) -> i32 {
     return i32(encoded_exponent) - SURFACE_CACHE_CELL_EXPONENT_BIAS;
 }
 
-fn surface_cache_descriptor_offset(
-    normal: vec3<f32>,
+fn surface_cache_descriptor_offset_normalized(
+    normalized: vec3<f32>,
     cell_size: f32,
     params: SurfaceCacheParams
 ) -> vec3<f32> {
-    let normalized = safe_normalize(normal);
     let absolute_normal = abs(normalized);
     let dominant_axis = select(
         select(2u, 1u, absolute_normal.y >= absolute_normal.z),
@@ -325,6 +510,18 @@ fn surface_cache_descriptor_offset(
     return vec3<f32>(0.0, 0.0, select(-bias, bias, normalized.z >= 0.0));
 }
 
+fn surface_cache_descriptor_offset(
+    normal: vec3<f32>,
+    cell_size: f32,
+    params: SurfaceCacheParams
+) -> vec3<f32> {
+    return surface_cache_descriptor_offset_normalized(
+        safe_normalize(normal),
+        cell_size,
+        params
+    );
+}
+
 fn surface_cache_quantize_position(
     position: vec3<f32>,
     normal: vec3<f32>,
@@ -334,6 +531,21 @@ fn surface_cache_quantize_position(
     let cell_size = surface_cache_cell_size(cell_exponent);
     let descriptor_position = position + surface_cache_descriptor_offset(
         normal,
+        cell_size,
+        params
+    );
+    return vec3<i32>(floor(descriptor_position / cell_size));
+}
+
+fn surface_cache_quantize_position_normalized(
+    position: vec3<f32>,
+    normalized: vec3<f32>,
+    cell_exponent: i32,
+    params: SurfaceCacheParams
+) -> vec3<i32> {
+    let cell_size = surface_cache_cell_size(cell_exponent);
+    let descriptor_position = position + surface_cache_descriptor_offset_normalized(
+        normalized,
         cell_size,
         params
     );
@@ -404,6 +616,28 @@ fn surface_cache_octahedral_direction(normal: vec3<f32>) -> vec2<f32> {
     );
 }
 
+fn surface_cache_octahedral_direction_normalized(
+    normalized: vec3<f32>
+) -> vec2<f32> {
+    let projected = normalized / max(
+        abs(normalized.x) + abs(normalized.y) + abs(normalized.z),
+        1e-6
+    );
+    var octahedral = projected.xy;
+    if (projected.z < 0.0) {
+        let signs = vec2<f32>(
+            select(-1.0, 1.0, projected.x >= 0.0),
+            select(-1.0, 1.0, projected.y >= 0.0)
+        );
+        octahedral = (vec2<f32>(1.0) - abs(projected.yx)) * signs;
+    }
+    return clamp(
+        octahedral * 0.5 + vec2<f32>(0.5),
+        vec2<f32>(0.0),
+        vec2<f32>(1.0)
+    );
+}
+
 fn surface_cache_directional_bin(normal: vec3<f32>) -> u32 {
     if (SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 1u) {
         return 0u;
@@ -423,6 +657,30 @@ fn surface_cache_directional_bin(normal: vec3<f32>) -> u32 {
         SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 16u
     );
     let encoded = surface_cache_octahedral_direction(normal);
+    let coordinate = min(
+        vec2<u32>(encoded * f32(resolution)),
+        vec2<u32>(resolution - 1u)
+    );
+    return coordinate.x + coordinate.y * resolution;
+}
+
+fn surface_cache_directional_bin_normalized(normalized: vec3<f32>) -> u32 {
+    if (SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 1u) {
+        return 0u;
+    }
+    if (SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 8u) {
+        return
+            select(0u, 1u, normalized.x >= 0.0) |
+            (select(0u, 1u, normalized.y >= 0.0) << 1u) |
+            (select(0u, 1u, normalized.z >= 0.0) << 2u);
+    }
+
+    let resolution = select(
+        2u,
+        4u,
+        SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 16u
+    );
+    let encoded = surface_cache_octahedral_direction_normalized(normalized);
     let coordinate = min(
         vec2<u32>(encoded * f32(resolution)),
         vec2<u32>(resolution - 1u)

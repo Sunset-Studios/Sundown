@@ -2,8 +2,8 @@
 #include "gi/surface_cache_common.wgsl"
 
 @group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
-@group(1) @binding(1) var<storage, read_write> surface_cache: array<SurfacePatchReadOnly>;
-@group(1) @binding(2) var<storage, read_write> surface_cache_sh: array<u32>;
+@group(1) @binding(1) var<storage, read> surface_cache: array<SurfacePatchReadOnly>;
+@group(1) @binding(2) var<storage, read> surface_cache_sh: array<u32>;
 @group(1) @binding(3) var depth_texture: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(5) var scene_color: texture_2d<f32>;
@@ -37,15 +37,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         view_index
     );
     let base_levels = surface_cache_cell_levels(position, surface_cache_params);
-    let history_levels = surface_cache_history_cell_levels(
-        position,
-        surface_cache_native_history(position, normal, base_levels),
+    let lookup_context = surface_cache_lookup_context(position, normal);
+    let history_levels = surface_cache_history_cell_levels_from_base(
+        base_levels.exponent_value,
+        surface_cache_native_history(lookup_context, base_levels),
         surface_cache_params
     );
     let cell_exponent = history_levels.fine_exponent;
-    let descriptor_position = surface_cache_quantize_position(
+    let descriptor_position = surface_cache_quantize_position_normalized(
         position,
-        normal,
+        lookup_context.receiver_normal,
         cell_exponent,
         surface_cache_params
     );
@@ -53,14 +54,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let patch_index = surface_cache_find_patch(
         descriptor_position,
         directional_bin,
-        cell_exponent
+        cell_exponent,
+        lookup_context.hash_capacity,
+        lookup_context.hash_search_count
     );
 
     var cached_radiance = vec3<f32>(0.0);
     if (patch_index >= 0) {
         cached_radiance = max(
             sh_l1_rgb_calculate_irradiance(
-                surface_cache_sh_patch_read(
+                surface_cache_sh_patch_read_only(
                     &surface_cache_sh,
                     u32(patch_index)
                 ),

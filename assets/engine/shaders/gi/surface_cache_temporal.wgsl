@@ -45,8 +45,14 @@ fn surface_cache_history_tap(
     tap_weight: f32,
     resolution: vec2<u32>,
     current_normal: vec3<f32>,
-    current_linear_depth: f32
+    current_linear_depth: f32,
+    view_index: u32
 ) -> SurfaceCacheHistoryTap {
+    // Static reprojection commonly produces one unit bilinear weight and three
+    // exact zeros. Reject zero-weight taps before any history or geometry fetches.
+    if (tap_weight <= 0.0) {
+        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
+    }
     if (
         tap_coord.x < 0 || tap_coord.y < 0 ||
         tap_coord.x >= i32(resolution.x) ||
@@ -55,16 +61,32 @@ fn surface_cache_history_tap(
         return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
     }
 
-    let previous_normal_data = textureLoad(prev_gbuffer_normal, tap_coord, 0);
-    let previous_depth = textureLoad(prev_depth_texture, tap_coord, 0).r;
+    let history = textureLoad(history_diffuse, tap_coord, 0);
+    if (history.w <= 0.0) {
+        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
+    }
+    let previous_normal_data = textureLoad(
+        prev_gbuffer_normal,
+        tap_coord,
+        0
+    ).xyz;
+    if (dot(previous_normal_data, previous_normal_data) <= 1e-8) {
+        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
+    }
+    // Reject normal discontinuities before fetching depth and reconstructing
+    // a world position for a tap that cannot contribute.
+    let previous_normal = normalize(previous_normal_data);
     if (
-        dot(previous_normal_data.xyz, previous_normal_data.xyz) <= 1e-8 ||
-        previous_depth >= 1.0
+        dot(current_normal, previous_normal) <
+        temporal_params.normal_threshold
     ) {
         return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
     }
+    let previous_depth = textureLoad(prev_depth_texture, tap_coord, 0).r;
+    if (previous_depth >= 1.0) {
+        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
+    }
 
-    let view_index = u32(frame_info.view_index);
     let previous_position = reconstruct_prev_world_position(
         coord_to_uv(tap_coord, resolution),
         previous_depth,
@@ -76,18 +98,10 @@ fn surface_cache_history_tap(
     let relative_depth_delta = abs(
         previous_linear_depth - current_linear_depth
     ) / max(current_linear_depth, 1e-3);
-    let previous_normal = safe_normalize(previous_normal_data.xyz);
-    if (
-        relative_depth_delta > temporal_params.depth_threshold ||
-        dot(current_normal, previous_normal) < temporal_params.normal_threshold
-    ) {
+    if (relative_depth_delta > temporal_params.depth_threshold) {
         return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
     }
 
-    let history = textureLoad(history_diffuse, tap_coord, 0);
-    if (history.w <= 0.0) {
-        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
-    }
     return SurfaceCacheHistoryTap(history * tap_weight, tap_weight);
 }
 
@@ -97,8 +111,13 @@ fn surface_cache_history_repair_candidate(
     current_position: vec3<f32>,
     current_normal: vec3<f32>,
     current_linear_depth: f32,
-    spatial_distance: f32,
-    search_radius: f32
+    tap_offset: vec2<i32>,
+    inverse_depth: f32,
+    repair_normal_threshold: f32,
+    repair_depth_threshold: f32,
+    repair_plane_threshold: f32,
+    search_radius_denominator: f32,
+    view_index: u32
 ) -> SurfaceCacheHistoryRepair {
     if (
         tap_coord.x < 0 || tap_coord.y < 0 ||
@@ -108,28 +127,31 @@ fn surface_cache_history_repair_candidate(
         return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
     }
 
+    // Repair runs on misses, where most candidates are empty. Keep dependent
+    // texture reads behind progressively cheaper rejection tests.
     let history = textureLoad(history_diffuse, tap_coord, 0);
-    let previous_normal_data = textureLoad(prev_gbuffer_normal, tap_coord, 0);
-    let previous_depth = textureLoad(prev_depth_texture, tap_coord, 0).r;
-    if (
-        history.w <= 0.0 ||
-        dot(previous_normal_data.xyz, previous_normal_data.xyz) <= 1e-8 ||
-        previous_depth >= 1.0
-    ) {
+    if (history.w <= 0.0) {
         return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
     }
-
-    let previous_normal = safe_normalize(previous_normal_data.xyz);
+    let previous_normal_data = textureLoad(
+        prev_gbuffer_normal,
+        tap_coord,
+        0
+    ).xyz;
+    if (dot(previous_normal_data, previous_normal_data) <= 1e-8) {
+        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
+    }
+    // The length check above guarantees normalize cannot take the zero path.
+    let previous_normal = normalize(previous_normal_data);
     let normal_alignment = dot(current_normal, previous_normal);
-    let repair_normal_threshold = max(
-        temporal_params.normal_threshold,
-        0.95
-    );
     if (normal_alignment < repair_normal_threshold) {
         return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
     }
+    let previous_depth = textureLoad(prev_depth_texture, tap_coord, 0).r;
+    if (previous_depth >= 1.0) {
+        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
+    }
 
-    let view_index = u32(frame_info.view_index);
     let previous_position = reconstruct_prev_world_position(
         coord_to_uv(tap_coord, resolution),
         previous_depth,
@@ -138,27 +160,20 @@ fn surface_cache_history_repair_candidate(
     let previous_linear_depth = abs(
         (view_buffer[view_index].view_matrix * vec4<f32>(previous_position, 1.0)).z
     );
-    let inverse_depth = 1.0 / max(current_linear_depth, 1e-3);
     let relative_depth_delta = abs(
         previous_linear_depth - current_linear_depth
     ) * inverse_depth;
     let position_delta = previous_position - current_position;
-    let relative_position_delta = length(position_delta) * inverse_depth;
     let relative_plane_delta = abs(dot(position_delta, current_normal)) *
         inverse_depth;
-    let repair_depth_threshold = max(
-        temporal_params.depth_threshold * 2.0,
-        0.01
-    );
-    let repair_plane_threshold = max(
-        temporal_params.depth_threshold * 0.5,
-        0.005
-    );
     if (
         relative_depth_delta > repair_depth_threshold ||
-        relative_position_delta > repair_depth_threshold ||
         relative_plane_delta > repair_plane_threshold
     ) {
+        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
+    }
+    let relative_position_delta = length(position_delta) * inverse_depth;
+    if (relative_position_delta > repair_depth_threshold) {
         return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
     }
 
@@ -167,7 +182,9 @@ fn surface_cache_history_repair_candidate(
     let plane_score = relative_plane_delta / repair_plane_threshold;
     let normal_score = (1.0 - normal_alignment) /
         max(1.0 - repair_normal_threshold, 1e-3);
-    let spatial_score = spatial_distance / max(search_radius, 1.0);
+    // Distance is needed only for candidates that survived every geometry test.
+    let spatial_score = length(vec2<f32>(tap_offset)) /
+        search_radius_denominator;
     return SurfaceCacheHistoryRepair(
         history,
         depth_score + position_score + plane_score +
@@ -184,9 +201,24 @@ fn surface_cache_repair_history(
     current_position: vec3<f32>,
     current_normal: vec3<f32>,
     current_linear_depth: f32,
-    search_radius: i32
+    search_radius: i32,
+    view_index: u32
 ) -> SurfaceCacheHistoryRepair {
     var best = SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
+    let inverse_depth = 1.0 / max(current_linear_depth, 1e-3);
+    let repair_normal_threshold = max(
+        temporal_params.normal_threshold,
+        0.95
+    );
+    let repair_depth_threshold = max(
+        temporal_params.depth_threshold * 2.0,
+        0.01
+    );
+    let repair_plane_threshold = max(
+        temporal_params.depth_threshold * 0.5,
+        0.005
+    );
+    let search_radius_denominator = max(f32(search_radius), 1.0);
     for (var tap_y = -2; tap_y <= 2; tap_y = tap_y + 1) {
         for (var tap_x = -2; tap_x <= 2; tap_x = tap_x + 1) {
             if (tap_x == 0 && tap_y == 0) {
@@ -202,8 +234,13 @@ fn surface_cache_repair_history(
                 current_position,
                 current_normal,
                 current_linear_depth,
-                length(vec2<f32>(tap_offset)),
-                f32(search_radius)
+                tap_offset,
+                inverse_depth,
+                repair_normal_threshold,
+                repair_depth_threshold,
+                repair_plane_threshold,
+                search_radius_denominator,
+                view_index
             );
             if (candidate.score < best.score) {
                 best = candidate;
@@ -219,13 +256,17 @@ fn surface_cache_repair_history(
 fn surface_cache_reconstruct_current(
     coord: vec2<i32>,
     resolution: vec2<u32>,
+    center: vec4<f32>,
     current_normal: vec3<f32>,
+    current_depth: f32,
     current_linear_depth: f32,
-    view_index: u32
+    view_index: u32,
+    collect_luminance: bool
 ) -> SurfaceCacheCurrentEstimate {
     let tap_stride = max(i32(temporal_params.spatial_filter_radius + 0.5), 1);
     let kernel = vec3<f32>(0.27901, 0.44198, 0.27901);
     let depth_sigma = max(temporal_params.depth_threshold * 0.5, 1e-4);
+    let maximum_coord = vec2<i32>(resolution) - vec2<i32>(1);
 
     var color_sum = vec3<f32>(0.0);
     var color_weight_sum = 0.0;
@@ -242,35 +283,48 @@ fn surface_cache_reconstruct_current(
             let tap_coord = clamp(
                 coord + vec2<i32>(tap_x, tap_y) * tap_stride,
                 vec2<i32>(0),
-                vec2<i32>(resolution) - vec2<i32>(1)
+                maximum_coord
             );
-            let tap = textureLoad(current_diffuse, tap_coord, 0);
+            let center_tap = tap_x == 0 && tap_y == 0;
+            var tap = center;
+            if (!center_tap) {
+                tap = textureLoad(current_diffuse, tap_coord, 0);
+            }
             if (tap.w <= 0.0) {
                 continue;
             }
 
-            let tap_normal_data = textureLoad(gbuffer_normal, tap_coord, 0).xyz;
-            if (dot(tap_normal_data, tap_normal_data) <= 1e-8) {
-                continue;
+            var tap_normal = current_normal;
+            if (!center_tap) {
+                let tap_normal_data = textureLoad(gbuffer_normal, tap_coord, 0).xyz;
+                if (dot(tap_normal_data, tap_normal_data) <= 1e-8) {
+                    continue;
+                }
+                tap_normal = normalize(tap_normal_data);
             }
-            let tap_normal = safe_normalize(tap_normal_data);
             let normal_alignment = dot(current_normal, tap_normal);
             if (normal_alignment < temporal_params.normal_threshold) {
                 continue;
             }
 
-            let tap_depth = textureLoad(depth_texture, tap_coord, 0).r;
+            var tap_depth = current_depth;
+            if (!center_tap) {
+                tap_depth = textureLoad(depth_texture, tap_coord, 0).r;
+            }
             if (tap_depth >= 1.0) {
                 continue;
             }
-            let tap_position = reconstruct_world_position(
-                coord_to_uv(tap_coord, resolution),
-                tap_depth,
-                view_index
-            );
-            let tap_linear_depth = abs(
-                (view_buffer[view_index].view_matrix * vec4<f32>(tap_position, 1.0)).z
-            );
+            var tap_linear_depth = current_linear_depth;
+            if (!center_tap) {
+                let tap_position = reconstruct_world_position(
+                    coord_to_uv(tap_coord, resolution),
+                    tap_depth,
+                    view_index
+                );
+                tap_linear_depth = abs(
+                    (view_buffer[view_index].view_matrix * vec4<f32>(tap_position, 1.0)).z
+                );
+            }
             let relative_depth_delta = abs(
                 tap_linear_depth - current_linear_depth
             ) / max(current_linear_depth, 1e-3);
@@ -296,7 +350,7 @@ fn surface_cache_reconstruct_current(
             confidence_sum += tap.w * geometry_weight;
             geometry_weight_sum += geometry_weight;
 
-            if (tap.w >= 2.0) {
+            if (collect_luminance && tap.w >= 2.0) {
                 let tap_luminance = luminance(tap.xyz);
                 luminance_sum += tap_luminance;
                 luminance_squared_sum += tap_luminance * tap_luminance;
@@ -307,7 +361,6 @@ fn surface_cache_reconstruct_current(
         }
     }
 
-    let center = textureLoad(current_diffuse, coord, 0);
     var reconstructed = center;
     if (color_weight_sum > 1e-5 && geometry_weight_sum > 1e-5) {
         reconstructed = vec4<f32>(
@@ -325,6 +378,18 @@ fn surface_cache_reconstruct_current(
     );
 }
 
+fn surface_cache_reliability(sample_count: f32) -> f32 {
+    // Converged cache taps dominate this path. Avoid a square root whenever
+    // clamp would select either endpoint exactly.
+    if (sample_count >= 32.0) {
+        return 1.0;
+    }
+    if (sample_count <= 0.5) {
+        return 0.125;
+    }
+    return sqrt(sample_count / 32.0);
+}
+
 // When no temporal source exists, widen the current-frame reconstruction over
 // four à-trous scales. The sparse footprint combines many independently
 // gathered cache cells without paying this cost on temporally stable pixels.
@@ -334,13 +399,16 @@ fn surface_cache_reconstruct_disocclusion(
     current_position: vec3<f32>,
     current_normal: vec3<f32>,
     current_linear_depth: f32,
-    view_index: u32
+    view_index: u32,
+    center: vec4<f32>
 ) -> vec4<f32> {
     let radii = array<i32, 4>(2, 4, 8, 16);
     var color_sum = vec3<f32>(0.0);
     var color_weight_sum = 0.0;
     var sample_count_sum = 0.0;
     var geometry_weight_sum = 0.0;
+    let inverse_depth = 1.0 / max(current_linear_depth, 1e-3);
+    let plane_threshold = temporal_params.depth_threshold * 0.5;
 
     for (var scale_index = 0u; scale_index < 4u; scale_index = scale_index + 1u) {
         let radius = radii[scale_index];
@@ -360,14 +428,18 @@ fn surface_cache_reconstruct_disocclusion(
                 }
 
                 let tap = textureLoad(current_diffuse, tap_coord, 0);
-                let tap_normal_data = textureLoad(gbuffer_normal, tap_coord, 0).xyz;
-                if (
-                    tap.w <= 0.0 ||
-                    dot(tap_normal_data, tap_normal_data) <= 1e-8
-                ) {
+                if (tap.w <= 0.0) {
                     continue;
                 }
-                let tap_normal = safe_normalize(tap_normal_data);
+                let tap_normal_data = textureLoad(
+                    gbuffer_normal,
+                    tap_coord,
+                    0
+                ).xyz;
+                if (dot(tap_normal_data, tap_normal_data) <= 1e-8) {
+                    continue;
+                }
+                let tap_normal = normalize(tap_normal_data);
                 let normal_alignment = dot(current_normal, tap_normal);
                 if (normal_alignment < temporal_params.normal_threshold) {
                     continue;
@@ -385,7 +457,6 @@ fn surface_cache_reconstruct_disocclusion(
                 let tap_linear_depth = abs(
                     (view_buffer[view_index].view_matrix * vec4<f32>(tap_position, 1.0)).z
                 );
-                let inverse_depth = 1.0 / max(current_linear_depth, 1e-3);
                 let relative_depth_delta = abs(
                     tap_linear_depth - current_linear_depth
                 ) * inverse_depth;
@@ -395,7 +466,7 @@ fn surface_cache_reconstruct_disocclusion(
                 )) * inverse_depth;
                 if (
                     relative_depth_delta > temporal_params.depth_threshold ||
-                    relative_plane_delta > temporal_params.depth_threshold * 0.5
+                    relative_plane_delta > plane_threshold
                 ) {
                     continue;
                 }
@@ -411,7 +482,7 @@ fn surface_cache_reconstruct_disocclusion(
                 let geometry_weight = scale_weight * depth_weight * normal_weight;
                 // Sample count is used only as a denoiser reliability signal;
                 // it does not alter cache LOD selection or fallback behavior.
-                let reliability = clamp(sqrt(tap.w / 32.0), 0.125, 1.0);
+                let reliability = surface_cache_reliability(tap.w);
                 let color_weight = geometry_weight * reliability;
                 color_sum += tap.xyz * color_weight;
                 color_weight_sum += color_weight;
@@ -421,9 +492,8 @@ fn surface_cache_reconstruct_disocclusion(
         }
     }
 
-    let center = textureLoad(current_diffuse, coord, 0);
     if (center.w > 0.0) {
-        let center_reliability = clamp(sqrt(center.w / 32.0), 0.125, 1.0);
+        let center_reliability = surface_cache_reliability(center.w);
         color_sum += center.xyz * center_reliability;
         color_weight_sum += center_reliability;
         sample_count_sum += center.w;
@@ -446,31 +516,25 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let coord = vec2<i32>(gid.xy);
-    let normal_data = textureLoad(gbuffer_normal, coord, 0);
-    if (dot(normal_data.xyz, normal_data.xyz) <= 1e-8) {
+    let normal_data = textureLoad(gbuffer_normal, coord, 0).xyz;
+    if (dot(normal_data, normal_data) <= 1e-8) {
         textureStore(output_diffuse, coord, vec4<f32>(0.0));
         return;
     }
 
     let view_index = u32(frame_info.view_index);
     let uv = coord_to_uv(coord, resolution);
+    let current_depth = textureLoad(depth_texture, coord, 0).r;
     let current_position = reconstruct_world_position(
         uv,
-        textureLoad(depth_texture, coord, 0).r,
+        current_depth,
         view_index
     );
     let current_linear_depth = abs(
         (view_buffer[view_index].view_matrix * vec4<f32>(current_position, 1.0)).z
     );
-    let current_normal = safe_normalize(normal_data.xyz);
-    let current_estimate = surface_cache_reconstruct_current(
-        coord,
-        resolution,
-        current_normal,
-        current_linear_depth,
-        view_index
-    );
-    var current = current_estimate.value;
+    let current_normal = normalize(normal_data);
+    let center = textureLoad(current_diffuse, coord, 0);
     let motion = textureLoad(motion_texture, coord, 0).xy;
     let previous_uv = uv + vec2<f32>(-0.5 * motion.x, 0.5 * motion.y);
     let previous_pixel = previous_uv * vec2<f32>(resolution) - vec2<f32>(0.5);
@@ -488,35 +552,44 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         bilinear_weights.x,
         resolution,
         current_normal,
-        current_linear_depth
+        current_linear_depth,
+        view_index
     );
+    var history_sum = tap_00.value;
+    var history_weight = tap_00.weight;
     let tap_10 = surface_cache_history_tap(
         previous_base + vec2<i32>(1, 0),
         bilinear_weights.y,
         resolution,
         current_normal,
-        current_linear_depth
+        current_linear_depth,
+        view_index
     );
+    history_sum += tap_10.value;
+    history_weight += tap_10.weight;
     let tap_01 = surface_cache_history_tap(
         previous_base + vec2<i32>(0, 1),
         bilinear_weights.z,
         resolution,
         current_normal,
-        current_linear_depth
+        current_linear_depth,
+        view_index
     );
+    history_sum += tap_01.value;
+    history_weight += tap_01.weight;
     let tap_11 = surface_cache_history_tap(
         previous_base + vec2<i32>(1, 1),
         bilinear_weights.w,
         resolution,
         current_normal,
-        current_linear_depth
+        current_linear_depth,
+        view_index
     );
-    var history_weight = tap_00.weight + tap_10.weight +
-        tap_01.weight + tap_11.weight;
+    history_sum += tap_11.value;
+    history_weight += tap_11.weight;
     var history = vec4<f32>(0.0);
     if (history_weight > 1e-5) {
-        history = (tap_00.value + tap_10.value + tap_01.value + tap_11.value) /
-            history_weight;
+        history = history_sum / history_weight;
     } else {
         let motion_distance_pixels = length(
             previous_pixel - vec2<f32>(coord)
@@ -532,7 +605,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             current_position,
             current_normal,
             current_linear_depth,
-            repair_radius
+            repair_radius,
+            view_index
         );
         if (repair.score < 1e19) {
             // Repaired history is a temporary bridge, not an authoritative
@@ -543,19 +617,33 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    if (history_weight <= 1e-5) {
+    let history_valid = history_weight > 1e-5;
+    // Luminance moments are consumed only by the history-clipping path. True
+    // disocclusions skip that arithmetic while retaining the same reconstruction.
+    let current_estimate = surface_cache_reconstruct_current(
+        coord,
+        resolution,
+        center,
+        current_normal,
+        current_depth,
+        current_linear_depth,
+        view_index,
+        history_valid
+    );
+    var current = current_estimate.value;
+    if (!history_valid) {
         current = surface_cache_reconstruct_disocclusion(
             coord,
             resolution,
             current_position,
             current_normal,
             current_linear_depth,
-            view_index
+            view_index,
+            center
         );
     }
 
     let current_valid = current.w >= 2.0;
-    let history_valid = history_weight > 1e-5;
     if (!current_valid) {
         // Preserve valid reprojection while the current cache is still
         // underconverged, but do not turn a true disocclusion black when the

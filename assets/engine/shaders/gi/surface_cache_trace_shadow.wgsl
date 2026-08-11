@@ -13,7 +13,6 @@
 @group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
 @group(1) @binding(9) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
-@group(1) @binding(10) var<uniform> ray_batch: SurfaceCacheRayBatchParams;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(
@@ -21,32 +20,28 @@ fn cs(
     @builtin(local_invocation_index) local_idx: u32,
 ) {
     bvh_stack_lane = local_idx;
-    let local_ray_index = gid.x;
-    let rays_per_patch = surface_cache_ray_batch_rays_per_patch(
-        counters,
-        ray_batch
-    );
-    let active_index = local_ray_index / rays_per_patch;
-    if (
-        active_index >= surface_cache_ray_batch_patch_count(counters, ray_batch)
-    ) {
+    if (gid.x >= surface_cache_total_ray_count(counters, surface_cache_params)) {
         return;
     }
-    let ray_data_index = surface_cache_ray_batch_data_index(
-        local_ray_index,
+    let work = surface_cache_ray_work(
+        gid.x,
         arrayLength(&radiance_info),
-        ray_batch
+        counters,
+        surface_cache_params
     );
+    let ray_data_index = work.data_index;
+    let shadow_state = radiance_info[ray_data_index].shadow_radiance.w;
+    let shadow_direction = radiance_info[ray_data_index].shadow_direction;
     if (
-        radiance_info[ray_data_index].shadow_radiance.w != 1.0 ||
-        radiance_info[ray_data_index].shadow_direction.w <= 0.0
+        shadow_state != 1.0 ||
+        shadow_direction.w <= 0.0
     ) {
         return;
     }
 
     var ray: Ray;
     ray.origin_and_tmin = radiance_info[ray_data_index].shadow_origin;
-    ray.direction_and_tmax = radiance_info[ray_data_index].shadow_direction;
+    ray.direction_and_tmax = shadow_direction;
     ray.inv_direction = vec4<f32>(
         1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
         1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),

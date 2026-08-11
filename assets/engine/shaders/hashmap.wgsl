@@ -76,12 +76,6 @@ fn hashmap_sanitize_checksum(checksum: u32) -> u32 {
     return checksum;
 }
 
-// Linear probing intentionally keeps adjacent reads cache coherent. Wrapping
-// gives every key the full bounded search window, including keys near the end.
-fn hashmap_probe_index(hash_value: u32, probe: u32, capacity: u32) -> u32 {
-    return ((hash_value % capacity) + probe) % capacity;
-}
-
 fn hashmap_search_count(requested_count: u32, capacity: u32) -> u32 {
     return min(max(requested_count, 1u), capacity);
 }
@@ -168,8 +162,8 @@ fn hashmap_find(
     requested_search_count: u32
 ) -> u32 {
     let search_count = hashmap_search_count(requested_search_count, capacity);
+    var entry_index = key.hash_value % capacity;
     for (var probe = 0u; probe < search_count; probe = probe + 1u) {
-        let entry_index = hashmap_probe_index(key.hash_value, probe, capacity);
         let checksum = (*entries)[entry_index].checksum;
         if (checksum == key.checksum) {
             return entry_index;
@@ -177,6 +171,7 @@ fn hashmap_find(
         if (checksum == HASHMAP_EMPTY_CHECKSUM) {
             break;
         }
+        entry_index = select(entry_index + 1u, 0u, entry_index + 1u == capacity);
     }
     return HASHMAP_INVALID_INDEX;
 }
@@ -193,17 +188,26 @@ fn hashmap_find_or_claim(
     let search_count = hashmap_search_count(requested_search_count, capacity);
     var reclaim_index = HASHMAP_INVALID_INDEX;
     var reclaim_checksum = HASHMAP_EMPTY_CHECKSUM;
+    var entry_index = key.hash_value % capacity;
 
     for (var probe = 0u; probe < search_count; probe = probe + 1u) {
-        let entry_index = hashmap_probe_index(key.hash_value, probe, capacity);
         let checksum = hashmap_atomic_checksum(entries, entry_index);
         if (checksum == key.checksum) {
+            let update_offset = hashmap_atomic_word_offset(entry_index, 2u);
+            // Same-frame duplicates dominate feedback traffic. Keep their hot
+            // path read-only instead of issuing two contended atomic writes.
+            if (atomicLoad(&(*entries)[update_offset]) == current_frame) {
+                return HashMapResult(
+                    entry_index,
+                    HASHMAP_RESULT_ALREADY_UPDATED
+                );
+            }
             atomicStore(
                 &(*entries)[hashmap_atomic_word_offset(entry_index, 1u)],
                 current_frame
             );
             let previous_update_frame = atomicExchange(
-                &(*entries)[hashmap_atomic_word_offset(entry_index, 2u)],
+                &(*entries)[update_offset],
                 current_frame
             );
             if (previous_update_frame == current_frame) {
@@ -228,6 +232,7 @@ fn hashmap_find_or_claim(
         if (is_empty) {
             break;
         }
+        entry_index = select(entry_index + 1u, 0u, entry_index + 1u == capacity);
     }
 
     if (reclaim_index != HASHMAP_INVALID_INDEX) {

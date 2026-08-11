@@ -1,19 +1,118 @@
+fn surface_cache_dominant_axis(normal: vec3<f32>) -> u32 {
+    let absolute_normal = abs(normal);
+    return select(
+        select(2u, 1u, absolute_normal.y >= absolute_normal.z),
+        0u,
+        absolute_normal.x >= max(absolute_normal.y, absolute_normal.z)
+    );
+}
+
+struct SurfaceCacheLookupContext {
+    receiver_position: vec3<f32>,
+    receiver_normal: vec3<f32>,
+    descriptor_normal: vec3<f32>,
+    directional_bin: u32,
+    dominant_axis: u32,
+    descriptor_dominant_axis: u32,
+    hash_capacity: u32,
+    hash_search_count: u32,
+};
+
+fn surface_cache_lookup_context(
+    position: vec3<f32>,
+    normal: vec3<f32>
+) -> SurfaceCacheLookupContext {
+    // All lookup entry points validate or construct a nonzero surface normal.
+    // normalize therefore matches safe_normalize's selected result without its
+    // additional length test at each normalization stage.
+    let receiver_normal = normalize(normal);
+    let descriptor_normal = normalize(receiver_normal);
+    return SurfaceCacheLookupContext(
+        position,
+        receiver_normal,
+        descriptor_normal,
+        // directional_bin normalized the same receiver again. Reuse the exact
+        // normalized value already needed by descriptor quantization.
+        surface_cache_directional_bin_normalized(descriptor_normal),
+        surface_cache_dominant_axis(receiver_normal),
+        surface_cache_dominant_axis(descriptor_normal),
+        max(u32(surface_cache_params.total_patch_count), 1u),
+        surface_cache_hash_search_count(surface_cache_params)
+    );
+}
+
+fn surface_cache_lookup_context_normalized(
+    position: vec3<f32>,
+    normal: vec3<f32>
+) -> SurfaceCacheLookupContext {
+    let dominant_axis = surface_cache_dominant_axis(normal);
+    // Resolve already normalizes its G-buffer normal. Keeping that invariant
+    // explicit avoids two redundant reciprocal-square-root sequences per pixel.
+    return SurfaceCacheLookupContext(
+        position,
+        normal,
+        normal,
+        surface_cache_directional_bin_normalized(normal),
+        dominant_axis,
+        dominant_axis,
+        max(u32(surface_cache_params.total_patch_count), 1u),
+        surface_cache_hash_search_count(surface_cache_params)
+    );
+}
+
+fn surface_cache_descriptor_offset_for_context(
+    context: SurfaceCacheLookupContext,
+    cell_size: f32
+) -> vec3<f32> {
+    let bias = max(surface_cache_params.cache_normal_bias, 0.0) * cell_size;
+    if (context.descriptor_dominant_axis == 0u) {
+        return vec3<f32>(select(
+            -bias,
+            bias,
+            context.descriptor_normal.x >= 0.0
+        ), 0.0, 0.0);
+    }
+    if (context.descriptor_dominant_axis == 1u) {
+        return vec3<f32>(0.0, select(
+            -bias,
+            bias,
+            context.descriptor_normal.y >= 0.0
+        ), 0.0);
+    }
+    return vec3<f32>(0.0, 0.0, select(
+        -bias,
+        bias,
+        context.descriptor_normal.z >= 0.0
+    ));
+}
+
+fn surface_cache_quantize_context(
+    context: SurfaceCacheLookupContext,
+    cell_exponent: i32
+) -> vec3<i32> {
+    let cell_size = surface_cache_cell_size(cell_exponent);
+    let descriptor_position = context.receiver_position +
+        surface_cache_descriptor_offset_for_context(context, cell_size);
+    return vec3<i32>(floor(descriptor_position / cell_size));
+}
+
 fn surface_cache_find_patch(
     quantized_position: vec3<i32>,
     directional_bin: u32,
-    cell_exponent: i32
+    cell_exponent: i32,
+    capacity: u32,
+    search_count: u32
 ) -> i32 {
     let key = surface_cache_hash_key(
         quantized_position,
         directional_bin,
         cell_exponent
     );
-    let capacity = max(u32(surface_cache_params.total_patch_count), 1u);
     let patch_index = hashmap_find(
         &surface_cache_hashmap,
         key,
         capacity,
-        surface_cache_hash_search_count(surface_cache_params)
+        search_count
     );
     if (
         patch_index != HASHMAP_INVALID_INDEX &&
@@ -30,37 +129,36 @@ fn surface_cache_find_patch(
 }
 
 fn surface_cache_level_history(
-    position: vec3<f32>,
-    normal: vec3<f32>,
+    context: SurfaceCacheLookupContext,
     cell_exponent: i32
 ) -> f32 {
-    let receiver_normal = safe_normalize(normal);
     let patch_index_i = surface_cache_find_patch(
-        surface_cache_quantize_position(
-            position,
-            receiver_normal,
-            cell_exponent,
-            surface_cache_params
-        ),
-        surface_cache_directional_bin(receiver_normal),
-        cell_exponent
+        surface_cache_quantize_context(context, cell_exponent),
+        context.directional_bin,
+        cell_exponent,
+        context.hash_capacity,
+        context.hash_search_count
     );
     if (patch_index_i < 0) {
         return 0.0;
     }
-    let surface_patch = surface_cache[u32(patch_index_i)];
+    let patch_index = u32(patch_index_i);
+    // Exact descriptor matches refer only to initialized patches, whose stored
+    // normals were validated at feedback time.
+    // Feedback is the sole writer and stores an already normalized G-buffer
+    // normal. Avoid renormalizing it for every history query.
+    let patch_normal = surface_cache[patch_index].normal_cell_exponent.xyz;
     if (dot(
-        receiver_normal,
-        safe_normalize(surface_patch.normal_cell_exponent.xyz)
+        context.receiver_normal,
+        patch_normal
     ) < SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD) {
         return 0.0;
     }
-    let position_delta = surface_patch.position_frame.xyz - position;
+    let position_delta = surface_cache[patch_index].position_frame.xyz -
+        context.receiver_position;
     let plane_distance = max(
-        abs(dot(position_delta, receiver_normal)),
-        abs(dot(position_delta, safe_normalize(
-            surface_patch.normal_cell_exponent.xyz
-        )))
+        abs(dot(position_delta, context.receiver_normal)),
+        abs(dot(position_delta, patch_normal))
     );
     if (
         plane_distance > max(
@@ -74,33 +172,43 @@ fn surface_cache_level_history(
     // Feedback snapshots history before this frame's accumulation. Using that
     // value keeps newly allocated cells on the coarse footprint through the
     // resolve that first consumes them, even after their bootstrap rays land.
+    let metadata = surface_cache[patch_index].metadata;
     return select(
-        surface_patch.metadata.w,
-        surface_patch.metadata.y,
-        u32(surface_patch.metadata.z) == u32(surface_cache_params.frame_index)
+        metadata.w,
+        metadata.y,
+        u32(metadata.z) == u32(surface_cache_params.frame_index)
     );
 }
 
-fn surface_cache_native_history(
-    position: vec3<f32>,
-    normal: vec3<f32>,
-    levels: SurfaceCacheCellLevels
+fn surface_cache_native_history_exponents(
+    context: SurfaceCacheLookupContext,
+    fine_exponent: i32,
+    coarse_exponent: i32
 ) -> f32 {
     let fine_history = surface_cache_level_history(
-        position,
-        normal,
-        levels.fine_exponent
+        context,
+        fine_exponent
     );
-    if (levels.coarse_exponent == levels.fine_exponent) {
+    if (coarse_exponent == fine_exponent) {
         return fine_history;
     }
     return min(
         fine_history,
         surface_cache_level_history(
-            position,
-            normal,
-            levels.coarse_exponent
+            context,
+            coarse_exponent
         )
+    );
+}
+
+fn surface_cache_native_history(
+    context: SurfaceCacheLookupContext,
+    levels: SurfaceCacheCellLevels
+) -> f32 {
+    return surface_cache_native_history_exponents(
+        context,
+        levels.fine_exponent,
+        levels.coarse_exponent
     );
 }
 
@@ -110,13 +218,8 @@ fn surface_cache_corner_descriptor(
     tangent_cell: vec2<i32>,
     dominant_axis: u32,
     cell_size: f32,
-    params: SurfaceCacheParams
+    descriptor_offset: vec3<f32>
 ) -> vec3<i32> {
-    let descriptor_offset = surface_cache_descriptor_offset(
-        normal,
-        cell_size,
-        params
-    );
     let descriptor_tangent_center =
         (vec2<f32>(tangent_cell) + vec2<f32>(0.5)) * cell_size;
     if (dominant_axis == 0u) {
@@ -171,13 +274,34 @@ const SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD: f32 = 0.82;
 const SURFACE_CACHE_LOOKUP_PLANE_LIMIT_SCALE: f32 = 0.45;
 const SURFACE_CACHE_LOOKUP_PLANE_SIGMA_SCALE: f32 = 0.2;
 
-fn surface_cache_dominant_axis(normal: vec3<f32>) -> u32 {
-    let absolute_normal = abs(normal);
-    return select(
-        select(2u, 1u, absolute_normal.y >= absolute_normal.z),
-        0u,
-        absolute_normal.x >= max(absolute_normal.y, absolute_normal.z)
-    );
+fn surface_cache_evaluate_patch_irradiance(
+    patch_index: u32,
+    normal: vec3<f32>
+) -> vec3<f32> {
+    let base_offset = patch_index * SURFACE_CACHE_SH_PATCH_SIZE_U32;
+    let packed_0 = unpack2x16float(surface_cache_sh[base_offset]);
+    let packed_1 = unpack2x16float(surface_cache_sh[base_offset + 1u]);
+    let packed_2 = unpack2x16float(surface_cache_sh[base_offset + 2u]);
+    let packed_3 = unpack2x16float(surface_cache_sh[base_offset + 3u]);
+    let packed_4 = unpack2x16float(surface_cache_sh[base_offset + 4u]);
+    let packed_5 = unpack2x16float(surface_cache_sh[base_offset + 5u]);
+    let coefficient_0 = vec3<f32>(packed_0.x, packed_0.y, packed_1.x);
+    let coefficient_1 = vec3<f32>(packed_1.y, packed_2.x, packed_2.y);
+    let coefficient_2 = vec3<f32>(packed_3.x, packed_3.y, packed_4.x);
+    let coefficient_3 = vec3<f32>(packed_4.y, packed_5.x, packed_5.y);
+
+    // Evaluate the same convolved L1 dot product directly. This avoids
+    // materializing three temporary SH structs and indexing their arrays for
+    // every accepted reconstruction tap.
+    var irradiance = vec3<f32>(SH_BASIS_L0) *
+        (coefficient_0 * SH_COSINE_A0);
+    irradiance += vec3<f32>(SH_BASIS_L1 * normal.y) *
+        (coefficient_1 * SH_COSINE_A1);
+    irradiance += vec3<f32>(SH_BASIS_L1 * normal.z) *
+        (coefficient_2 * SH_COSINE_A1);
+    irradiance += vec3<f32>(SH_BASIS_L1 * normal.x) *
+        (coefficient_3 * SH_COSINE_A1);
+    return irradiance;
 }
 
 fn surface_cache_tangent_components(value: vec3<f32>, dominant_axis: u32) -> vec2<f32> {
@@ -192,72 +316,77 @@ fn surface_cache_tangent_components(value: vec3<f32>, dominant_axis: u32) -> vec
 
 fn surface_cache_sample_descriptor(
     descriptor: vec3<i32>,
-    directional_bin: u32,
-    receiver_position: vec3<f32>,
-    receiver_normal: vec3<f32>,
+    context: SurfaceCacheLookupContext,
     cell_exponent: i32,
-    cell_size: f32
+    plane_limit: f32,
+    inverse_plane_sigma: f32
 ) -> SurfaceCacheTapSample {
     let patch_index_i = surface_cache_find_patch(
         descriptor,
-        directional_bin,
-        cell_exponent
+        context.directional_bin,
+        cell_exponent,
+        context.hash_capacity,
+        context.hash_search_count
     );
     if (patch_index_i < 0) {
         return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
     }
 
     let patch_index = u32(patch_index_i);
-    let surface_patch = surface_cache[patch_index];
-    let sample_count = surface_patch.history.x;
-    let patch_normal = safe_normalize(surface_patch.normal_cell_exponent.xyz);
-    let normal_alignment = dot(receiver_normal, patch_normal);
-    if (
-        sample_count <= 0.0 ||
-        normal_alignment < SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD
-    ) {
+    let sample_count = surface_cache[patch_index].history.x;
+    // Newly allocated patches are common during camera movement. Reject them
+    // before normalizing geometry or evaluating any spatial weights.
+    if (sample_count <= 0.0) {
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+    }
+    // Patch normals have already been normalized by the feedback pass. This
+    // removes the most expensive repeated arithmetic in the accepted-tap path.
+    let patch_normal = surface_cache[patch_index].normal_cell_exponent.xyz;
+    let normal_alignment = dot(context.receiver_normal, patch_normal);
+    if (normal_alignment < SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD) {
         return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
     }
 
-    let position_delta = surface_patch.position_frame.xyz - receiver_position;
+    let position_delta = surface_cache[patch_index].position_frame.xyz -
+        context.receiver_position;
     let plane_distance = max(
-        abs(dot(position_delta, receiver_normal)),
+        abs(dot(position_delta, context.receiver_normal)),
         abs(dot(position_delta, patch_normal))
-    );
-    let plane_limit = max(
-        cell_size * SURFACE_CACHE_LOOKUP_PLANE_LIMIT_SCALE,
-        0.002
     );
     if (plane_distance > plane_limit) {
         return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
     }
-    let plane_sigma = max(
-        cell_size * SURFACE_CACHE_LOOKUP_PLANE_SIGMA_SCALE,
-        0.001
-    );
-    let normalized_plane_distance = plane_distance / plane_sigma;
+    let normalized_plane_distance = plane_distance * inverse_plane_sigma;
     let plane_weight = exp(
         -0.5 * normalized_plane_distance * normalized_plane_distance
     );
-    let normal_weight = smoothstep(
-        SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD,
-        0.98,
-        normal_alignment
-    );
-    let history_weight = smoothstep(
-        0.0,
-        SURFACE_CACHE_MIN_QUERY_SAMPLES,
-        sample_count
-    );
+    // Most accepted taps are well-aligned and converged. Preserve smoothstep
+    // inside its transition while bypassing it at the exact saturated endpoint.
+    var normal_weight = 1.0;
+    if (normal_alignment < 0.98) {
+        normal_weight = smoothstep(
+            SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD,
+            0.98,
+            normal_alignment
+        );
+    }
+    var history_weight = 1.0;
+    if (sample_count < SURFACE_CACHE_MIN_QUERY_SAMPLES) {
+        history_weight = smoothstep(
+            0.0,
+            SURFACE_CACHE_MIN_QUERY_SAMPLES,
+            sample_count
+        );
+    }
     let geometry_weight = plane_weight * normal_weight * normal_weight * history_weight;
     if (geometry_weight <= 1e-5) {
         return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
     }
 
     let irradiance = max(
-        sh_l1_rgb_calculate_irradiance(
-            surface_cache_sh_patch_read(&surface_cache_sh, patch_index),
-            receiver_normal
+        surface_cache_evaluate_patch_irradiance(
+            patch_index,
+            context.receiver_normal
         ),
         vec3<f32>(0.0)
     );
@@ -265,23 +394,16 @@ fn surface_cache_sample_descriptor(
 }
 
 fn surface_cache_sample_level_nearest(
-    position: vec3<f32>,
-    normal: vec3<f32>,
+    context: SurfaceCacheLookupContext,
     cell_exponent: i32
 ) -> SurfaceCacheLevelSample {
-    let receiver_normal = safe_normalize(normal);
+    let cell_size = surface_cache_cell_size(cell_exponent);
     let tap = surface_cache_sample_descriptor(
-        surface_cache_quantize_position(
-            position,
-            receiver_normal,
-            cell_exponent,
-            surface_cache_params
-        ),
-        surface_cache_directional_bin(receiver_normal),
-        position,
-        receiver_normal,
+        surface_cache_quantize_context(context, cell_exponent),
+        context,
         cell_exponent,
-        surface_cache_cell_size(cell_exponent)
+        max(cell_size * SURFACE_CACHE_LOOKUP_PLANE_LIMIT_SCALE, 0.002),
+        1.0 / max(cell_size * SURFACE_CACHE_LOOKUP_PLANE_SIGMA_SCALE, 0.001)
     );
     return SurfaceCacheLevelSample(
         vec4<f32>(tap.irradiance, tap.sample_count),
@@ -294,25 +416,30 @@ fn surface_cache_sample_level_nearest(
 // while renormalizing valid taps keeps silhouettes and missing cache entries
 // from darkening the result.
 fn surface_cache_sample_level(
-    position: vec3<f32>,
-    normal: vec3<f32>,
+    context: SurfaceCacheLookupContext,
     cell_exponent: i32
 ) -> SurfaceCacheLevelSample {
-    let receiver_normal = safe_normalize(normal);
-    let directional_bin = surface_cache_directional_bin(receiver_normal);
     let cell_size = surface_cache_cell_size(cell_exponent);
-    let dominant_axis = surface_cache_dominant_axis(receiver_normal);
-    let descriptor_position = position + surface_cache_descriptor_offset(
-        receiver_normal,
-        cell_size,
-        surface_cache_params
+    let dominant_axis = context.dominant_axis;
+    let descriptor_offset = surface_cache_descriptor_offset_for_context(
+        context,
+        cell_size
     );
+    let descriptor_position = context.receiver_position + descriptor_offset;
     let tangent_position = surface_cache_tangent_components(
         descriptor_position,
         dominant_axis
     ) / cell_size - vec2<f32>(0.5);
     let tangent_base = vec2<i32>(floor(tangent_position));
     let tangent_fraction = fract(tangent_position);
+    let plane_limit = max(
+        cell_size * SURFACE_CACHE_LOOKUP_PLANE_LIMIT_SCALE,
+        0.002
+    );
+    let inverse_plane_sigma = 1.0 / max(
+        cell_size * SURFACE_CACHE_LOOKUP_PLANE_SIGMA_SCALE,
+        0.001
+    );
 
     var irradiance_sum = vec3<f32>(0.0);
     var sample_count_sum = 0.0;
@@ -320,28 +447,33 @@ fn surface_cache_sample_level(
     for (var tap_y = 0i; tap_y <= 1i; tap_y = tap_y + 1i) {
         for (var tap_x = 0i; tap_x <= 1i; tap_x = tap_x + 1i) {
             let tap_offset = vec2<i32>(tap_x, tap_y);
-            let descriptor = surface_cache_corner_descriptor(
-                position,
-                receiver_normal,
-                tangent_base + tap_offset,
-                dominant_axis,
-                cell_size,
-                surface_cache_params
-            );
-            let tap = surface_cache_sample_descriptor(
-                descriptor,
-                directional_bin,
-                position,
-                receiver_normal,
-                cell_exponent,
-                cell_size
-            );
             let axis_weight = select(
                 vec2<f32>(1.0) - tangent_fraction,
                 tangent_fraction,
                 tap_offset == vec2<i32>(1)
             );
-            let weight = axis_weight.x * axis_weight.y * tap.geometry_weight;
+            let bilinear_weight = axis_weight.x * axis_weight.y;
+            // Exact zero-weight corners cannot affect the renormalized result.
+            // Skip their hash probes, patch reads, and potential SH evaluation.
+            if (bilinear_weight <= 0.0) {
+                continue;
+            }
+            let descriptor = surface_cache_corner_descriptor(
+                context.receiver_position,
+                context.receiver_normal,
+                tangent_base + tap_offset,
+                dominant_axis,
+                cell_size,
+                descriptor_offset
+            );
+            let tap = surface_cache_sample_descriptor(
+                descriptor,
+                context,
+                cell_exponent,
+                plane_limit,
+                inverse_plane_sigma
+            );
+            let weight = bilinear_weight * tap.geometry_weight;
             irradiance_sum += tap.irradiance * weight;
             sample_count_sum += tap.sample_count * weight;
             weight_sum += weight;
@@ -350,8 +482,7 @@ fn surface_cache_sample_level(
 
     if (weight_sum <= 1e-5) {
         return surface_cache_sample_level_nearest(
-            position,
-            receiver_normal,
+            context,
             cell_exponent
         );
     }
@@ -398,19 +529,31 @@ fn surface_cache_blend_level_samples(
     );
 }
 
-fn surface_cache_sample(
-    position: vec3<f32>,
-    normal: vec3<f32>
+fn surface_cache_sample_context(
+    context: SurfaceCacheLookupContext
 ) -> vec4<f32> {
-    let base_levels = surface_cache_cell_levels(position, surface_cache_params);
-    let levels = surface_cache_history_cell_levels(
-        position,
-        surface_cache_native_history(position, normal, base_levels),
+    // Native blending is never consumed here; only its exponents seed history
+    // selection. Avoid the otherwise unused fract and smoothstep calculation.
+    let base_exponent_value = surface_cache_cell_exponent_value(
+        context.receiver_position,
+        surface_cache_params
+    );
+    let base_fine_exponent = i32(floor(base_exponent_value));
+    let base_coarse_exponent = min(
+        base_fine_exponent + 1,
+        SURFACE_CACHE_MAX_CELL_EXPONENT
+    );
+    let levels = surface_cache_history_cell_levels_from_base(
+        base_exponent_value,
+        surface_cache_native_history_exponents(
+            context,
+            base_fine_exponent,
+            base_coarse_exponent
+        ),
         surface_cache_params
     );
     let fine_sample = surface_cache_sample_level(
-        position,
-        normal,
+        context,
         levels.fine_exponent
     );
     if (levels.coarse_exponent == levels.fine_exponent) {
@@ -418,8 +561,7 @@ fn surface_cache_sample(
     }
 
     let coarse_sample = surface_cache_sample_level(
-        position,
-        normal,
+        context,
         levels.coarse_exponent
     );
     return surface_cache_finalize_sample(
@@ -431,6 +573,24 @@ fn surface_cache_sample(
     );
 }
 
+fn surface_cache_sample(
+    position: vec3<f32>,
+    normal: vec3<f32>
+) -> vec4<f32> {
+    return surface_cache_sample_context(
+        surface_cache_lookup_context(position, normal)
+    );
+}
+
+fn surface_cache_sample_normalized(
+    position: vec3<f32>,
+    normal: vec3<f32>
+) -> vec4<f32> {
+    return surface_cache_sample_context(
+        surface_cache_lookup_context_normalized(position, normal)
+    );
+}
+
 // Cache rays and the visible deferred resolve both consume incident irradiance.
 // The traced hit applies DDGI's diffuse response during recurrence, while the
 // deferred lighting pass applies the visible surface's material response.
@@ -438,23 +598,34 @@ fn surface_cache_sample_nearest_irradiance(
     position: vec3<f32>,
     normal: vec3<f32>
 ) -> vec4<f32> {
-    let base_levels = surface_cache_cell_levels(position, surface_cache_params);
-    let levels = surface_cache_history_cell_levels(
+    let base_exponent_value = surface_cache_cell_exponent_value(
         position,
-        surface_cache_native_history(position, normal, base_levels),
+        surface_cache_params
+    );
+    let base_fine_exponent = i32(floor(base_exponent_value));
+    let base_coarse_exponent = min(
+        base_fine_exponent + 1,
+        SURFACE_CACHE_MAX_CELL_EXPONENT
+    );
+    let context = surface_cache_lookup_context(position, normal);
+    let levels = surface_cache_history_cell_levels_from_base(
+        base_exponent_value,
+        surface_cache_native_history_exponents(
+            context,
+            base_fine_exponent,
+            base_coarse_exponent
+        ),
         surface_cache_params
     );
     let fine_sample = surface_cache_sample_level_nearest(
-        position,
-        normal,
+        context,
         levels.fine_exponent
     );
     if (levels.coarse_exponent == levels.fine_exponent) {
         return surface_cache_finalize_irradiance_sample(fine_sample.value);
     }
     let coarse_sample = surface_cache_sample_level_nearest(
-        position,
-        normal,
+        context,
         levels.coarse_exponent
     );
     return surface_cache_finalize_irradiance_sample(

@@ -55,7 +55,6 @@ fn bvh_trace_blas_closest(
             if (!leaf_is_visible) {
                 let t_leaf = intersect_aabb(&current_ray, node.min.xyz, node.max.xyz);
                 leaf_is_visible = t_leaf.x <= t_leaf.y
-                    && t_leaf.x >= current_ray.origin_and_tmin.w
                     && t_leaf.x < current_ray.direction_and_tmax.w;
             }
 
@@ -89,7 +88,6 @@ fn bvh_trace_blas_closest(
                 child_node.max.xyz
             );
             let is_better_child = t_aabb_child.x <= t_aabb_child.y
-                && t_aabb_child.x >= current_ray.origin_and_tmin.w
                 && t_aabb_child.x < current_ray.direction_and_tmax.w;
 
             let child_idx_1 = u32(node.max.w);
@@ -100,7 +98,6 @@ fn bvh_trace_blas_closest(
                 child_node_1.max.xyz
             );
             let is_better_child_1 = t_aabb_child_1.x <= t_aabb_child_1.y
-                && t_aabb_child_1.x >= current_ray.origin_and_tmin.w
                 && t_aabb_child_1.x < current_ray.direction_and_tmax.w;
 
             if (is_better_child && is_better_child_1) {
@@ -172,7 +169,7 @@ fn bvh_trace_closest(ray: ptr<function, Ray>, tlas_only: bool) -> RayHitCompact 
                 let t_leaf = intersect_aabb(&current_ray, node.min.xyz, node.max.xyz);
                 t_leaf_min = t_leaf.x;
                 leaf_is_visible = t_leaf.x <= t_leaf.y
-                    && max(t_leaf.x, current_ray.origin_and_tmin.w) < result.t_hit;
+                    && t_leaf.x < result.t_hit;
             }
 
             if (leaf_is_visible) {
@@ -209,7 +206,6 @@ fn bvh_trace_closest(ray: ptr<function, Ray>, tlas_only: bool) -> RayHitCompact 
                 child_node.max.xyz
             );
             let is_better_child = t_aabb_child.x <= t_aabb_child.y
-                && t_aabb_child.x >= current_ray.origin_and_tmin.w
                 && t_aabb_child.x < result.t_hit;
 
             let child_idx_1 = u32(node.max.w);
@@ -220,7 +216,6 @@ fn bvh_trace_closest(ray: ptr<function, Ray>, tlas_only: bool) -> RayHitCompact 
                 child_node_1.max.xyz
             );
             let is_better_child_1 = t_aabb_child_1.x <= t_aabb_child_1.y
-                && t_aabb_child_1.x >= current_ray.origin_and_tmin.w
                 && t_aabb_child_1.x < result.t_hit;
 
             if (is_better_child && is_better_child_1) {
@@ -295,20 +290,19 @@ fn bvh_trace_blas_any(
             let v0 = vertex_position(vertex_buffer[v0i]);
             let v1 = vertex_position(vertex_buffer[v1i]);
             let v2 = vertex_position(vertex_buffer[v2i]);
-            let t_tri = intersect_triangle(ray_local, v0, v1, v2).x;
-            if (t_tri >= ray_local.origin_and_tmin.w && t_tri < ray_local.direction_and_tmax.w) {
+            if (intersect_triangle_any(ray_local, v0, v1, v2)) {
                 return true;
             }
         } else {
             let child_idx = u32(node.min.w);
             let child_node = blas_bvh2_nodes[child_idx];
             let t_aabb_child = intersect_aabb(ray_local, child_node.min.xyz, child_node.max.xyz);
-            let is_better_child = t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= ray_local.origin_and_tmin.w && t_aabb_child.x < ray_local.direction_and_tmax.w;
+            let is_better_child = t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x < ray_local.direction_and_tmax.w;
 
             let child_idx_1 = u32(node.max.w);
             let child_node_1 = blas_bvh2_nodes[child_idx_1];
             let t_aabb_child_1 = intersect_aabb(ray_local, child_node_1.min.xyz, child_node_1.max.xyz);
-            let is_better_child_1 = t_aabb_child_1.x <= t_aabb_child_1.y && t_aabb_child_1.x >= ray_local.origin_and_tmin.w && t_aabb_child_1.x < ray_local.direction_and_tmax.w;
+            let is_better_child_1 = t_aabb_child_1.x <= t_aabb_child_1.y && t_aabb_child_1.x < ray_local.direction_and_tmax.w;
 
             if (is_better_child && is_better_child_1) {
                 let child_1_is_nearer = t_aabb_child_1.x < t_aabb_child.x;
@@ -377,12 +371,12 @@ fn bvh_trace_any(ray: ptr<function, Ray>) -> bool {
             let child_idx = u32(current_node.min.w);
             let child_node = tlas_bvh2_bounds[child_idx];
             let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
-            let is_better_child = t_aabb_child.x <= t_aabb_child.y && max(t_aabb_child.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w;
+            let is_better_child = t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x < current_ray.direction_and_tmax.w;
 
             let child_idx_1 = u32(current_node.max.w);
             let child_node_1 = tlas_bvh2_bounds[child_idx_1];
             let t_aabb_child_1 = intersect_aabb(&current_ray, child_node_1.min.xyz, child_node_1.max.xyz);
-            let is_better_child_1 = t_aabb_child_1.x <= t_aabb_child_1.y && max(t_aabb_child_1.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w;
+            let is_better_child_1 = t_aabb_child_1.x <= t_aabb_child_1.y && t_aabb_child_1.x < current_ray.direction_and_tmax.w;
 
             if (is_better_child && is_better_child_1) {
                 let child_1_is_nearer = t_aabb_child_1.x < t_aabb_child.x;
