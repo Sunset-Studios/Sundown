@@ -7,7 +7,8 @@ struct VBAOSettings {
     slice_count: f32,
     sample_count: f32,
     thickness: f32,
-    temporal_response: f32
+    temporal_response: f32,
+    history_valid: f32,
 };
 
 @group(1) @binding(0) var normal_tex: texture_2d<f32>;
@@ -25,8 +26,8 @@ fn is_orthographic_projection(view_index: u32) -> bool {
     return view_buffer[view_index].projection_matrix[3][3] > 0.5;
 }
 
-fn project_view_to_uv(position_vs: vec3<f32>, view_index: u32) -> vec2<f32> {
-    let clip = view_buffer[view_index].projection_matrix * vec4<f32>(position_vs, 1.0);
+fn project_world_to_uv(position_ws: vec3<f32>, view_index: u32) -> vec2<f32> {
+    let clip = view_buffer[view_index].view_projection_matrix * vec4<f32>(position_ws, 1.0);
     let ndc = clip.xy / max(clip.w, epsilon);
     return vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
 }
@@ -41,7 +42,13 @@ fn fast_acos(x: f32) -> f32 {
     return select(PI - value, value, x >= 0.0);
 }
 
-fn slice_rel_cdf_cos(x: f32, normal_angle: f32, normal_cos: f32, positive_side: bool) -> f32 {
+fn slice_rel_cdf_cos(
+    x: f32,
+    normal_angle: f32,
+    normal_cos: f32,
+    normal_sin: f32,
+    positive_side: bool,
+) -> f32 {
     if (x <= 0.0 || x >= 1.0) {
         return clamp(x, 0.0, 1.0);
     }
@@ -54,8 +61,8 @@ fn slice_rel_cdf_cos(x: f32, normal_angle: f32, normal_cos: f32, positive_side: 
     let numerator =
         n0 * normal_cos +
         n1 * cos(normal_angle - 2.0 * phi) +
-        (n2 * normal_angle + (n1 * 2.0) * phi + PI) * sin(normal_angle);
-    let denominator = 4.0 * (normal_cos + normal_angle * sin(normal_angle));
+        (n2 * normal_angle + (n1 * 2.0) * phi + PI) * normal_sin;
+    let denominator = 4.0 * (normal_cos + normal_angle * normal_sin);
 
     return numerator / max(denominator, 1e-5);
 }
@@ -101,16 +108,14 @@ fn sample_slice_dir(normal_vvs: vec3<f32>, rnd01: f32) -> vec2<f32> {
     );
 }
 
-fn make_rng(pixel_coord: vec2<u32>, frame_index: u32) -> u32 {
+fn make_rng(pixel_coord: vec2<u32>) -> u32 {
     return hash(
         (pixel_coord.x * 0x9E3779B9u) ^
-        (pixel_coord.y * 0x85EBCA6Bu) ^
-        (frame_index * 0xC2B2AE35u)
+        (pixel_coord.y * 0x85EBCA6Bu)
     );
 }
 
-fn rnd4(pixel_coord: vec2<u32>, sample_index: u32, frame_index: u32) -> vec4<f32> {
-    let rng = make_rng(pixel_coord, frame_index);
+fn rnd4(rng: u32, sample_index: u32) -> vec4<f32> {
     return vec4<f32>(
         rand_sobol(rng, sample_index, 0u),
         rand_sobol(rng, sample_index, 1u),
@@ -171,12 +176,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let normal_ws = normal_raw / normal_len;
     let position_ws = reconstruct_world_position(current_uv, current_depth, view_index) + normal_ws * settings.bias;
 
-    let position_vs = (view.view_matrix * vec4<f32>(position_ws, 1.0)).xyz;
-    let normal_vs = safe_normalize((view.view_matrix * vec4<f32>(normal_ws, 0.0)).xyz);
-    let view_vec_vs = select(safe_normalize(-position_vs), vec3<f32>(0.0, 0.0, 1.0), orthographic);
+    // Horizon angles are rotation invariant. Keeping them in world space removes a
+    // view-matrix transform from every depth probe in the hottest loop below.
+    let camera_ray_ws = safe_normalize(view.view_direction.xyz);
+    let view_vec_ws = select(
+        safe_normalize(view.view_position.xyz - position_ws),
+        -camera_ray_ws,
+        orthographic
+    );
 
-    let basis_to_vs = orthonormalize(-view_vec_vs);
-    let normal_vvs = transpose(basis_to_vs) * normal_vs;
+    let basis_to_ws = orthonormalize(-view_vec_ws);
+    let normal_vvs = transpose(basis_to_ws) * normal_ws;
     let ray_start_px = vec2<f32>(f32(full_coord.x), f32(full_coord.y)) + 0.5;
 
     let slice_count = clamp(u32(settings.slice_count + 0.5), 1u, 4u);
@@ -185,26 +195,34 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         abs(view.projection_matrix[0][0]) * full_resolution_f.x,
         abs(view.projection_matrix[1][1]) * full_resolution_f.y
     );
-    let view_depth = select(max(-position_vs.z, 1e-3), 1.0, orthographic);
+    let position_vs_z = (view.view_matrix * vec4<f32>(position_ws, 1.0)).z;
+    let view_depth = select(max(-position_vs_z, 1e-3), 1.0, orthographic);
     let ao_radius = max(settings.radius, 1e-4);
+    let ao_radius_rcp = 1.0 / ao_radius;
     let radius_px = ao_radius * projection_scale / view_depth;
     let step_scale = pow(max(radius_px, 1.0), 1.0 / f32(sample_count));
+    // A stable per-pixel scramble lets the Sobol sequence converge over time;
+    // stratification prevents the small slice count from clustering directions.
+    let rng = make_rng(vec2<u32>(u32(full_coord.x), u32(full_coord.y)));
+    let sequence_frame = frame_index & 63u;
+    let slice_rotation = rand_sobol(rng, sequence_frame, 0u);
 
     var ao_accum = 0.0;
     var valid_slice_count = 0u;
 
     for (var slice_index = 0u; slice_index < slice_count; slice_index = slice_index + 1u) {
-        let sample_index = frame_index * slice_count + slice_index;
-        let rnd = rnd4(vec2<u32>(u32(full_coord.x), u32(full_coord.y)), sample_index, frame_index);
+        let sample_index = sequence_frame * slice_count + slice_index;
+        let rnd = rnd4(rng, sample_index);
+        let slice_sample = fract((f32(slice_index) + slice_rotation) / f32(slice_count));
 
-        let local_dir = sample_slice_dir(normal_vvs, rnd.x);
-        let sample_dir_vs = safe_normalize(basis_to_vs * vec3<f32>(local_dir, 0.0));
-        if (length(sample_dir_vs) < 1e-6) {
+        let local_dir = sample_slice_dir(normal_vvs, slice_sample);
+        let sample_dir_ws = safe_normalize(basis_to_ws * vec3<f32>(local_dir, 0.0));
+        if (length(sample_dir_ws) < 1e-6) {
             continue;
         }
 
-        let probe_uv = project_view_to_uv(
-            position_vs + sample_dir_vs * max(view.near * 0.5, 0.05),
+        let probe_uv = project_world_to_uv(
+            position_ws + sample_dir_ws * max(view.near * 0.5, 0.05),
             view_index
         );
         let screen_dir = (probe_uv - current_uv) * full_resolution_f;
@@ -214,20 +232,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         let screen_step_dir = screen_dir / screen_dir_len;
 
-        let slice_normal = safe_normalize(cross(view_vec_vs, sample_dir_vs));
-        let projected_normal = normal_vs - slice_normal * dot(normal_vs, slice_normal);
+        let slice_normal = safe_normalize(cross(view_vec_ws, sample_dir_ws));
+        let projected_normal = normal_ws - slice_normal * dot(normal_ws, slice_normal);
         let projected_normal_len = length(projected_normal);
         if (projected_normal_len < 1e-5) {
             continue;
         }
 
         let projected_normal_rcp_len = 1.0 / projected_normal_len;
-        let normal_cos = clamp(dot(projected_normal, view_vec_vs) * projected_normal_rcp_len, -1.0, 1.0);
+        let normal_cos = clamp(dot(projected_normal, view_vec_ws) * projected_normal_rcp_len, -1.0, 1.0);
         let tangent = cross(slice_normal, projected_normal);
-        let angle_sign = select(1.0, -1.0, dot(view_vec_vs, tangent) < 0.0);
+        let angle_sign = select(1.0, -1.0, dot(view_vec_ws, tangent) < 0.0);
         let normal_angle = angle_sign * fast_acos(normal_cos);
+        let normal_sin = sin(normal_angle);
         let angle_offset = normal_angle * INV_PI + 0.5;
-        let point_jitter = rnd.w * OCCLUSION_BIN_RCP;
+        let point_jitter = (rnd.w - 0.5) * OCCLUSION_BIN_RCP;
 
         var occ_bits = 0u;
         var side_jitter = rnd.z;
@@ -255,37 +274,41 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let sample_uv_center =
                     (vec2<f32>(f32(sample_coord.x), f32(sample_coord.y)) + 0.5) / full_resolution_f;
                 let sample_position_ws = reconstruct_world_position(sample_uv_center, sample_depth, view_index);
-                let sample_position_vs = (view.view_matrix * vec4<f32>(sample_position_ws, 1.0)).xyz;
-                let delta_front = sample_position_vs - position_vs;
+                let delta_front = sample_position_ws - position_ws;
                 let delta_front_len_sq = dot(delta_front, delta_front);
                 if (delta_front_len_sq <= 1e-8) {
                     continue;
                 }
 
-                let sample_distance = sqrt(delta_front_len_sq);
-                let distance_fade = clamp(1.0 - sample_distance / ao_radius, 0.0, 1.0);
-                let sample_dir_from_surface = delta_front / sample_distance;
+                let delta_front_rcp_len = inverseSqrt(delta_front_len_sq);
+                let sample_distance = delta_front_len_sq * delta_front_rcp_len;
+                let distance_fade = clamp(1.0 - sample_distance * ao_radius_rcp, 0.0, 1.0);
+                let sample_dir_from_surface = delta_front * delta_front_rcp_len;
                 let normal_direction_weight = mix(
                     0.35,
                     1.0,
-                    smoothstep(0.0, 0.45, dot(normal_vs, sample_dir_from_surface))
+                    smoothstep(0.0, 0.45, dot(normal_ws, sample_dir_from_surface))
                 );
                 let occlusion_weight = distance_fade * distance_fade * normal_direction_weight;
                 if (occlusion_weight <= 1e-4) {
                     continue;
                 }
 
-                let sample_view_ray = select(safe_normalize(sample_position_vs), -view_vec_vs, orthographic);
-                let sample_back_position_vs = sample_position_vs + sample_view_ray * settings.thickness;
-                let delta_back = sample_back_position_vs - position_vs;
+                let sample_view_ray = select(
+                    safe_normalize(sample_position_ws - view.view_position.xyz),
+                    camera_ray_ws,
+                    orthographic
+                );
+                let sample_back_position_ws = sample_position_ws + sample_view_ray * settings.thickness;
+                let delta_back = sample_back_position_ws - position_ws;
                 let delta_back_len_sq = dot(delta_back, delta_back);
                 if (delta_back_len_sq <= 1e-8) {
                     continue;
                 }
 
                 let horizon_cos = vec2<f32>(
-                    dot(delta_front * inverseSqrt(delta_front_len_sq), view_vec_vs),
-                    dot(delta_back * inverseSqrt(delta_back_len_sq), view_vec_vs)
+                    dot(sample_dir_from_surface, view_vec_ws),
+                    dot(delta_back * inverseSqrt(delta_back_len_sq), view_vec_ws)
                 );
                 let horizon_angles = vec2<f32>(
                     fast_acos(clamp(horizon_cos.x, -1.0, 1.0)),
@@ -298,8 +321,20 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 }
 
                 horizon01 = vec2<f32>(
-                    slice_rel_cdf_cos(horizon01.x, normal_angle, normal_cos, side_sign > 0.0),
-                    slice_rel_cdf_cos(horizon01.y, normal_angle, normal_cos, side_sign > 0.0)
+                    slice_rel_cdf_cos(
+                        horizon01.x,
+                        normal_angle,
+                        normal_cos,
+                        normal_sin,
+                        side_sign > 0.0
+                    ),
+                    slice_rel_cdf_cos(
+                        horizon01.y,
+                        normal_angle,
+                        normal_cos,
+                        normal_sin,
+                        side_sign > 0.0
+                    )
                 );
                 let horizon_mid = (horizon01.x + horizon01.y) * 0.5;
                 let horizon_half_width = abs(horizon01.y - horizon01.x) * 0.5 * occlusion_weight;

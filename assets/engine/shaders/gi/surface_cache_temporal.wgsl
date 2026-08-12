@@ -6,9 +6,9 @@ struct SurfaceCacheTemporalParams {
     depth_threshold: f32,
     normal_threshold: f32,
     spatial_filter_radius: f32,
+    recurrent_blur_max_radius: f32,
+    recurrent_blur_history_frames: f32,
     _padding0: f32,
-    _padding1: f32,
-    _padding2: f32,
 };
 
 struct SurfaceCacheHistoryTap {
@@ -390,6 +390,78 @@ fn surface_cache_reliability(sample_count: f32) -> f32 {
     return sqrt(sample_count / 32.0);
 }
 
+// Low-age history has not accumulated enough independent cache observations
+// to hide reconstruction noise. Recurrently filter that history over a sparse,
+// geometry-aware footprint, then shrink both the radius and blend as it matures.
+// Keeping the center age prevents neighboring mature pixels from prematurely
+// disabling the filter on a newly exposed surface.
+fn surface_cache_recurrent_blur_history(
+    previous_pixel: vec2<f32>,
+    resolution: vec2<u32>,
+    current_normal: vec3<f32>,
+    current_linear_depth: f32,
+    view_index: u32,
+    history: vec4<f32>
+) -> vec4<f32> {
+    let blur_history_frames = temporal_params.recurrent_blur_history_frames;
+    let maximum_radius = temporal_params.recurrent_blur_max_radius;
+    if (
+        maximum_radius < 0.5 ||
+        blur_history_frames <= 1.0 ||
+        history.w >= blur_history_frames
+    ) {
+        return history;
+    }
+
+    let history_progress = clamp(
+        (history.w - 1.0) / max(blur_history_frames - 1.0, 1.0),
+        0.0,
+        1.0
+    );
+    let blur_amount = 1.0 - smoothstep(0.0, 1.0, history_progress);
+    let tap_stride = max(i32(ceil(maximum_radius * blur_amount)), 1);
+    let previous_center = vec2<i32>(floor(previous_pixel + vec2<f32>(0.5)));
+    let kernel = vec3<f32>(0.27901, 0.44198, 0.27901);
+    let center_weight = kernel.y * kernel.y;
+    let center_reliability = surface_cache_reliability(history.w);
+    var color_sum = history.xyz * center_weight * center_reliability;
+    var color_weight_sum = center_weight * center_reliability;
+
+    for (var tap_y = -1; tap_y <= 1; tap_y = tap_y + 1) {
+        for (var tap_x = -1; tap_x <= 1; tap_x = tap_x + 1) {
+            if (tap_x == 0 && tap_y == 0) {
+                continue;
+            }
+            let kernel_weight = kernel[u32(tap_x + 1)] *
+                kernel[u32(tap_y + 1)];
+            let tap = surface_cache_history_tap(
+                previous_center + vec2<i32>(tap_x, tap_y) * tap_stride,
+                kernel_weight,
+                resolution,
+                current_normal,
+                current_linear_depth,
+                view_index
+            );
+            if (tap.weight <= 1e-5) {
+                continue;
+            }
+            let tap_history_frames = tap.value.w / tap.weight;
+            let tap_reliability = surface_cache_reliability(tap_history_frames);
+            color_sum += tap.value.xyz * tap_reliability;
+            color_weight_sum += tap.weight * tap_reliability;
+        }
+    }
+
+    if (color_weight_sum <= 1e-5) {
+        return history;
+    }
+    let blurred_history = color_sum / color_weight_sum;
+    return vec4<f32>(
+        mix(history.xyz, blurred_history, blur_amount),
+        history.w
+    );
+}
+
 // When no temporal source exists, widen the current-frame reconstruction over
 // four à-trous scales. The sparse footprint combines many independently
 // gathered cache cells without paying this cost on temporally stable pixels.
@@ -618,6 +690,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let history_valid = history_weight > 1e-5;
+    if (history_valid) {
+        history = surface_cache_recurrent_blur_history(
+            previous_pixel,
+            resolution,
+            current_normal,
+            current_linear_depth,
+            view_index,
+            history
+        );
+    }
     // Luminance moments are consumed only by the history-clipping path. True
     // disocclusions skip that arithmetic while retaining the same reconstruction.
     let current_estimate = surface_cache_reconstruct_current(
