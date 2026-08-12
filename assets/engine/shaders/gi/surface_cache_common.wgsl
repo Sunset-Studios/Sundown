@@ -44,7 +44,7 @@ struct SurfaceCacheParams {
     history_footprint_max_scale: f32,
     bootstrap_patch_capacity: f32,
     mature_patch_update_period: u32,
-    _padding0: u32,
+    maximum_ray_count_per_frame: u32,
     _padding1: u32,
     _padding2: u32,
 };
@@ -79,6 +79,9 @@ struct SurfaceCacheCounters {
     bootstrap_rays_per_patch: atomic<u32>,
     regular_schedule_offset: atomic<u32>,
     force_full_update: atomic<u32>,
+    available_bootstrap_patch_count: atomic<u32>,
+    bootstrap_schedule_offset: atomic<u32>,
+    available_update_patch_count: atomic<u32>,
 };
 
 struct SurfaceCacheCountersReadOnly {
@@ -88,6 +91,9 @@ struct SurfaceCacheCountersReadOnly {
     bootstrap_rays_per_patch: u32,
     regular_schedule_offset: u32,
     force_full_update: u32,
+    available_bootstrap_patch_count: u32,
+    bootstrap_schedule_offset: u32,
+    available_update_patch_count: u32,
 };
 
 struct SurfaceCacheHitInfo {
@@ -195,7 +201,7 @@ fn surface_cache_regular_schedule_index(
     counters: SurfaceCacheCountersReadOnly
 ) -> u32 {
     let available_patch_count = max(
-        counters.active_patch_count - counters.bootstrap_patch_count,
+        counters.available_update_patch_count,
         1u
     );
     if (counters.update_patch_count >= available_patch_count) {
@@ -203,6 +209,26 @@ fn surface_cache_regular_schedule_index(
     }
 
     let rotated_index = scheduled_index + counters.regular_schedule_offset;
+    return select(
+        rotated_index,
+        rotated_index - available_patch_count,
+        rotated_index >= available_patch_count
+    );
+}
+
+fn surface_cache_bootstrap_schedule_index(
+    scheduled_index: u32,
+    counters: SurfaceCacheCountersReadOnly
+) -> u32 {
+    let available_patch_count = max(
+        counters.available_bootstrap_patch_count,
+        1u
+    );
+    if (counters.bootstrap_patch_count >= available_patch_count) {
+        return scheduled_index;
+    }
+
+    let rotated_index = scheduled_index + counters.bootstrap_schedule_offset;
     return select(
         rotated_index,
         rotated_index - available_patch_count,

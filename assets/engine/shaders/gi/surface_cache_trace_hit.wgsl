@@ -155,7 +155,12 @@ fn cs(
             if (first_patch_lane) {
                 var shared_patch_index = 0u;
                 if (work.bootstrap_batch != 0u) {
-                    shared_patch_index = bootstrap_indices[work.active_index];
+                    shared_patch_index = bootstrap_indices[
+                        surface_cache_bootstrap_schedule_index(
+                            work.active_index,
+                            counters
+                        )
+                    ];
                 } else {
                     shared_patch_index = update_indices[
                         surface_cache_regular_schedule_index(
@@ -225,7 +230,12 @@ fn cs(
     }
     var patch_index = 0u;
     if (work.bootstrap_batch != 0u) {
-        patch_index = bootstrap_indices[work.active_index];
+        patch_index = bootstrap_indices[
+            surface_cache_bootstrap_schedule_index(
+                work.active_index,
+                counters
+            )
+        ];
     } else {
         patch_index = update_indices[surface_cache_regular_schedule_index(
             work.active_index,

@@ -30,6 +30,7 @@ export class SCGI {
     history_hysteresis: 0.95,
     max_history_samples: 256,
     mature_patch_update_period: 4,
+    maximum_ray_count_per_frame: 131072,
     screen_reconstruction_enabled: true,
     temporal_response: 0.001,
     temporal_max_history_frames: 256,

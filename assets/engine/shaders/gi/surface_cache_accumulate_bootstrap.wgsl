@@ -104,7 +104,12 @@ fn cs(
     }
 
     if (local_index == 0u) {
-        let patch_index = bootstrap_indices[bootstrap_index];
+        let patch_index = bootstrap_indices[
+            surface_cache_bootstrap_schedule_index(
+                bootstrap_index,
+                counters
+            )
+        ];
         let moments = bootstrap_moment_sum[0];
         surface_cache_commit_accumulation(
             &surface_cache,

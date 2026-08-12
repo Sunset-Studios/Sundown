@@ -1157,7 +1157,7 @@ export class SurfaceRadianceCache extends GIModule {
     this.params_data = new Float32Array(24);
     this.params_u32_data = new Uint32Array(this.params_data.buffer);
     this.temporal_params_data = new Float32Array(8);
-    this.counters_reset_data = new Uint32Array(6);
+    this.counters_reset_data = new Uint32Array(9);
     this.counters_buffer = null;
     this.counters_data = null;
     this.stats_enabled = false;
@@ -1217,6 +1217,11 @@ export class SurfaceRadianceCache extends GIModule {
     context.mature_patch_update_period = Math.max(
       Math.floor(config.mature_patch_update_period ?? 1),
       1
+    );
+    context.maximum_ray_count_per_frame = clamp(
+      Math.floor(config.maximum_ray_count_per_frame ?? context.total_ray_count),
+      context.rays_per_patch,
+      context.total_ray_count
     );
 
     this.create_buffer(render_graph, "params", {
@@ -1284,7 +1289,7 @@ export class SurfaceRadianceCache extends GIModule {
     } else {
       this.create_buffer(render_graph, "counters", {
         name: SURFACE_CACHE_COUNTERS_NAME,
-        size: 6,
+        size: 9,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         force: force_recreate,
       });
@@ -1389,7 +1394,7 @@ export class SurfaceRadianceCache extends GIModule {
       this.params_data[18] = Math.max(config.history_footprint_max_scale ?? 1, 1);
       this.params_data[19] = context.bootstrap_enabled ? context.bootstrap_patch_capacity : 0;
       this.params_u32_data[20] = context.mature_patch_update_period;
-      this.params_u32_data[21] = 0;
+      this.params_u32_data[21] = context.maximum_ray_count_per_frame;
       this.params_u32_data[22] = 0;
       this.params_u32_data[23] = 0;
       graph.get_physical_buffer(params).write_raw(this.params_data);
@@ -1825,7 +1830,7 @@ export class SurfaceRadianceCache extends GIModule {
       this.counters_buffer.destroy();
     }
 
-    this.counters_data = new Uint32Array(6);
+    this.counters_data = new Uint32Array(9);
     this.counters_buffer = Buffer.create({
       name: SURFACE_CACHE_COUNTERS_NAME,
       raw_data: this.counters_data,
@@ -1843,6 +1848,10 @@ export class SurfaceRadianceCache extends GIModule {
     const update_patch_count = Math.min(this.counters_data[1] || 0, active_patch_count);
     const bootstrap_patch_count = Math.min(
       this.counters_data[2] || 0,
+      context.bootstrap_patch_capacity
+    );
+    const available_bootstrap_patch_count = Math.min(
+      this.counters_data[6] || bootstrap_patch_count,
       context.bootstrap_patch_capacity
     );
     const bootstrap_rays_per_patch = bootstrap_patch_count > 0
@@ -1881,6 +1890,11 @@ export class SurfaceRadianceCache extends GIModule {
       active_patch_count,
       update_patch_count,
       bootstrap_patch_count,
+      available_bootstrap_patch_count,
+      pending_bootstrap_patch_count: Math.max(
+        available_bootstrap_patch_count - bootstrap_patch_count,
+        0
+      ),
       deferred_patch_count,
       rays_per_patch: context.rays_per_patch,
       bootstrap_rays_per_patch,
@@ -1895,6 +1909,7 @@ export class SurfaceRadianceCache extends GIModule {
         update_patch_count * context.rays_per_patch +
         bootstrap_patch_count * bootstrap_rays_per_patch,
       active_set_ray_budget: active_patch_count * context.rays_per_patch,
+      maximum_ray_count_per_frame: context.maximum_ray_count_per_frame,
       maximum_ray_count: context.total_ray_count,
       max_ray_length: context.config.max_ray_length,
       cache_entry_lifetime: context.config.cache_entry_lifetime,

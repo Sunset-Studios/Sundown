@@ -28,7 +28,7 @@ fn cs() {
         atomicLoad(&counters.active_patch_count),
         patch_capacity
     );
-    let bootstrap_patch_count = min(
+    let available_bootstrap_patch_count = min(
         min(
             atomicLoad(&counters.bootstrap_patch_count),
             u32(surface_cache_params.bootstrap_patch_capacity)
@@ -37,34 +37,48 @@ fn cs() {
     );
     let available_update_patch_count = min(
         atomicLoad(&counters.update_patch_count),
-        active_patch_count - bootstrap_patch_count
+        active_patch_count - available_bootstrap_patch_count
+    );
+    let maximum_ray_count = max(
+        min(
+            surface_cache_params.maximum_ray_count_per_frame,
+            patch_capacity * regular_rays_per_patch
+        ),
+        regular_rays_per_patch
     );
 
     // ────────────────────────────────────────────────────────────────────────
-    // The active cache footprint owns one immutable frame budget. Bootstrap
-    // patches borrow whole regular-sized batches from mature patches instead
-    // of expanding the workload when camera motion exposes new surfaces.
+    // Bootstrap and regular refresh work share one immutable ray ceiling.
+    // Both queues rotate when oversubscribed, spreading camera-motion and
+    // invalidation waves over frames instead of allowing a high-water spike.
     // ────────────────────────────────────────────────────────────────────────
+    var bootstrap_patch_count = 0u;
     var bootstrap_rays_per_patch = 0u;
-    var update_patch_count = available_update_patch_count;
-    if (bootstrap_patch_count > 0u) {
+    if (available_bootstrap_patch_count > 0u) {
         let maximum_bootstrap_batch_count = max(
             surface_cache_params.maximum_bootstrap_rays_per_patch /
                 regular_rays_per_patch,
             1u
         );
-        let bootstrap_ray_budget_patch_count = max(
-            bootstrap_patch_count,
-            u32(
-                f32(active_patch_count) * clamp(
+        let bootstrap_ray_budget = select(
+            maximum_ray_count,
+            max(
+                regular_rays_per_patch,
+                u32(f32(maximum_ray_count) * clamp(
                     surface_cache_params.bootstrap_ray_budget_fraction,
                     0.0,
                     1.0
-                )
-            )
+                ))
+            ),
+            available_update_patch_count > 0u
+        );
+        bootstrap_patch_count = min(
+            available_bootstrap_patch_count,
+            max(bootstrap_ray_budget / regular_rays_per_patch, 1u)
         );
         let budget_bootstrap_batch_count = max(
-            bootstrap_ray_budget_patch_count / bootstrap_patch_count,
+            bootstrap_ray_budget /
+                (bootstrap_patch_count * regular_rays_per_patch),
             1u
         );
         let bootstrap_batch_count = min(
@@ -73,15 +87,15 @@ fn cs() {
         );
         bootstrap_rays_per_patch =
             bootstrap_batch_count * regular_rays_per_patch;
-        update_patch_count = min(
-            available_update_patch_count,
-            active_patch_count -
-                bootstrap_patch_count * bootstrap_batch_count
-        );
     }
-    let regular_ray_count = update_patch_count * regular_rays_per_patch;
     let bootstrap_ray_count = bootstrap_patch_count *
         bootstrap_rays_per_patch;
+    let remaining_ray_count = maximum_ray_count - bootstrap_ray_count;
+    let update_patch_count = min(
+        available_update_patch_count,
+        remaining_ray_count / regular_rays_per_patch
+    );
+    let regular_ray_count = update_patch_count * regular_rays_per_patch;
     var regular_schedule_offset = 0u;
     if (
         update_patch_count < available_update_patch_count &&
@@ -91,6 +105,16 @@ fn cs() {
             (u32(surface_cache_params.frame_index) * 0x9e3779b9u) ^
                 available_update_patch_count
         ) % available_update_patch_count;
+    }
+    var bootstrap_schedule_offset = 0u;
+    if (
+        bootstrap_patch_count < available_bootstrap_patch_count &&
+        available_bootstrap_patch_count > 0u
+    ) {
+        bootstrap_schedule_offset = hash(
+            (u32(surface_cache_params.frame_index) * 0x85ebca6bu) ^
+                available_bootstrap_patch_count
+        ) % available_bootstrap_patch_count;
     }
 
     atomicStore(&counters.update_patch_count, update_patch_count);
@@ -103,6 +127,18 @@ fn cs() {
     atomicStore(
         &counters.regular_schedule_offset,
         regular_schedule_offset
+    );
+    atomicStore(
+        &counters.available_bootstrap_patch_count,
+        available_bootstrap_patch_count
+    );
+    atomicStore(
+        &counters.bootstrap_schedule_offset,
+        bootstrap_schedule_offset
+    );
+    atomicStore(
+        &counters.available_update_patch_count,
+        available_update_patch_count
     );
 
     let parallel_bootstrap_accumulation =

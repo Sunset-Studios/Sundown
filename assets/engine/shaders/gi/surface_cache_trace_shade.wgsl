@@ -212,7 +212,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     var patch_index = 0u;
     if (work.bootstrap_batch != 0u) {
-        patch_index = bootstrap_indices[work.active_index];
+        patch_index = bootstrap_indices[
+            surface_cache_bootstrap_schedule_index(
+                work.active_index,
+                counters
+            )
+        ];
     } else {
         patch_index = update_indices[surface_cache_regular_schedule_index(
             work.active_index,

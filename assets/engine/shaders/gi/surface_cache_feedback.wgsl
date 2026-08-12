@@ -22,10 +22,6 @@ fn append_regular_patch(patch_index: u32) {
 }
 
 fn surface_cache_patch_is_due(patch_index: u32) -> bool {
-    if (atomicLoad(&counters.force_full_update) != 0u) {
-        return true;
-    }
-
     let surface_patch = surface_cache[patch_index];
     let history_is_mature =
         surface_patch.history.x >= surface_cache_params.max_history_samples &&
@@ -35,8 +31,8 @@ fn surface_cache_patch_is_due(patch_index: u32) -> bool {
     }
 
     // Once both radiance and footprint history are saturated, distribute
-    // maintenance updates across frames. The stable patch hash avoids coherent
-    // bursts while every scene-radiance change bypasses this schedule above.
+    // maintenance updates across frames. Invalidation lowers radiance maturity
+    // before this test, so unfinished refresh work remains eligible.
     let update_period = max(
         surface_cache_params.mature_patch_update_period,
         1u
@@ -131,6 +127,23 @@ fn feedback_surface_descriptor(
     } else if (result.status == HASHMAP_RESULT_FOUND) {
         let metadata = surface_cache[result.index].metadata;
         let sample_count = metadata.w;
+        var history = surface_cache[result.index].history;
+        if (atomicLoad(&counters.force_full_update) != 0u) {
+            // Mark one maintenance batch as outstanding instead of launching
+            // every invalidated patch immediately. Patches which miss this
+            // frame's hard ray budget remain under-mature and retry next frame.
+            history.x = min(
+                history.x,
+                max(
+                    surface_cache_params.max_history_samples -
+                        f32(surface_cache_regular_rays_per_patch(
+                            surface_cache_params
+                        )),
+                    0.0
+                )
+            );
+            surface_cache[result.index].history = history;
+        }
         surface_cache[result.index].metadata = vec4<f32>(
             metadata.x,
             sample_count,
@@ -145,7 +158,8 @@ fn feedback_surface_descriptor(
             normal,
             f32(cell_exponent)
         );
-        append_active_patch(result.index, false);
+        let requires_bootstrap = history.x <= 0.0 && metadata.w <= 0.0;
+        append_active_patch(result.index, requires_bootstrap);
         return sample_count;
     } else if (result.status == HASHMAP_RESULT_ALREADY_UPDATED) {
         return surface_cache[result.index].metadata.w;

@@ -263,15 +263,15 @@ export class SCGIStats extends DevConsoleTool {
       activity_row(
         "Ray workload",
         stats.total_rays_fired,
-        stats.active_set_ray_budget,
-        `${format_number(stats.total_rays_fired)} / ${format_number(stats.active_set_ray_budget)}`,
+        stats.maximum_ray_count_per_frame,
+        `${format_number(stats.total_rays_fired)} / ${format_number(stats.maximum_ray_count_per_frame)}`,
         secondary_accent
       );
       metric_pair(
         "Updates / deferred",
         `${format_number(stats.update_patch_count)} / ${format_number(stats.deferred_patch_count)}`,
-        "Bootstrap patches",
-        `${format_number(stats.bootstrap_patch_count)} / ${format_number(stats.bootstrap_patch_capacity)}`,
+        "Bootstrap scheduled",
+        `${format_number(stats.bootstrap_patch_count)} / ${format_number(stats.available_bootstrap_patch_count)}`,
         secondary_accent
       );
 
@@ -322,6 +322,12 @@ export class SCGIStats extends DevConsoleTool {
         "Scene wake",
         stats.force_full_update ? "Full rate" : "Scheduled",
         stats.force_full_update ? secondary_accent : accent
+      );
+      metric_pair(
+        "Frame ray ceiling",
+        format_number(stats.maximum_ray_count_per_frame),
+        "Uncapped active rays",
+        format_number(stats.active_set_ray_budget)
       );
       metric_pair(
         "History hysteresis",
