@@ -144,9 +144,15 @@ fn cs(
         surface_cache_params
     );
 
-    let use_shared_patch_setup = surface_cache_regular_rays_per_patch(
-        surface_cache_params
-    ) >= 2u;
+    // The shared array is sized for at least two rays per patch. Breadth-first
+    // bootstrap can intentionally assign one ray to each patch during a large
+    // admission wave, so use the direct path for that exceptional frame.
+    let use_shared_patch_setup =
+        surface_cache_regular_rays_per_patch(surface_cache_params) >= 2u &&
+        (
+            counters.bootstrap_patch_count == 0u ||
+            counters.bootstrap_rays_per_patch >= 2u
+        );
     if (use_shared_patch_setup) {
         var shared_slot = 0u;
         if (valid_work) {

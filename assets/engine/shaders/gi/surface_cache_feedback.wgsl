@@ -164,6 +164,7 @@ fn feedback_surface_descriptor(
     } else if (result.status == HASHMAP_RESULT_ALREADY_UPDATED) {
         return surface_cache[result.index].metadata.w;
     }
+    atomicAdd(&counters.feedback_miss_count, 1u);
     return 0.0;
 }
 

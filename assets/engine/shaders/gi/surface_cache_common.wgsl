@@ -5,14 +5,15 @@
 const SURFACE_CACHE_MIN_QUERY_SAMPLES: f32 = 4.0;
 const SURFACE_CACHE_MAX_RADIANCE: f32 = 10.0;
 const SURFACE_CACHE_SH_PATCH_SIZE_U32: u32 = 6u;
-// Static cache-key configuration. Supported values are 1, 4, 8, and 16.
-// Changing it alters every cache key and therefore requires a cache reset.
-const SURFACE_CACHE_DIRECTIONAL_BIN_COUNT: u32 = 16u;
-const_assert
-    SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 1u ||
-    SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 4u ||
-    SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 8u ||
-    SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 16u;
+// Keep every octahedral bin narrower than the lookup normal threshold. A
+// coarse directional key can merge surfaces whose normals reconstruction must
+// reject, leaving the patch's arbitrary feedback winner to decide whether the
+// cache is visible on a given frame. Changing this static layout alters every
+// cache key and therefore requires a cache reset.
+const SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION: u32 = 8u;
+const SURFACE_CACHE_DIRECTIONAL_BIN_COUNT: u32 =
+    SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION *
+    SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION;
 const SURFACE_CACHE_CELL_EXPONENT_BIAS: i32 = 16;
 const SURFACE_CACHE_MIN_CELL_EXPONENT: i32 = -16;
 const SURFACE_CACHE_MAX_CELL_EXPONENT: i32 = 15;
@@ -82,6 +83,7 @@ struct SurfaceCacheCounters {
     available_bootstrap_patch_count: atomic<u32>,
     bootstrap_schedule_offset: atomic<u32>,
     available_update_patch_count: atomic<u32>,
+    feedback_miss_count: atomic<u32>,
 };
 
 struct SurfaceCacheCountersReadOnly {
@@ -94,6 +96,7 @@ struct SurfaceCacheCountersReadOnly {
     available_bootstrap_patch_count: u32,
     bootstrap_schedule_offset: u32,
     available_update_patch_count: u32,
+    feedback_miss_count: u32,
 };
 
 struct SurfaceCacheHitInfo {
@@ -665,53 +668,27 @@ fn surface_cache_octahedral_direction_normalized(
 }
 
 fn surface_cache_directional_bin(normal: vec3<f32>) -> u32 {
-    if (SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 1u) {
-        return 0u;
-    }
-
-    let normalized = safe_normalize(normal);
-    if (SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 8u) {
-        return
-            select(0u, 1u, normalized.x >= 0.0) |
-            (select(0u, 1u, normalized.y >= 0.0) << 1u) |
-            (select(0u, 1u, normalized.z >= 0.0) << 2u);
-    }
-
-    let resolution = select(
-        2u,
-        4u,
-        SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 16u
-    );
     let encoded = surface_cache_octahedral_direction(normal);
     let coordinate = min(
-        vec2<u32>(encoded * f32(resolution)),
-        vec2<u32>(resolution - 1u)
+        vec2<u32>(
+            encoded * f32(SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION)
+        ),
+        vec2<u32>(SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION - 1u)
     );
-    return coordinate.x + coordinate.y * resolution;
+    return coordinate.x +
+        coordinate.y * SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION;
 }
 
 fn surface_cache_directional_bin_normalized(normalized: vec3<f32>) -> u32 {
-    if (SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 1u) {
-        return 0u;
-    }
-    if (SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 8u) {
-        return
-            select(0u, 1u, normalized.x >= 0.0) |
-            (select(0u, 1u, normalized.y >= 0.0) << 1u) |
-            (select(0u, 1u, normalized.z >= 0.0) << 2u);
-    }
-
-    let resolution = select(
-        2u,
-        4u,
-        SURFACE_CACHE_DIRECTIONAL_BIN_COUNT == 16u
-    );
     let encoded = surface_cache_octahedral_direction_normalized(normalized);
     let coordinate = min(
-        vec2<u32>(encoded * f32(resolution)),
-        vec2<u32>(resolution - 1u)
+        vec2<u32>(
+            encoded * f32(SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION)
+        ),
+        vec2<u32>(SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION - 1u)
     );
-    return coordinate.x + coordinate.y * resolution;
+    return coordinate.x +
+        coordinate.y * SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION;
 }
 
 fn surface_cache_hash_key(

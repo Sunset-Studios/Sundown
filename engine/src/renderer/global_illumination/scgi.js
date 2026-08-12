@@ -15,9 +15,9 @@ export class SCGI {
   debug_texture = null;
 
   config = {
-    surface_cache_size: 65536,
+    surface_cache_size: 131072,
     rays_per_patch: 8,
-    bootstrap_patch_capacity: 65536,
+    bootstrap_patch_capacity: 131072,
     bootstrap_rays_per_patch: 256,
     bootstrap_ray_budget_fraction: 0.5,
     cache_entry_lifetime: 1,

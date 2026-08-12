@@ -55,11 +55,6 @@ fn cs() {
     var bootstrap_patch_count = 0u;
     var bootstrap_rays_per_patch = 0u;
     if (available_bootstrap_patch_count > 0u) {
-        let maximum_bootstrap_batch_count = max(
-            surface_cache_params.maximum_bootstrap_rays_per_patch /
-                regular_rays_per_patch,
-            1u
-        );
         let bootstrap_ray_budget = select(
             maximum_ray_count,
             max(
@@ -72,21 +67,23 @@ fn cs() {
             ),
             available_update_patch_count > 0u
         );
+        // Admit new patches breadth-first. A single valid sample is enough for
+        // resolve and temporal reconstruction to avoid an invalid black cell;
+        // remaining rays then improve every admitted patch uniformly. Under
+        // the default budget this covers the entire cache capacity in one
+        // frame without increasing the immutable total ray ceiling.
         bootstrap_patch_count = min(
             available_bootstrap_patch_count,
-            max(bootstrap_ray_budget / regular_rays_per_patch, 1u)
+            max(bootstrap_ray_budget, 1u)
         );
-        let budget_bootstrap_batch_count = max(
-            bootstrap_ray_budget /
-                (bootstrap_patch_count * regular_rays_per_patch),
-            1u
+        bootstrap_rays_per_patch = min(
+            max(surface_cache_params.maximum_bootstrap_rays_per_patch, 1u),
+            max(
+                bootstrap_ray_budget /
+                    bootstrap_patch_count,
+                1u
+            )
         );
-        let bootstrap_batch_count = min(
-            maximum_bootstrap_batch_count,
-            budget_bootstrap_batch_count
-        );
-        bootstrap_rays_per_patch =
-            bootstrap_batch_count * regular_rays_per_patch;
     }
     let bootstrap_ray_count = bootstrap_patch_count *
         bootstrap_rays_per_patch;

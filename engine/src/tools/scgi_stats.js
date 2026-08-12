@@ -274,6 +274,13 @@ export class SCGIStats extends DevConsoleTool {
         `${format_number(stats.bootstrap_patch_count)} / ${format_number(stats.available_bootstrap_patch_count)}`,
         secondary_accent
       );
+      metric_pair(
+        "Feedback misses",
+        format_number(stats.feedback_miss_count),
+        "Bootstrap pending",
+        format_number(stats.pending_bootstrap_patch_count),
+        stats.feedback_miss_count > 0 ? secondary_accent : accent
+      );
 
       section_header("Cache configuration");
       metric_pair(

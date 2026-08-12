@@ -435,7 +435,11 @@ export class ProbeVolumeRadianceCache extends GIModule {
   }
 
   _ensure_counters(force_recreate) {
-    if (!force_recreate && this.counters_buffer) {
+    const expected_size = this.counters_reset_data.byteLength;
+    if (
+      !force_recreate &&
+      this.counters_buffer?.config.size === expected_size
+    ) {
       return;
     }
 
@@ -1157,7 +1161,7 @@ export class SurfaceRadianceCache extends GIModule {
     this.params_data = new Float32Array(24);
     this.params_u32_data = new Uint32Array(this.params_data.buffer);
     this.temporal_params_data = new Float32Array(8);
-    this.counters_reset_data = new Uint32Array(9);
+    this.counters_reset_data = new Uint32Array(10);
     this.counters_buffer = null;
     this.counters_data = null;
     this.stats_enabled = false;
@@ -1223,6 +1227,10 @@ export class SurfaceRadianceCache extends GIModule {
       context.rays_per_patch,
       context.total_ray_count
     );
+    // Ray work is hard-capped per frame. Size transient hit and shading data
+    // for that actual ceiling so increasing persistent cache headroom does not
+    // multiply an unrelated per-ray working set.
+    context.ray_buffer_capacity = context.maximum_ray_count_per_frame;
 
     this.create_buffer(render_graph, "params", {
       name: "surface_cache_params",
@@ -1256,7 +1264,7 @@ export class SurfaceRadianceCache extends GIModule {
     });
     this.create_buffer(render_graph, "hit_info", {
       name: "surface_cache_hit_info",
-      size: context.total_ray_count * SURFACE_CACHE_HIT_WORD_COUNT,
+      size: context.ray_buffer_capacity * SURFACE_CACHE_HIT_WORD_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -1289,7 +1297,7 @@ export class SurfaceRadianceCache extends GIModule {
     } else {
       this.create_buffer(render_graph, "counters", {
         name: SURFACE_CACHE_COUNTERS_NAME,
-        size: 9,
+        size: 10,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         force: force_recreate,
       });
@@ -1299,7 +1307,7 @@ export class SurfaceRadianceCache extends GIModule {
   _setup_shading_resources(render_graph, context, _branch) {
     this.create_buffer(render_graph, "radiance_info", {
       name: "surface_cache_radiance_info",
-      size: context.total_ray_count * SURFACE_CACHE_RADIANCE_WORD_COUNT,
+      size: context.ray_buffer_capacity * SURFACE_CACHE_RADIANCE_WORD_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
@@ -1840,7 +1848,7 @@ export class SurfaceRadianceCache extends GIModule {
       this.counters_buffer.destroy();
     }
 
-    this.counters_data = new Uint32Array(9);
+    this.counters_data = new Uint32Array(10);
     this.counters_buffer = Buffer.create({
       name: SURFACE_CACHE_COUNTERS_NAME,
       raw_data: this.counters_data,
@@ -1867,7 +1875,7 @@ export class SurfaceRadianceCache extends GIModule {
     const bootstrap_rays_per_patch = bootstrap_patch_count > 0
       ? clamp(
           this.counters_data[3] || context.rays_per_patch,
-          context.rays_per_patch,
+          1,
           context.bootstrap_rays_per_patch
         )
       : 0;
@@ -1879,7 +1887,7 @@ export class SurfaceRadianceCache extends GIModule {
     const hashmap_bytes = context.total_patches * 3 * 4;
     const sh_bytes = context.total_patches * 6 * 4;
     const ray_working_set_bytes =
-      context.total_ray_count *
+      context.ray_buffer_capacity *
       (SURFACE_CACHE_HIT_WORD_COUNT + SURFACE_CACHE_RADIANCE_WORD_COUNT) *
       4;
     const emissive_light_bytes =
@@ -1933,6 +1941,7 @@ export class SurfaceRadianceCache extends GIModule {
       max_history_samples: context.config.max_history_samples,
       mature_patch_update_period: context.mature_patch_update_period,
       force_full_update: (this.counters_data[5] || 0) !== 0,
+      feedback_miss_count: this.counters_data[9] || 0,
       surface_cache_bytes,
       hashmap_bytes,
       sh_bytes,
