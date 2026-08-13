@@ -227,9 +227,15 @@ const render_shader_setup = {
     vertex: { path: "shadow/as_vsm/tile_render.vert.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
   rasterizer_state: {
-    cull_mode: "front",
+    // Match visibility rasterization: preserve every authored triangle instead
+    // of treating front-face culling as a geometry-dependent shadow bias.
+    cull_mode: "none",
   },
   depth_stencil_compare_op: "greater",
+  // Reverse-Z: move stored caster depth away from the light. The slope term
+  // covers the one-texel 3x3 PCF footprint without a world-space normal offset.
+  depth_bias: -2,
+  depth_slope_scale: -2.0,
 };
 
 const resolve_depth_to_atlas_shader_setup = {

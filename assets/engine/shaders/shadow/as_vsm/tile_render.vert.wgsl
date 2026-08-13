@@ -45,10 +45,14 @@ fn vs(@builtin(vertex_index) vi: u32,
 
   let meshlet               = meshlets[global_meshlet_index];
   let triangle_index        = vi / 3u;
-  let source_corner_index   = vi % 3u;
+  let corner_index          = vi % 3u;
   if (triangle_index >= meshlet.triangle_count) {
     return out;
   }
+
+  let local_triangle_index  = meshlet.triangle_offset + triangle_index * 3u + corner_index;
+  let local_vertex_index    = meshlet_triangles[local_triangle_index];
+  let global_vertex_index   = meshlet_vertices[meshlet.vertex_offset + local_vertex_index];
 
   let row_field             = object_instances[object_instance_index].row;
 
@@ -66,23 +70,6 @@ fn vs(@builtin(vertex_index) vi: u32,
   let shadow_idx            = light_shadow_idx_buffer[light_idx];
 
   let model_matrix          = entity_transforms[entity_row].transform;
-  let model_orientation     = determinant(mat3x3<f32>(
-                                model_matrix[0].xyz,
-                                model_matrix[1].xyz,
-                                model_matrix[2].xyz
-                              ));
-
-  // Mirrored transforms reverse raster front/back classification. Keep the
-  // shadow pipeline's front-face culling semantics consistent by restoring the
-  // source winding before vertex projection.
-  let corner_index          = select(
-                                source_corner_index,
-                                3u - source_corner_index,
-                                model_orientation < 0.0 && source_corner_index != 0u
-                              );
-  let local_triangle_index  = meshlet.triangle_offset + triangle_index * 3u + corner_index;
-  let local_vertex_index    = meshlet_triangles[local_triangle_index];
-  let global_vertex_index   = meshlet_vertices[meshlet.vertex_offset + local_vertex_index];
   let world_pos             = model_matrix * vertex_position4(vertex_buffer[global_vertex_index]);
 
   let clipmap0_vp           = view_buffer[view_index].view_projection_matrix;
