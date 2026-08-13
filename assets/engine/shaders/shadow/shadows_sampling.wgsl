@@ -5,13 +5,8 @@
 // ------------------------------------------------------------------------------------
 #if SHADOWS_ENABLED
 
-const constant_bias = 1.5;
-const slope_bias    = 1.75;
-
 fn vsm_shadow_depth(
     world_pos: vec4<f32>,
-    normal: vec3<f32>,
-    light_dir: vec3<f32>,
     view_idx: u32,
     shadow_idx: u32,
     page_offset: texture_storage_2d_array<rgba32float, read>,
@@ -31,28 +26,8 @@ fn vsm_shadow_depth(
 
   let new_light_vp        = light_projection * adjusted_light_view;
 
-  // ------------------------------------------------------------------
-  // Normal-offset bias (see ‘normal offset shadows’, Holbert GDC 2011)
-  // We move the receiver along its own normal by <normal_offset> texels.
-  // ------------------------------------------------------------------
-
-  // texel size in world units for current clip-map level
-  let clip_extent  = f32(1u << vtile_info.clipmap_index) * vsm_settings.clip0_extent;
-  let texel_world  = clip_extent / vsm_settings.virtual_dim;
-
-  // ------------------------------------------------------------------
-  // Hybrid constant-and-slope bias   (see Holbert 2011 + Epic notes)
-  // ------------------------------------------------------------------
-  let ndotl        = dot(normal, light_dir);
-  let eps          = 0.04;
-  let bias_texels  = constant_bias + slope_bias / max(abs(ndotl), eps);
-
-  let normal_offset      = texel_world * bias_texels;
-
-  let normal_shifted_pos = world_pos + vec4<f32>(normal * normal_offset, 0.0);
-
   let light_clip_pos      = vsm_calculate_render_clip_value_from_world_pos(
-                                normal_shifted_pos,
+                                world_pos,
                                 vtile_info.clipmap_index,
                                 new_light_vp,
                                 vsm_settings
@@ -68,8 +43,6 @@ fn vsm_shadow_depth(
 fn vsm_sample_shadow(
     ref_depth: f32,
     world_pos: vec4<f32>,
-    normal: vec3<f32>,
-    light_dir: vec3<f32>,
     view_idx: u32,
     shadow_idx: u32,
     page_table: texture_storage_2d_array<r32uint, read>,

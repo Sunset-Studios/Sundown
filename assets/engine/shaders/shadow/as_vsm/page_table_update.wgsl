@@ -61,19 +61,26 @@ fn cs(
     let max_lods     = u32(vsm_settings.max_lods);
     let stride_words = ((vtpr * vtpr * max_lods + 31u) >> 5u);
     // Global word index into the shared buffer (per-light stride offset)
-    let global_index = id.x;
+    let global_word_index = id.x;
+    if (global_word_index >= arrayLength(&bitmask)) {
+        return;
+    }
 
     // Compute linear index *within* the bitmask for this light.
     // Each 8×8 work-group covers 64 consecutive 32-bit words.
     // Combine the work-group offset (group_id.x) with the local thread offset
     // to obtain a unique word index for the entire dispatch.
     let light_count = dense_lights_buffer.header.light_count;
-    if (id.z >= light_count) {
+    let light_index = global_word_index / stride_words;
+    if (
+        light_index >= light_count
+        || light_index >= arrayLength(&light_shadow_idx_buffer)
+        || light_index >= arrayLength(&light_view_idx_buffer)
+    ) {
         return;
     }
 
     // Fetch the shadow index for this light
-    let light_index = global_index / stride_words;
     let shadow_index = light_shadow_idx_buffer[light_index];
     if (shadow_index == 0xffffffffu) {
         return;
@@ -85,7 +92,8 @@ fn cs(
     }
 
     // Fetch mask of virtual tiles for *this* light
-    var bits = bitmask[global_index];
+    let word_index = global_word_index - light_index * stride_words;
+    var bits = bitmask[global_word_index];
     var light_offset = view_buffer[light_view_idx].view_matrix[3];
 
     // Go over all virtual tiles that are currently visible for this light
@@ -93,7 +101,12 @@ fn cs(
       let shift = countTrailingZeros(bits);
       bits = bits & (bits - 1u);
 
-      let tile_id = global_index * 32u + shift;
+      // Tile ids are local to a light. Including the global buffer offset here
+      // aliases later lights into unrelated LOD slices and page coordinates.
+      let tile_id = word_index * 32u + shift;
+      if (tile_id >= vtpr * vtpr * max_lods) {
+        continue;
+      }
 
       let pte_coords = vsm_pte_get_tile_coords(tile_id, vsm_settings);
       let page_table_index = shadow_index * max_lods + pte_coords.z;
@@ -138,6 +151,6 @@ fn cs(
       // Store the light's VP matrix translation (as a placeholder for the offset)
       // In a real implementation, you may want to store a more precise offset or index.
       textureStore(page_offset, pte_coords.xy, page_table_index, light_offset);
-    }    
+    }
 #endif
-} 
+}

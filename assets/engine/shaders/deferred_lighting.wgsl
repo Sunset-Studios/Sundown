@@ -150,8 +150,6 @@ struct FragmentOutput {
 #if SHADOWS_ENABLED
         let depth         = vsm_shadow_depth(
                                 position4,
-                                normalized_normal,
-                                light_dir,
                                 light_view_index,
                                 light_shadow_index,
                                 page_offset,
@@ -160,8 +158,6 @@ struct FragmentOutput {
         let filter_res    = vsm_sample_shadow(
                               depth,
                               position4,
-                              normalized_normal,
-                              light_dir,
                               light_view_index,
                               light_shadow_index,
                               page_table,

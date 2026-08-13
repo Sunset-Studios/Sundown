@@ -70,8 +70,6 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
   // Compute depth
   let depth         = vsm_shadow_depth(
                           world_pos,
-                          vec3<f32>(0.0, 0.0, 0.0),
-                          vec3<f32>(0.0, 0.0, 0.0),
                           view_idx,
                           0u,
                           page_offset,
@@ -81,8 +79,6 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
   let filter_res    = vsm_sample_shadow(
                           depth,
                           world_pos,
-                          vec3<f32>(0.0, 0.0, 0.0),
-                          vec3<f32>(0.0, 0.0, 0.0),
                           view_idx,
                           0u,
                           page_table,

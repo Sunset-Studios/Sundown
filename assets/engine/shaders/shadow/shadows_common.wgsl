@@ -103,16 +103,17 @@ fn unpack_log_depth(packed: f32) -> f32 {
 // This makes it compatible with atomicMax for closest-depth selection.
 fn pack_depth(clip_depth: f32) -> u32 {
     // For reverse Z: 1.0 = near, 0.0 = far
-    // We want larger packed values for nearer fragments (for atomicMax)
-    let reversed_depth = clip_depth;
-    return u32(reversed_depth * 4294967295.0);
+    // Positive IEEE-754 floats preserve their numeric ordering as u32 bits,
+    // so this remains compatible with atomicMax without an out-of-range
+    // float-to-integer conversion at depth 1.0.
+    let sanitized_depth = select(0.0, clamp(clip_depth, 0.0, 1.0), clip_depth == clip_depth);
+    return bitcast<u32>(sanitized_depth);
 }
 
 // Converts a packed depth integer back to clip-space depth in [0,1] for reverse Z.
 // The caller can further convert to linear eye-space depth via linearize_depth.
 fn unpack_depth(packed_depth: u32) -> f32 {
-    let reversed_depth = f32(packed_depth) / (4294967295.0);
-    return reversed_depth;
+    return bitcast<f32>(packed_depth);
 }
 
 fn bitmask_pow2(shift: u32) -> u32 {
