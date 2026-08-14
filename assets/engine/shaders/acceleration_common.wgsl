@@ -42,7 +42,7 @@ struct RayHitCompact {
     prim_store: u32,
     mesh_id: u32,
     tri_id_local: u32,
-    tri_indices: vec4<u32>,
+    tri_indices: vec4<u32>, // xyz = vertex indices, w = front-face flag
     barycentrics: vec2<f32>,
     has_hit: u32,
 };
@@ -170,7 +170,7 @@ fn merge_aabbs(a_min: vec3<f32>, a_max: vec3<f32>, b_min: vec3<f32>, b_max: vec3
 }
 
 // Intersection with a triangle
-fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>) -> vec3<f32> {
+fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>) -> vec4<f32> {
     let dir  = (*ray).direction_and_tmax.xyz;
     let orig = (*ray).origin_and_tmin.xyz;
 
@@ -196,13 +196,14 @@ fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2:
         && u_scaled + v_scaled < det_abs;
 
     if (!valid) {
-        return vec3<f32>(-1.0, 0.0, 0.0);
+        return vec4<f32>(-1.0, 0.0, 0.0, 0.0);
     }
     let inverse_determinant = 1.0 / det_abs;
-    return vec3<f32>(
+    return vec4<f32>(
         t_scaled * inverse_determinant,
         u_scaled * inverse_determinant,
-        v_scaled * inverse_determinant
+        v_scaled * inverse_determinant,
+        select(0.0, 1.0, det > 0.0)
     );
 }
 
@@ -215,7 +216,7 @@ fn intersect_triangle_front_face(
     v0: vec3<f32>,
     v1: vec3<f32>,
     v2: vec3<f32>
-) -> vec3<f32> {
+) -> vec4<f32> {
     let direction = (*ray).direction_and_tmax.xyz;
     let origin = (*ray).origin_and_tmin.xyz;
     let edge_1 = v1 - v0;
@@ -235,13 +236,14 @@ fn intersect_triangle_front_face(
         v_scaled <= 0.0 ||
         u_scaled + v_scaled >= determinant
     ) {
-        return vec3<f32>(-1.0, 0.0, 0.0);
+        return vec4<f32>(-1.0, 0.0, 0.0, 0.0);
     }
     let inverse_determinant = 1.0 / determinant;
-    return vec3<f32>(
+    return vec4<f32>(
         t_scaled * inverse_determinant,
         u_scaled * inverse_determinant,
-        v_scaled * inverse_determinant
+        v_scaled * inverse_determinant,
+        1.0
     );
 }
 

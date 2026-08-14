@@ -88,12 +88,20 @@ fn trace_surface_cache_prepared_ray(
     );
     hit_info[ray_data_index].hit_identity.x = INVALID_IDX;
 
-    let hit_result = trace_ray_closest_front_faces(&ray);
+    let hit_result = trace_ray_closest(&ray);
     if (hit_result.has_hit != 0u) {
-        hit_info[ray_data_index].hit_identity = vec4<u32>(
-            entity_index_lookup[hit_result.prim_store],
-            hit_result.tri_indices.xyz
-        );
+        // A backface is still an opaque boundary. Preserve it as a blocker so
+        // thin walls and creases cannot expose radiance from behind them, but
+        // do not pass its attributes to the shading recurrence.
+        if (hit_result.tri_indices.w == 0u) {
+            hit_info[ray_data_index].hit_identity.x =
+                SURFACE_CACHE_BACKFACE_HIT;
+        } else {
+            hit_info[ray_data_index].hit_identity = vec4<u32>(
+                entity_index_lookup[hit_result.prim_store],
+                hit_result.tri_indices.xyz
+            );
+        }
         hit_info[ray_data_index].hit_barycentrics_t = vec4<f32>(
             hit_result.barycentrics,
             hit_result.t_hit,

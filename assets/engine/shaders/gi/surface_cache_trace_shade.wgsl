@@ -98,6 +98,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let hit_identity = hit_info[ray_data_index].hit_identity;
     let hit_barycentrics = hit_info[ray_data_index].hit_barycentrics_t.xy;
 
+    // Backfaces stop traversal but are excluded from accumulation. Treating
+    // them as misses leaks environment radiance through thin geometry, while
+    // shading them as valid samples biases otherwise converged patches black.
+    if (hit_identity.x == SURFACE_CACHE_BACKFACE_HIT) {
+        radiance_info[ray_data_index].sample_radiance = vec4<f32>(0.0);
+        radiance_info[ray_data_index].shadow_radiance = vec4<f32>(0.0);
+        return;
+    }
+
     if (hit_identity.x == INVALID_IDX) {
         let light_view_index = u32(scene_lighting_data.view_index);
         let sun_direction = normalize(-view_buffer[light_view_index].view_direction.xyz);
