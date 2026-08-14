@@ -1,5 +1,4 @@
 #include "common.wgsl"
-#include "acceleration_common.wgsl"
 #include "shadow/shadows_common.wgsl"
 
 // ------------------------------------------------------------------------------------
@@ -16,7 +15,7 @@ struct DrawCullData {
 // Buffers
 // ------------------------------------------------------------------------------------ 
 
-@group(1) @binding(0) var<storage, read> bounds: array<AABB>;
+@group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read> visible_object_instances_no_occlusion: array<i32>;
 @group(1) @binding(2) var<storage, read> object_instances: array<ObjectInstance>;
 @group(1) @binding(3) var<uniform> draw_cull_data: DrawCullData;
@@ -91,13 +90,14 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let light_direction = normalize(view.view_direction.xyz);
     let vp_clip = vsm_snapped_translation_for_lod(vp_matrix, clipmap_index, vsm_settings);
 
-    // Derive position & radius from the entity's transform
+    // TLAS bounds are compacted by active transform chunk, while entity_index is a
+    // sparse ECS row. The transform buffer preserves that row-addressed layout.
     let entity_moved = (entity_flags[entity_index] & EF_MOVED) != 0u;
-    let entity_bounds = bounds[entity_index];
+    let entity_transform = entity_transforms[entity_index];
 
-    // Current world-space translation and per-axis scales
-    let position = (entity_bounds.min.xyz + entity_bounds.max.xyz) * 0.5;
-    let scale = (entity_bounds.max.xyz - entity_bounds.min.xyz) * 0.5;
+    // Current world-space translation and oriented basis
+    let transform = entity_transform.transform;
+    let position = transform[3].xyz;
 
     // Replace projection of corners and min/max computation with world-to-tile mapping
     if (entity_moved) {
@@ -112,7 +112,10 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let sy = select(-1.0, 1.0, (i & 2u) != 0u);
             let sz = select(-1.0, 1.0, (i & 4u) != 0u);
 
-            let world = position + scale.xyz * vec3<f32>(sx, sy, sz);
+            let world = position
+                + transform[0].xyz * sx
+                + transform[1].xyz * sy
+                + transform[2].xyz * sz;
 
             let render_clip = vsm_calculate_render_clip_value_from_world_pos(
                 vec4<f32>(world, 1.0),

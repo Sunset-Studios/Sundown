@@ -198,7 +198,7 @@ export class ShadowCuller extends InstanceCuller {
           {
             shader_setup: compute_dirty_movable_entities_shader_setup,
             inputs: [
-              this.additional_data.aabb_bounds,
+              this.additional_data.entity_transforms,
               visible_buf_no_occlusion,
               this.additional_data.object_instances,
               draw_cull_data,
