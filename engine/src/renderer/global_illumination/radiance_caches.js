@@ -435,11 +435,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
   }
 
   _ensure_counters(force_recreate) {
-    const expected_size = this.counters_reset_data.byteLength;
-    if (
-      !force_recreate &&
-      this.counters_buffer?.config.size === expected_size
-    ) {
+    if (!force_recreate && this.counters_buffer) {
       return;
     }
 

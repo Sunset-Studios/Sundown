@@ -206,6 +206,45 @@ fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2:
     );
 }
 
+// Closest-hit variant for radiance rays emitted from a surface hemisphere.
+// Positive determinant is the front-facing winding for the Moller-Trumbore
+// formulation used above. Rejecting the opposite winding lets traversal
+// continue instead of shading the non-rendered side of a triangle.
+fn intersect_triangle_front_face(
+    ray: ptr<function, Ray>,
+    v0: vec3<f32>,
+    v1: vec3<f32>,
+    v2: vec3<f32>
+) -> vec3<f32> {
+    let direction = (*ray).direction_and_tmax.xyz;
+    let origin = (*ray).origin_and_tmin.xyz;
+    let edge_1 = v1 - v0;
+    let edge_2 = v2 - v0;
+    let p_vector = cross(direction, edge_2);
+    let determinant = dot(edge_1, p_vector);
+    let t_vector = origin - v0;
+    let q_vector = cross(t_vector, edge_1);
+    let u_scaled = dot(t_vector, p_vector);
+    let v_scaled = dot(direction, q_vector);
+    let t_scaled = dot(edge_2, q_vector);
+
+    if (
+        determinant <= 0.00001 ||
+        t_scaled <= 0.0001 * determinant ||
+        u_scaled <= 0.0 ||
+        v_scaled <= 0.0 ||
+        u_scaled + v_scaled >= determinant
+    ) {
+        return vec3<f32>(-1.0, 0.0, 0.0);
+    }
+    let inverse_determinant = 1.0 / determinant;
+    return vec3<f32>(
+        t_scaled * inverse_determinant,
+        u_scaled * inverse_determinant,
+        v_scaled * inverse_determinant
+    );
+}
+
 // Any-hit traversal only needs interval membership. Preserve the exact
 // triangle and distance tests while avoiding barycentric result construction
 // and its two reciprocal-dependent multiplies on accepted candidates.

@@ -17,7 +17,8 @@ fn bvh_build_local_ray(ray_world: ptr<function, Ray>, entity_resolved: u32) -> R
 // This removes one redundant 32-byte node-buffer fetch per descended hierarchy level.
 fn bvh_trace_blas_closest(
     ray_local: ptr<function, Ray>,
-    mesh_asset_id: u32
+    mesh_asset_id: u32,
+    cull_backfaces: bool
 ) -> RayHitCompact {
     var result = make_miss_ray_hit_compact((*ray_local).direction_and_tmax.w);
     result.mesh_id = mesh_asset_id;
@@ -67,7 +68,22 @@ fn bvh_trace_blas_closest(
                 let v0 = vertex_position(vertex_buffer[v0i]);
                 let v1 = vertex_position(vertex_buffer[v1i]);
                 let v2 = vertex_position(vertex_buffer[v2i]);
-                let triangle_hit = intersect_triangle(&current_ray, v0, v1, v2);
+                var triangle_hit: vec3<f32>;
+                if (cull_backfaces) {
+                    triangle_hit = intersect_triangle_front_face(
+                        &current_ray,
+                        v0,
+                        v1,
+                        v2
+                    );
+                } else {
+                    triangle_hit = intersect_triangle(
+                        &current_ray,
+                        v0,
+                        v1,
+                        v2
+                    );
+                }
                 let t_tri = triangle_hit.x;
                 let is_better_hit = t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w;
                 if (is_better_hit) {
@@ -135,7 +151,11 @@ fn bvh_trace_blas_closest(
     return result;
 }
 
-fn bvh_trace_closest(ray: ptr<function, Ray>, tlas_only: bool) -> RayHitCompact {
+fn bvh_trace_closest(
+    ray: ptr<function, Ray>,
+    tlas_only: bool,
+    cull_backfaces: bool
+) -> RayHitCompact {
     var result = make_miss_ray_hit_compact((*ray).direction_and_tmax.w);
 
     if (tlas_bvh_info.bvh2_count == 0u) {
@@ -186,7 +206,11 @@ fn bvh_trace_closest(ray: ptr<function, Ray>, tlas_only: bool) -> RayHitCompact 
                         current_ray.direction_and_tmax.w = result.t_hit;
                     } else {
                         var ray_local = bvh_build_local_ray(&current_ray, entity_resolved);
-                        let blas_hit = bvh_trace_blas_closest(&ray_local, mesh_id);
+                        let blas_hit = bvh_trace_blas_closest(
+                            &ray_local,
+                            mesh_id,
+                            cull_backfaces
+                        );
 
                         if (blas_hit.has_hit != 0u) {
                             result = blas_hit;
@@ -409,11 +433,15 @@ fn bvh_trace_any(ray: ptr<function, Ray>) -> bool {
 }
 
 fn trace_ray_closest(ray: ptr<function, Ray>) -> RayHitCompact {
-    return bvh_trace_closest(ray, false);
+    return bvh_trace_closest(ray, false, false);
+}
+
+fn trace_ray_closest_front_faces(ray: ptr<function, Ray>) -> RayHitCompact {
+    return bvh_trace_closest(ray, false, true);
 }
 
 fn trace_ray_closest_tlas(ray: ptr<function, Ray>, tlas_only: bool) -> RayHitCompact {
-    return bvh_trace_closest(ray, tlas_only);
+    return bvh_trace_closest(ray, tlas_only, false);
 }
 
 fn trace_ray_any(ray: ptr<function, Ray>) -> bool {

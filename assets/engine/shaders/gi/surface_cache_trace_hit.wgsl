@@ -88,7 +88,7 @@ fn trace_surface_cache_prepared_ray(
     );
     hit_info[ray_data_index].hit_identity.x = INVALID_IDX;
 
-    let hit_result = trace_ray_closest(&ray);
+    let hit_result = trace_ray_closest_front_faces(&ray);
     if (hit_result.has_hit != 0u) {
         hit_info[ray_data_index].hit_identity = vec4<u32>(
             entity_index_lookup[hit_result.prim_store],
