@@ -3,6 +3,12 @@ import {
   resolve_href,
   is_html_content_type,
 } from "../../utility/job_worker_runtime.js";
+import { transcode_ktx2 } from "../../renderer/ktx2_transcoder.js";
+
+function resolve_ktx2_paths(resolved_paths) {
+  if (!resolved_paths.every((url) => new URL(url).pathname.endsWith(".ktx2"))) return null;
+  return { paths: resolved_paths };
+}
 
 function compute_mip_levels(width, height, no_mips = false) {
   return no_mips ? 1 : Math.floor(Math.log2(Math.max(width, height))) + 1;
@@ -11,9 +17,14 @@ function compute_mip_levels(width, height, no_mips = false) {
 function resolve_target_texture_config(source_width, source_height, payload) {
   const no_mips = !!payload?.no_mips;
   const pool_dimension_cap = payload?.pool_dimension_cap;
-  const has_pool_context = Number.isFinite(pool_dimension_cap);
+  const max_texture_dimension = payload?.max_texture_dimension;
+  const dimension_cap = Math.min(
+    Number.isFinite(pool_dimension_cap) ? pool_dimension_cap : Number.POSITIVE_INFINITY,
+    Number.isFinite(max_texture_dimension) ? max_texture_dimension : Number.POSITIVE_INFINITY
+  );
+  const has_dimension_cap = Number.isFinite(dimension_cap);
 
-  if (!has_pool_context) {
+  if (!has_dimension_cap) {
     return {
       width: source_width,
       height: source_height,
@@ -21,8 +32,8 @@ function resolve_target_texture_config(source_width, source_height, payload) {
     };
   }
 
-  const normalized_width = Math.max(1, Math.min(source_width, pool_dimension_cap));
-  const normalized_height = Math.max(1, Math.min(source_height, pool_dimension_cap));
+  const normalized_width = Math.max(1, Math.min(source_width, dimension_cap));
+  const normalized_height = Math.max(1, Math.min(source_height, dimension_cap));
   const normalized_mip_levels = compute_mip_levels(normalized_width, normalized_height, no_mips);
 
   return {
@@ -72,6 +83,74 @@ async function build_mip_chain(source, width, height, mip_levels, signal) {
   };
 }
 
+async function fetch_texture_bytes(url, signal) {
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch texture '${url}': ${response.status} ${response.statusText}`);
+  }
+  const content_type = response.headers.get("content-type") || "";
+  if (is_html_content_type(content_type)) {
+    throw new Error(`Expected texture asset at '${url}', but received HTML`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function load_ktx2_texture_data(ktx2, original_paths, payload, signal, post_progress) {
+  const mip_chains = [];
+  const transferables = [];
+  let base = null;
+
+  for (let layer = 0; layer < ktx2.paths.length; layer++) {
+    const url = ktx2.paths[layer];
+    const bytes = await fetch_texture_bytes(url, signal);
+    signal?.throwIfAborted?.();
+    const transcoded = await transcode_ktx2(bytes, {
+      supports_bc: payload.supports_bc === true,
+      max_dimension: payload.max_texture_dimension,
+      no_mips: payload.no_mips,
+    });
+
+    if (
+      base &&
+      (transcoded.width !== base.width ||
+        transcoded.height !== base.height ||
+        transcoded.mip_levels !== base.mip_levels ||
+        transcoded.format !== base.format)
+    ) {
+      throw new Error(
+        `KTX2 texture layers must have matching extents, mip counts, and formats ('${original_paths[layer]}').`
+      );
+    }
+    base ??= transcoded;
+    mip_chains.push(transcoded.mip_chain);
+    for (const mip of transcoded.mip_chain) transferables.push(mip.data.buffer);
+
+    post_progress?.({
+      loaded: layer + 1,
+      total: ktx2.paths.length,
+      path: original_paths[layer],
+      url,
+      ktx2: true,
+    });
+  }
+
+  return create_job_result(
+    {
+      mip_chains,
+      resolved_paths: ktx2.paths,
+      source_width: base.source_width,
+      source_height: base.source_height,
+      width: base.width,
+      height: base.height,
+      mip_levels: base.mip_levels,
+      format: base.format,
+      compressed: base.compressed,
+      texture_usage: payload.texture_usage ?? "data",
+    },
+    transferables
+  );
+}
+
 export async function load_texture_bitmaps_job(payload, { signal, post_progress }) {
   const paths = payload?.paths ?? [];
   const base_url = payload?.base_url ?? self.location.href;
@@ -80,6 +159,11 @@ export async function load_texture_bitmaps_job(payload, { signal, post_progress 
   }
 
   const resolved_paths = paths.map((path) => resolve_href(path, base_url));
+  const ktx2 = resolve_ktx2_paths(resolved_paths);
+  if (ktx2) {
+    return load_ktx2_texture_data(ktx2, paths, payload, signal, post_progress);
+  }
+
   const decoded_bitmaps = [];
   const transferables = [];
 

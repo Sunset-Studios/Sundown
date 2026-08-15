@@ -74,17 +74,17 @@
         {
             "mimeType" : "image/jpeg",
             "name" : "barrel_Normal",
-            "uri" : "barrel_Normal.jpg"
+            "uri" : "barrel_Normal.ktx2"
         },
         {
             "mimeType" : "image/jpeg",
             "name" : "barrel_BaseColor",
-            "uri" : "barrel_BaseColor.jpg"
+            "uri" : "barrel_BaseColor.ktx2"
         },
         {
             "mimeType" : "image/jpeg",
             "name" : "barrel_Metallic-barrel_Roughness",
-            "uri" : "barrel_Metallic-barrel_Roughness.jpg"
+            "uri" : "barrel_Metallic-barrel_Roughness.ktx2"
         }
     ],
     "accessors" : [

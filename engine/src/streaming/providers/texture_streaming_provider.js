@@ -2,6 +2,7 @@ import { MAX_BUFFERED_FRAMES } from "../../core/minimal.js";
 import { global_dispatcher } from "../../core/dispatcher.js";
 import { Renderer } from "../../renderer/renderer.js";
 import { TextureArrayPools } from "../../renderer/texture_pool.js";
+import { TextureManager } from "../../renderer/texture_manager.js";
 import { JobSystem, JobStatus } from "../../utility/job_system.js";
 import { Name } from "../../utility/names.js";
 import { StreamProvider, StreamUpdateStatus } from "../stream_provider.js";
@@ -93,6 +94,10 @@ function create_local_load_handle(load_operation) {
 
 function create_texture_load_job_payload(paths, config = {}) {
   const pool = config.pool_key ? TextureArrayPools.get_pool(config.pool_key) : null;
+  const semantic_cap = config.pool_key
+    ? TextureArrayPools.get_dimension_cap(config.pool_key)
+    : Number.POSITIVE_INFINITY;
+  const global_cap = TextureManager.get_max_texture_dimension();
 
   return {
     paths,
@@ -109,21 +114,31 @@ function create_texture_load_job_payload(paths, config = {}) {
     pooled_width: pool?.config.width,
     pooled_height: pool?.config.height,
     pooled_mip_levels: pool?.config.mip_levels,
+    supports_bc: Renderer.get().has_bc,
+    max_texture_dimension: Math.min(semantic_cap, global_cap),
+    texture_usage:
+      config.texture_usage ??
+      (config.pool_key
+        ? config.pool_key === "albedo" || config.pool_key === "emission"
+          ? "color"
+          : "data"
+        : undefined),
   };
 }
 
 function resolve_texture_load_target(source_width, source_height, config = {}) {
+  const global_cap = TextureManager.get_max_texture_dimension();
   if (!config.pool_key) {
+    const width = Math.max(1, Math.min(source_width, global_cap));
+    const height = Math.max(1, Math.min(source_height, global_cap));
     return {
-      width: source_width,
-      height: source_height,
-      mip_levels: config.no_mips
-        ? 1
-        : Math.floor(Math.log2(Math.max(source_width, source_height))) + 1,
+      width,
+      height,
+      mip_levels: config.no_mips ? 1 : Math.floor(Math.log2(Math.max(width, height))) + 1,
     };
   }
 
-  const cap = TextureArrayPools.get_dimension_cap(config.pool_key);
+  const cap = Math.min(TextureArrayPools.get_dimension_cap(config.pool_key), global_cap);
   const pool = TextureArrayPools.get_pool(config.pool_key);
   const width = Math.max(1, Math.min(source_width, cap));
   const height = Math.max(1, Math.min(source_height, cap));
@@ -286,8 +301,8 @@ export class TextureStreamingProvider extends StreamProvider {
       budget.uploads_remaining > 0
     ) {
       const mip_chain = state.texture_data.mip_chains[state.next_layer];
-      const mip_bitmap = mip_chain[state.next_mip];
-      const pixel_cost = Math.max(1, mip_bitmap.width * mip_bitmap.height);
+      const mip_data = mip_chain[state.next_mip];
+      const pixel_cost = Math.max(1, mip_data.width * mip_data.height);
 
       if (
         budget.uploads_remaining < budget.initial_upload_count &&
@@ -296,12 +311,16 @@ export class TextureStreamingProvider extends StreamProvider {
         break;
       }
 
-      texture._upload_bitmap(
-        state.next_layer,
-        state.next_mip,
-        mip_bitmap,
-        texture.config.flip_y !== undefined ? texture.config.flip_y : true
-      );
+      if (mip_data.data) {
+        texture._upload_texture_data(state.next_layer, state.next_mip, mip_data);
+      } else {
+        texture._upload_bitmap(
+          state.next_layer,
+          state.next_mip,
+          mip_data,
+          texture.config.flip_y !== undefined ? texture.config.flip_y : true
+        );
+      }
 
       budget.uploads_remaining--;
       budget.pixels_remaining = Math.max(0, budget.pixels_remaining - pixel_cost);
@@ -337,6 +356,13 @@ export class TextureStreamingProvider extends StreamProvider {
       const renderer = Renderer.get();
       const placeholder_image = texture.image;
 
+      if (texture_data.format) {
+        // Preserve the engine's established color-space contract. Source color
+        // textures contain gamma-encoded values, but the material shaders and
+        // lighting pipeline currently expect them through an unorm view.
+        texture.config.format = texture_data.format;
+      }
+
       texture.config.width = texture_data.source_width;
       texture.config.height = texture_data.source_height;
       texture.config.depth = texture_data.mip_chains.length;
@@ -360,6 +386,13 @@ export class TextureStreamingProvider extends StreamProvider {
         texture.config.height = texture_data.height;
         texture.config.mip_levels = texture_data.mip_levels;
 
+        let texture_usage = texture.config.usage | GPUTextureUsage.COPY_DST;
+        if (texture_data.compressed) {
+          texture_usage &= ~(GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING);
+        } else {
+          texture_usage |= GPUTextureUsage.RENDER_ATTACHMENT;
+        }
+
         texture.image = renderer.device.createTexture({
           label: texture.config.name,
           size: {
@@ -370,8 +403,7 @@ export class TextureStreamingProvider extends StreamProvider {
           mipLevelCount: texture.config.mip_levels,
           sampleCount: texture.config.sample_count,
           format: texture.config.format,
-          usage:
-            texture.config.usage | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+          usage: texture_usage,
           dimension: texture_dimension_to_image_dimension(texture.config.dimension),
         });
       }

@@ -113,7 +113,7 @@ export class RenderingScene extends Scene {
     {
       let dirt_albedo = {
         name: "dirt_albedo",
-        paths: ["engine/textures/voxel/dirt_albedo.jpg"],
+        paths: ["engine/textures/voxel/dirt_albedo.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -124,7 +124,7 @@ export class RenderingScene extends Scene {
       };
       let dirt_roughness = {
         name: "dirt_roughness",
-        paths: ["engine/textures/voxel/dirt_roughness.jpg"],
+        paths: ["engine/textures/voxel/dirt_roughness.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -233,12 +233,12 @@ export class MLScene extends Scene {
 
     // Set the skybox for this scene.
     SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.jpg",
-      "engine/textures/gradientbox/nx.jpg",
-      "engine/textures/gradientbox/ny.jpg",
-      "engine/textures/gradientbox/py.jpg",
-      "engine/textures/gradientbox/pz.jpg",
-      "engine/textures/gradientbox/nz.jpg",
+      "engine/textures/gradientbox/px.ktx2",
+      "engine/textures/gradientbox/nx.ktx2",
+      "engine/textures/gradientbox/ny.ktx2",
+      "engine/textures/gradientbox/py.ktx2",
+      "engine/textures/gradientbox/pz.ktx2",
+      "engine/textures/gradientbox/nz.ktx2",
     ]);
 
     // Set the skybox color to white.
@@ -484,7 +484,7 @@ export class TexturesScene extends Scene {
     {
       let floor_albedo = {
         name: "floor_albedo",
-        paths: ["engine/textures/rubber_floor/Diffuse.jpg"],
+        paths: ["engine/textures/rubber_floor/Diffuse.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -495,7 +495,7 @@ export class TexturesScene extends Scene {
       };
       let floor_normal = {
         name: "floor_normal",
-        paths: ["engine/textures/rubber_floor/Normal.jpg"],
+        paths: ["engine/textures/rubber_floor/Normal.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -506,7 +506,7 @@ export class TexturesScene extends Scene {
       };
       let floor_roughness = {
         name: "floor_roughness",
-        paths: ["engine/textures/rubber_floor/ARM.jpg"],
+        paths: ["engine/textures/rubber_floor/ARM.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -531,7 +531,7 @@ export class TexturesScene extends Scene {
     {
       let wall_albedo = {
         name: "wall_albedo",
-        paths: ["engine/textures/wall/wall_albedo.jpg"],
+        paths: ["engine/textures/wall/wall_albedo.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -542,7 +542,7 @@ export class TexturesScene extends Scene {
       };
       let wall_normal = {
         name: "wall_normal",
-        paths: ["engine/textures/wall/wall_normal.jpg"],
+        paths: ["engine/textures/wall/wall_normal.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -553,7 +553,7 @@ export class TexturesScene extends Scene {
       };
       let wall_roughness = {
         name: "wall_roughness",
-        paths: ["engine/textures/wall/wall_roughness.jpg"],
+        paths: ["engine/textures/wall/wall_roughness.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -564,7 +564,7 @@ export class TexturesScene extends Scene {
       };
       let wall_ao = {
         name: "wall_ao",
-        paths: ["engine/textures/wall/wall_ao.jpg"],
+        paths: ["engine/textures/wall/wall_ao.ktx2"],
         name: "wall_ao",
         format: "rgba8unorm",
         dimension: "2d",
@@ -1124,12 +1124,12 @@ export class SolarECSTestScene extends Scene {
 
     // Set the skybox for this scene.
     SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.jpg",
-      "engine/textures/gradientbox/nx.jpg",
-      "engine/textures/gradientbox/ny.jpg",
-      "engine/textures/gradientbox/py.jpg",
-      "engine/textures/gradientbox/pz.jpg",
-      "engine/textures/gradientbox/nz.jpg",
+      "engine/textures/gradientbox/px.ktx2",
+      "engine/textures/gradientbox/nx.ktx2",
+      "engine/textures/gradientbox/ny.ktx2",
+      "engine/textures/gradientbox/py.ktx2",
+      "engine/textures/gradientbox/pz.ktx2",
+      "engine/textures/gradientbox/nz.ktx2",
     ]);
 
     // Set the skybox color to a subtle green
@@ -1370,7 +1370,7 @@ export class VoxelTerrainScene extends Scene {
     {
       let dirt_albedo = {
         name: "dirt_albedo",
-        paths: ["engine/textures/voxel/dirt_albedo.jpg"],
+        paths: ["engine/textures/voxel/dirt_albedo.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -1593,12 +1593,12 @@ export class ObjectPaintingScene extends Scene {
 
     // Skybox + view
     SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/simple_skybox/px.jpg",
-      "engine/textures/simple_skybox/nx.jpg",
-      "engine/textures/simple_skybox/ny.jpg",
-      "engine/textures/simple_skybox/py.jpg",
-      "engine/textures/simple_skybox/pz.jpg",
-      "engine/textures/simple_skybox/nz.jpg",
+      "engine/textures/simple_skybox/px.ktx2",
+      "engine/textures/simple_skybox/nx.ktx2",
+      "engine/textures/simple_skybox/ny.ktx2",
+      "engine/textures/simple_skybox/py.ktx2",
+      "engine/textures/simple_skybox/pz.ktx2",
+      "engine/textures/simple_skybox/nz.ktx2",
     ]);
     SharedEnvironmentData.set_skybox_color([1, 1, 1, 1]);
 
@@ -1779,7 +1779,7 @@ export class GITestScene extends Scene {
     // Load worn panel textures for metallic floor
     let floor_albedo = {
       name: "floor_albedo",
-      paths: ["engine/textures/rubber_floor/Diffuse.jpg"],
+      paths: ["engine/textures/rubber_floor/Diffuse.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -1790,7 +1790,7 @@ export class GITestScene extends Scene {
     };
     let floor_normal = {
       name: "floor_normal",
-      paths: ["engine/textures/rubber_floor/Normal.jpg"],
+      paths: ["engine/textures/rubber_floor/Normal.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -1801,7 +1801,7 @@ export class GITestScene extends Scene {
     };
     let floor_arm_metallic = {
       name: "floor_metallic",
-      paths: ["engine/textures/rubber_floor/ARM.jpg"],
+      paths: ["engine/textures/rubber_floor/ARM.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -1812,7 +1812,7 @@ export class GITestScene extends Scene {
     };
     let floor_arm_roughness = {
       name: "floor_roughness",
-      paths: ["engine/textures/rubber_floor/ARM.jpg"],
+      paths: ["engine/textures/rubber_floor/ARM.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -1823,7 +1823,7 @@ export class GITestScene extends Scene {
     };
     let floor_arm_ao = {
       name: "floor_ao",
-      paths: ["engine/textures/rubber_floor/ARM.jpg"],
+      paths: ["engine/textures/rubber_floor/ARM.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -3110,6 +3110,63 @@ export class SponzaScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== Bistro Test Scene ================================
+// ------------------------------------------------------------------------------------
+
+export class BistroTestScene extends Scene {
+  name = "BistroTestScene";
+  entities = [];
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    const camera_control = this.add_layer(FreeformArcballControlProcessor);
+    camera_control.move_speed = 20.0;
+    camera_control.set_scene(this);
+
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
+
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [11.0, 5.5, 24.0];
+    view_data.view_rotation = quat.fromEuler(quat.create(), 0, 180, 0);
+    view_data.near = 0.1;
+    view_data.far = 1000.0;
+
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1.0, 0.94, 0.82, 1.0];
+    light_fragment_view.intensity = 8.0;
+    light_fragment_view.position = [0.35, 0.8, 0.25, 0.0];
+    light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
+    light_fragment_view.shadow_clipmaps = 12;
+
+    const bistro_root = this.load_gltf_scene(
+      "engine/models/bistro/bistro_exterior.gltf",
+      [0, 0, 0],
+      [0, 0, 0, 1],
+      [1, 1, 1]
+    );
+    this.entities.push(bistro_root);
+
+    log(`[${this.name}] Bistro exterior scene initialized.`);
+  }
+
+  cleanup() {
+    for (const entity of this.entities) {
+      delete_entity(entity);
+    }
+    this.entities.length = 0;
+
+    this.remove_layer(FreeformArcballControlProcessor);
+    super.cleanup();
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Living Room Scene ==============================
 // ------------------------------------------------------------------------------------
 
@@ -3298,7 +3355,7 @@ export class BackroomsScene extends Scene {
     wallpaper.sample_albedo(
       this.create_texture_config(
         "backrooms_wallpaper_albedo",
-        "example/textures/backrooms/wallpaper_albedo.png"
+        "example/textures/backrooms/wallpaper_albedo.ktx2"
       )
     );
     wallpaper.set_roughness(0.88);
@@ -3311,7 +3368,7 @@ export class BackroomsScene extends Scene {
     carpet.sample_albedo(
       this.create_texture_config(
         "backrooms_carpet_albedo",
-        "example/textures/backrooms/carpet_albedo.png"
+        "example/textures/backrooms/carpet_albedo.ktx2"
       )
     );
     carpet.set_roughness(0.98);
@@ -3324,7 +3381,7 @@ export class BackroomsScene extends Scene {
     ceiling.sample_albedo(
       this.create_texture_config(
         "backrooms_ceiling_albedo",
-        "example/textures/backrooms/ceiling_tile_albedo.png"
+        "example/textures/backrooms/ceiling_tile_albedo.ktx2"
       )
     );
     ceiling.set_roughness(0.96);
@@ -4485,6 +4542,7 @@ export class UI3DTestScene extends Scene {
   const gi_test_scene = new GITestScene("GITestScene");
   const shadow_test_scene = new ShadowTestScene("ShadowTestScene");
   const sponza_scene = new SponzaScene("SponzaScene");
+  const bistro_test_scene = new BistroTestScene("BistroTestScene");
   const living_room_scene = new LivingRoomScene("LivingRoomScene");
   const backrooms_scene = new BackroomsScene("BackroomsScene");
   const city_scene = new CityScene("CityScene");
@@ -4504,10 +4562,11 @@ export class UI3DTestScene extends Scene {
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(ui_3d_scene);
   //await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(bistro_test_scene);
   //await scene_switcher.add_scene(living_room_scene);
-  await scene_switcher.add_scene(backrooms_scene);
+  //await scene_switcher.add_scene(backrooms_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
 
   simulator.add_sim_layer(scene_switcher);
   simulator.add_sim_layer(new SceneSettingsPanel(scene_switcher));

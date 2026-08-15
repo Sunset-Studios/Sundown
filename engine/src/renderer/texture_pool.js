@@ -215,6 +215,7 @@ class TextureArrayPool {
       member.config.width = this.config.width;
       member.config.height = this.config.height;
       member.config.mip_levels = this.config.mip_levels;
+      member.config.format = this.config.format;
     }
   }
 }
@@ -272,6 +273,10 @@ export class TextureArrayPools {
       pool = new TextureArrayPool(normalized);
       ResourceCache.get().store(CacheTypes.IMAGE_POOL, key, pool);
       Renderer.get().mark_bind_groups_dirty(true);
+    } else if (pool.config.format !== normalized.format) {
+      throw new Error(
+        `Texture pool '${key}' cannot mix '${pool.config.format}' and '${normalized.format}' textures. Import every texture used by a semantic pool to KTX2, or disable pooling for that texture.`
+      );
     } else if (pool.needs_resize(normalized)) {
       pool.resize(normalized);
     }

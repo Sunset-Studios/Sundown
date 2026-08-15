@@ -52837,257 +52837,257 @@
 		{
 			"mimeType":"image/jpeg",
 			"name":"metal_bare_0029_02_tiled",
-			"uri":"Textures/metal_bare_0029_02_tiled.jpg"
+			"uri":"Textures/metal_bare_0029_02_tiled.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"road_road_edge_0031_01_cut",
-			"uri":"Textures/road_road_edge_0031_01_cut.jpg"
+			"uri":"Textures/road_road_edge_0031_01_cut.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"sidewalk_1_Normal",
-			"uri":"Textures/sidewalk_1_Normal.jpg"
+			"uri":"Textures/sidewalk_1_Normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"sidewalk_1",
-			"uri":"Textures/sidewalk_1.jpg"
+			"uri":"Textures/sidewalk_1.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"road_road_0019_01_tiled",
-			"uri":"Textures/road_road_0019_01_tiled.jpg"
+			"uri":"Textures/road_road_0019_01_tiled.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"sidewalk 1 (Normal Map) 1",
-			"uri":"Textures/sidewalk_1_Normal_1.jpg"
+			"uri":"Textures/sidewalk_1_Normal_1.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"sidewalk 1 - Copy",
-			"uri":"Textures/sidewalk_1_Copy.jpg"
+			"uri":"Textures/sidewalk_1_Copy.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"bricks 1 (Normal Map)",
-			"uri":"Textures/bricks_1_Normal.jpg"
+			"uri":"Textures/bricks_1_Normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"bricks 1 - Copy",
-			"uri":"Textures/bricks_1_Copy.jpg"
+			"uri":"Textures/bricks_1_Copy.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"glass 1",
-			"uri":"Textures/glass_1.jpg"
+			"uri":"Textures/glass_1.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"bricks 1",
-			"uri":"Textures/bricks_1.jpg"
+			"uri":"Textures/bricks_1.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete base - copy",
-			"uri":"Textures/concrete_base_copy.jpg"
+			"uri":"Textures/concrete_base_copy.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"door 1",
-			"uri":"Textures/door_1.jpg"
+			"uri":"Textures/door_1.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"metal_bare_0041_01_tiled_normal",
-			"uri":"Textures/metal_bare_0041_01_tiled_normal.jpg"
+			"uri":"Textures/metal_bare_0041_01_tiled_normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"metal_bare_0041_01_tiled",
-			"uri":"Textures/metal_bare_0041_01_tiled.jpg"
+			"uri":"Textures/metal_bare_0041_01_tiled.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete - copy4",
-			"uri":"Textures/concrete_copy4.jpg"
+			"uri":"Textures/concrete_copy4.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"sidewalk 1 - Copy2",
-			"uri":"Textures/sidewalk_1_Copy2.jpg"
+			"uri":"Textures/sidewalk_1_Copy2.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete_copy",
-			"uri":"Textures/concrete_copy.jpg"
+			"uri":"Textures/concrete_copy.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"grid 1",
-			"uri":"Textures/grid_1.jpg"
+			"uri":"Textures/grid_1.ktx2"
 		},
 		{
 			"mimeType":"image/png",
 			"name":"13",
-			"uri":"Textures/13.png"
+			"uri":"Textures/13.ktx2"
 		},
 		{
 			"mimeType":"image/png",
 			"name":"0",
-			"uri":"Textures/0.png"
+			"uri":"Textures/0.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"SC bus advert 16",
-			"uri":"Textures/SC_bus_advert_16.jpg"
+			"uri":"Textures/SC_bus_advert_16.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"wood_plywood_new_0010_01",
-			"uri":"Textures/wood_plywood_new_0010_01.jpg"
+			"uri":"Textures/wood_plywood_new_0010_01.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete - copy5",
-			"uri":"Textures/concrete_copy5.jpg"
+			"uri":"Textures/concrete_copy5.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"bricks 2 (Normal Map)",
-			"uri":"Textures/bricks_2_Normal.jpg"
+			"uri":"Textures/bricks_2_Normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"bricks 2",
-			"uri":"Textures/bricks_2.jpg"
+			"uri":"Textures/bricks_2.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete 1",
-			"uri":"Textures/concrete_1.jpg"
+			"uri":"Textures/concrete_1.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"metal plates 1 (Normal Map)",
-			"uri":"Textures/metal_plates_1_Normal.jpg"
+			"uri":"Textures/metal_plates_1_Normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"metal plates 1",
-			"uri":"Textures/metal_plates_1.jpg"
+			"uri":"Textures/metal_plates_1.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete - copy2",
-			"uri":"Textures/concrete_copy2.jpg"
+			"uri":"Textures/concrete_copy2.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"billboard 2",
-			"uri":"Textures/billboard_2.jpg"
+			"uri":"Textures/billboard_2.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete_base_0019_01",
-			"uri":"Textures/concrete_base_0019_01.jpg"
+			"uri":"Textures/concrete_base_0019_01.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete - copy3",
-			"uri":"Textures/concrete_copy3.jpg"
+			"uri":"Textures/concrete_copy3.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"SC_European_Hackberry_bark",
-			"uri":"Textures/SC_European_Hackberry_bark.jpg"
+			"uri":"Textures/SC_European_Hackberry_bark.ktx2"
 		},
 		{
 			"mimeType":"image/png",
 			"name":"SC_European_Hackberry_leaf",
-			"uri":"Textures/SC_European_Hackberry_leaf.png"
+			"uri":"Textures/SC_European_Hackberry_leaf.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"brick_pavement_0133_01_normal",
-			"uri":"Textures/brick_pavement_0133_01_normal.jpg"
+			"uri":"Textures/brick_pavement_0133_01_normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"brick_pavement_0133_01",
-			"uri":"Textures/brick_pavement_0133_01.jpg"
+			"uri":"Textures/brick_pavement_0133_01.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"grass_grass_0069_01",
-			"uri":"Textures/grass_grass_0069_01.jpg"
+			"uri":"Textures/grass_grass_0069_01.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete 1 - copy",
-			"uri":"Textures/concrete_1_copy.jpg"
+			"uri":"Textures/concrete_1_copy.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"brick_pavement_0111_01_tiled_normal",
-			"uri":"Textures/brick_pavement_0111_01_tiled_normal.jpg"
+			"uri":"Textures/brick_pavement_0111_01_tiled_normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"brick_pavement_0111_01_tiled",
-			"uri":"Textures/brick_pavement_0111_01_tiled.jpg"
+			"uri":"Textures/brick_pavement_0111_01_tiled.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"brick_pavement_0067_01_tiled_normal",
-			"uri":"Textures/brick_pavement_0067_01_tiled_normal.jpg"
+			"uri":"Textures/brick_pavement_0067_01_tiled_normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"brick_pavement_0067_01_tiled",
-			"uri":"Textures/brick_pavement_0067_01_tiled.jpg"
+			"uri":"Textures/brick_pavement_0067_01_tiled.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"concrete 1 - copy1",
-			"uri":"Textures/concrete_1_copy1.jpg"
+			"uri":"Textures/concrete_1_copy1.ktx2"
 		},
 		{
 			"mimeType":"image/png",
 			"name":"advert_jeffrey_hotel_restaurant",
-			"uri":"Textures/advert_jeffrey_hotel_restaurant.png"
+			"uri":"Textures/advert_jeffrey_hotel_restaurant.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"metal_tread_plate_0033_01_cropped",
-			"uri":"Textures/metal_tread_plate_0033_01_cropped.jpg"
+			"uri":"Textures/metal_tread_plate_0033_01_cropped.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"metal_tread_plate_0025_01_tiled_normal",
-			"uri":"Textures/metal_tread_plate_0025_01_tiled_normal.jpg"
+			"uri":"Textures/metal_tread_plate_0025_01_tiled_normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"metal_tread_plate_0025_01_tiled",
-			"uri":"Textures/metal_tread_plate_0025_01_tiled.jpg"
+			"uri":"Textures/metal_tread_plate_0025_01_tiled.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"roof - copy",
-			"uri":"Textures/roof_copy.jpg"
+			"uri":"Textures/roof_copy.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"asphalt 1 (Normal Map)",
-			"uri":"Textures/asphalt_1_Normal.jpg"
+			"uri":"Textures/asphalt_1_Normal.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"asphalt 1",
-			"uri":"Textures/asphalt_1.jpg"
+			"uri":"Textures/asphalt_1.ktx2"
 		}
 	],
 	"accessors":[

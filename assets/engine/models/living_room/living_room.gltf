@@ -4546,83 +4546,83 @@
 	"images":[
 		{
 			"mimeType":"image/jpeg",
-			"name":"shade-stripes.jpg",
-			"uri":"textures/shade-stripes.jpg"
+			"name":"shade-stripes.ktx2",
+			"uri":"textures/shade-stripes.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"photo4.jpg",
-			"uri":"textures/photo4.jpg"
+			"name":"photo4.ktx2",
+			"uri":"textures/photo4.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"pic5wide.jpg",
-			"uri":"textures/pic5wide.jpg"
+			"name":"pic5wide.ktx2",
+			"uri":"textures/pic5wide.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"wood4.jpg",
-			"uri":"textures/wood4.jpg"
+			"name":"wood4.ktx2",
+			"uri":"textures/wood4.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"apple.jpg",
-			"uri":"textures/apple.jpg"
+			"name":"apple.ktx2",
+			"uri":"textures/apple.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"carpet-text3b.jpg",
-			"uri":"textures/carpet-text3b.jpg"
+			"name":"carpet-text3b.ktx2",
+			"uri":"textures/carpet-text3b.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"cushion-purple-yellow-stripe.jpg",
-			"uri":"textures/cushion-purple-yellow-stripe.jpg"
+			"name":"cushion-purple-yellow-stripe.ktx2",
+			"uri":"textures/cushion-purple-yellow-stripe.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"cushion-green-circles.jpg",
-			"uri":"textures/cushion-green-circles.jpg"
+			"name":"cushion-green-circles.ktx2",
+			"uri":"textures/cushion-green-circles.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"book-spines.jpg",
-			"uri":"textures/book-spines.jpg"
+			"name":"book-spines.ktx2",
+			"uri":"textures/book-spines.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"photo3.jpg",
-			"uri":"textures/photo3.jpg"
+			"name":"photo3.ktx2",
+			"uri":"textures/photo3.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"magazine.jpg",
-			"uri":"textures/magazine.jpg"
+			"name":"magazine.ktx2",
+			"uri":"textures/magazine.ktx2"
 		},
 		{
 			"mimeType":"image/png",
-			"name":"Shade-paper.jpg",
-			"uri":"textures/Shade-paper.jpg"
+			"name":"Shade-paper.ktx2",
+			"uri":"textures/Shade-paper.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"cushion-stripe-purple.jpg",
-			"uri":"textures/cushion-stripe-purple.jpg"
+			"name":"cushion-stripe-purple.ktx2",
+			"uri":"textures/cushion-stripe-purple.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"picture11-vert.jpg",
-			"uri":"textures/picture11-vert.jpg"
+			"name":"picture11-vert.ktx2",
+			"uri":"textures/picture11-vert.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"photo1.jpg",
-			"uri":"textures/photo1.jpg"
+			"name":"photo1.ktx2",
+			"uri":"textures/photo1.ktx2"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"photo2.jpg",
-			"uri":"textures/photo2.jpg"
+			"name":"photo2.ktx2",
+			"uri":"textures/photo2.ktx2"
 		}
 	],
 	"accessors":[

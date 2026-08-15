@@ -1000,24 +1000,18 @@ glTFLoader.prototype.load = function (uri, callback) {
       }
     }
 
-    // load images
-    var loadImageCallback = function (img, iid, url) {
-      loader._imageLoaded++;
-      loader.glTF.images[iid] = img;
-      loader.glTF.image_bases[iid] = url;
-      loader._checkComplete();
-    };
-
+    // Record image URLs without decoding them here. Sundown's texture streaming
+    // provider owns KTX2 loading, mip selection, transcoding, and upload.
+    // Avoiding an eager duplicate decode keeps imported textures on the compressed
+    // path from asset storage through GPU upload.
     var iid;
 
     if (json.images) {
       for (iid in json.images) {
         loader._imageRequested++;
-        _loadImage(
-          loader.baseUri + json.images[iid].uri,
-          iid,
-          loadImageCallback
-        );
+        loader.glTF.images[iid] = null;
+        loader.glTF.image_bases[iid] = loader.baseUri + json.images[iid].uri;
+        loader._imageLoaded++;
       }
     }
 

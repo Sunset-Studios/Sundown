@@ -1061,6 +1061,7 @@ export class StandardMaterial {
     // set this pool key and create the material internally (so we can catch relevant texture events
     // in order to get the proper bindless handle)
     texture_config.pool_key = "albedo";
+    texture_config.texture_usage = "color";
 
     const material = Material.get(this.material_id);
 
@@ -1113,6 +1114,7 @@ export class StandardMaterial {
     // set this pool key and create the material internally (so we can catch relevant texture events
     // in order to get the proper bindless handle)
     texture_config.pool_key = "normal";
+    texture_config.texture_usage = "data";
 
     const material = Material.get(this.material_id);
 
@@ -1164,6 +1166,7 @@ export class StandardMaterial {
     // set this pool key and create the material internally (so we can catch relevant texture events
     // in order to get the proper bindless handle)
     texture_config.pool_key = "roughness";
+    texture_config.texture_usage = "data";
 
     const material = Material.get(this.material_id);
 
@@ -1217,6 +1220,7 @@ export class StandardMaterial {
     // set this pool key and create the material internally (so we can catch relevant texture events
     // in order to get the proper bindless handle)
     texture_config.pool_key = "metallic";
+    texture_config.texture_usage = "data";
 
     const material = Material.get(this.material_id);
 
@@ -1270,6 +1274,7 @@ export class StandardMaterial {
     // set this flag and create the material internally (so we can catch relevatn texture events
     // in order to get the proper bindless handle)
     texture_config.pool_key = "ao";
+    texture_config.texture_usage = "data";
 
     const material = Material.get(this.material_id);
 
@@ -1323,6 +1328,7 @@ export class StandardMaterial {
     // set this pool key and create the material internally (so we can catch relevant texture events
     // in order to get the proper bindless handle)
     texture_config.pool_key = "height";
+    texture_config.texture_usage = "data";
 
     const material = Material.get(this.material_id);
 
@@ -1376,6 +1382,7 @@ export class StandardMaterial {
     // set this pool key and create the material internally (so we can catch relevant texture events
     // in order to get the proper bindless handle)
     texture_config.pool_key = "specular";
+    texture_config.texture_usage = "data";
 
     const material = Material.get(this.material_id);
 
@@ -1429,6 +1436,7 @@ export class StandardMaterial {
     // set this pool key and create the material internally (so we can catch relevant texture events
     // in order to get the proper bindless handle)
     texture_config.pool_key = "emission";
+    texture_config.texture_usage = "color";
 
     const material = Material.get(this.material_id);
 

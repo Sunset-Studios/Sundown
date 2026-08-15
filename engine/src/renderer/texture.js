@@ -6,6 +6,7 @@ import { ResourceCache } from "./resource_cache.js";
 import { ImageFlags } from "./renderer_types.js";
 import { CacheTypes } from "./renderer_types.js";
 import { TextureArrayPools } from "./texture_pool.js";
+import { TextureManager } from "./texture_manager.js";
 import {
   close_bitmap_mip_chains,
   TextureStreamingProvider,
@@ -122,6 +123,11 @@ export class Texture {
     this.config = { ...this.config, ...config };
     this.config.type = config.format.includes("depth") ? "depth" : "color";
 
+    if (Texture.is_compressed_format(this.config.format)) {
+      this.config.usage &= ~(GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING);
+      this.config.usage |= GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST;
+    }
+
     if (this.config.type === "depth") {
       this.config.clear_value =
         this.config.depth_clear !== undefined ? this.config.depth_clear : 1.0;
@@ -146,17 +152,17 @@ export class Texture {
       this.config.mip_levels = pool.config.mip_levels;
     } else {
       this.image = renderer.device.createTexture({
-        label: config.name,
+        label: this.config.name,
         size: {
-          width: config.width,
-          height: config.height,
-          depthOrArrayLayers: config.dimension === "cube" ? 6 : config.depth,
+          width: this.config.width,
+          height: this.config.height,
+          depthOrArrayLayers: this.config.dimension === "cube" ? 6 : this.config.depth,
         },
-        mipLevelCount: config.mip_levels,
-        sampleCount: config.sample_count,
-        format: config.format,
-        usage: config.usage,
-        dimension: Texture.texture_dimension_to_image_dimension(config.dimension),
+        mipLevelCount: this.config.mip_levels,
+        sampleCount: this.config.sample_count,
+        format: this.config.format,
+        usage: this.config.usage,
+        dimension: Texture.texture_dimension_to_image_dimension(this.config.dimension),
       });
       this._setup_views();
     }
@@ -328,8 +334,12 @@ export class Texture {
     };
     const mip_levels = Math.max(texture.config.mip_levels, 1);
     for (let mip = 0; mip < mip_levels; mip++) {
-      const w = Math.max(1, texture.config.width >> mip);
-      const h = Math.max(1, texture.config.height >> mip);
+      let w = Math.max(1, texture.config.width >> mip);
+      let h = Math.max(1, texture.config.height >> mip);
+      if (Texture.is_compressed_format(texture.config.format)) {
+        w = Math.ceil(w / 4) * 4;
+        h = Math.ceil(h / 4) * 4;
+      }
       encoder.copyTextureToTexture(
         { texture: texture.image, mipLevel: mip, origin: src_origin },
         { texture: this.image, mipLevel: mip, origin: dst_origin },
@@ -482,6 +492,47 @@ export class Texture {
     );
   }
 
+  _upload_texture_data(layer, mip_level, mip_data, renderer = Renderer.get()) {
+    if (
+      !mip_data?.data ||
+      mip_data.width < 1 ||
+      mip_data.height < 1 ||
+      mip_data.bytes_per_row < 1 ||
+      mip_data.rows_per_image < 1
+    ) {
+      throw new Error(
+        `Texture '${this.config.name}' received invalid cooked data for layer ${layer}, mip ${mip_level}.`
+      );
+    }
+    const required_bytes = mip_data.bytes_per_row * mip_data.rows_per_image;
+    if (mip_data.data.byteLength < required_bytes) {
+      throw new Error(
+        `Texture '${this.config.name}' layer ${layer}, mip ${mip_level} needs ${required_bytes} upload bytes but received ${mip_data.data.byteLength}.`
+      );
+    }
+
+    const target_layer = this.config.pool_key ? this.bindless_handle + layer : layer;
+    renderer.device.queue.writeTexture(
+      {
+        texture: this.image,
+        mipLevel: mip_level,
+        origin: { x: 0, y: 0, z: target_layer },
+      },
+      mip_data.data,
+      {
+        bytesPerRow: mip_data.bytes_per_row,
+        rowsPerImage: mip_data.rows_per_image,
+      },
+      {
+        // Compressed copies address whole physical texel blocks. The padded copy
+        // extent is valid even for logical 2x2 and 1x1 tail mips.
+        width: mip_data.copy_width ?? mip_data.width,
+        height: mip_data.copy_height ?? mip_data.height,
+        depthOrArrayLayers: 1,
+      }
+    );
+  }
+
   static get_default_sampler() {
     return TextureSampler.create({
       name: "default_sampler",
@@ -543,6 +594,14 @@ export class Texture {
     }
 
     return image;
+  }
+
+  static set_max_dimension(max_dimension) {
+    TextureManager.set_max_texture_dimension(max_dimension);
+  }
+
+  static is_compressed_format(format) {
+    return /^(bc[1-7]h?|etc2|eac|astc)-/.test(format ?? "");
   }
 
   static #default = null;
@@ -607,59 +666,59 @@ export class Texture {
       Texture.#default_blue_noise = Texture.load({
         name: "blue_noise_32x32",
         paths: [
-          "engine/textures/noise/blue/LDR_RGB1_0.png",
-          "engine/textures/noise/blue/LDR_RGB1_1.png",
-          "engine/textures/noise/blue/LDR_RGB1_2.png",
-          "engine/textures/noise/blue/LDR_RGB1_3.png",
-          "engine/textures/noise/blue/LDR_RGB1_4.png",
-          "engine/textures/noise/blue/LDR_RGB1_5.png",
-          "engine/textures/noise/blue/LDR_RGB1_6.png",
-          "engine/textures/noise/blue/LDR_RGB1_7.png",
-          "engine/textures/noise/blue/LDR_RGB1_8.png",
-          "engine/textures/noise/blue/LDR_RGB1_9.png",
-          "engine/textures/noise/blue/LDR_RGB1_10.png",
-          "engine/textures/noise/blue/LDR_RGB1_11.png",
-          "engine/textures/noise/blue/LDR_RGB1_12.png",
-          "engine/textures/noise/blue/LDR_RGB1_13.png",
-          "engine/textures/noise/blue/LDR_RGB1_14.png",
-          "engine/textures/noise/blue/LDR_RGB1_15.png",
-          "engine/textures/noise/blue/LDR_RGB1_16.png",
-          "engine/textures/noise/blue/LDR_RGB1_17.png",
-          "engine/textures/noise/blue/LDR_RGB1_18.png",
-          "engine/textures/noise/blue/LDR_RGB1_19.png",
-          "engine/textures/noise/blue/LDR_RGB1_20.png",
-          "engine/textures/noise/blue/LDR_RGB1_21.png",
-          "engine/textures/noise/blue/LDR_RGB1_22.png",
-          "engine/textures/noise/blue/LDR_RGB1_23.png",
-          "engine/textures/noise/blue/LDR_RGB1_24.png",
-          "engine/textures/noise/blue/LDR_RGB1_25.png",
-          "engine/textures/noise/blue/LDR_RGB1_26.png",
-          "engine/textures/noise/blue/LDR_RGB1_27.png",
-          "engine/textures/noise/blue/LDR_RGB1_28.png",
-          "engine/textures/noise/blue/LDR_RGB1_29.png",
-          "engine/textures/noise/blue/LDR_RGB1_30.png",
-          "engine/textures/noise/blue/LDR_RGB1_31.png",
-          "engine/textures/noise/blue/LDR_RGB1_32.png",
-          "engine/textures/noise/blue/LDR_RGB1_33.png",
-          "engine/textures/noise/blue/LDR_RGB1_34.png",
-          "engine/textures/noise/blue/LDR_RGB1_46.png",
-          "engine/textures/noise/blue/LDR_RGB1_47.png",
-          "engine/textures/noise/blue/LDR_RGB1_48.png",
-          "engine/textures/noise/blue/LDR_RGB1_49.png",
-          "engine/textures/noise/blue/LDR_RGB1_50.png",
-          "engine/textures/noise/blue/LDR_RGB1_51.png",
-          "engine/textures/noise/blue/LDR_RGB1_52.png",
-          "engine/textures/noise/blue/LDR_RGB1_53.png",
-          "engine/textures/noise/blue/LDR_RGB1_54.png",
-          "engine/textures/noise/blue/LDR_RGB1_55.png",
-          "engine/textures/noise/blue/LDR_RGB1_56.png",
-          "engine/textures/noise/blue/LDR_RGB1_57.png",
-          "engine/textures/noise/blue/LDR_RGB1_58.png",
-          "engine/textures/noise/blue/LDR_RGB1_59.png",
-          "engine/textures/noise/blue/LDR_RGB1_60.png",
-          "engine/textures/noise/blue/LDR_RGB1_61.png",
-          "engine/textures/noise/blue/LDR_RGB1_62.png",
-          "engine/textures/noise/blue/LDR_RGB1_63.png",
+          "engine/textures/noise/blue/LDR_RGB1_0.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_1.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_2.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_3.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_4.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_5.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_6.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_7.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_8.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_9.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_10.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_11.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_12.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_13.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_14.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_15.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_16.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_17.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_18.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_19.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_20.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_21.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_22.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_23.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_24.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_25.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_26.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_27.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_28.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_29.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_30.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_31.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_32.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_33.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_34.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_46.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_47.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_48.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_49.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_50.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_51.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_52.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_53.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_54.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_55.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_56.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_57.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_58.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_59.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_60.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_61.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_62.ktx2",
+          "engine/textures/noise/blue/LDR_RGB1_63.ktx2",
         ],
         format: r8unorm_format,
         dimension: "2d-array",

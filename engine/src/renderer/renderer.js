@@ -43,6 +43,8 @@ function webgpu_feature_display_name(feature) {
       return "Shader subgroups";
     case "timestamp-query":
       return "GPU timestamp queries";
+    case "texture-compression-bc":
+      return "BC texture compression";
     default:
       return feature;
   }
@@ -77,6 +79,7 @@ export class Renderer {
   // Renderer features
   has_f16 = false;
   has_subgroups = false;
+  has_bc = false;
   cvar_unsubscribers = [];
 
   static renderers = [];
@@ -117,10 +120,14 @@ export class Renderer {
 
     this.has_f16 = this.adapter.features.has("shader-f16") && !options.use_precision_float;
     this.has_subgroups = this.adapter.features.has("subgroups");
+    this.has_bc = this.adapter.features.has("texture-compression-bc");
 
     let required_features = [...REQUIRED_WEBGPU_FEATURES];
     if (this.has_f16) {
       required_features.push("shader-f16");
+    }
+    if (this.has_bc) {
+      required_features.push("texture-compression-bc");
     }
     if (__DEV__) {
       required_features.push("timestamp-query");

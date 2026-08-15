@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "cook": "node tools/fragment_preprocessor.js && node tools/shader_preprocessor.js && node tools/meshlet_preprocessor.js && node tools/sbvh_preprocessor.js && node tools/msdf_font_generator.js",
+    "import:textures": "node tools/texture_importer.js",
     "predev": "npm run cook",
     "dev": "node tools/dev_server.js",
     "prebuild": "npm run cook",
@@ -28,14 +29,17 @@
   "author": "Adrian Sanchez",
   "license": "MIT",
   "dependencies": {
+    "@h00w/basis-universal-transcoder": "^2.1.0",
     "gl-matrix": "^3.4.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "express": "^4.21.2",
+    "ktx2-encoder": "^0.5.3",
     "meshoptimizer": "^1.0.1",
     "msdf-bmfont-xml": "^2.5.4",
     "prettier": "^3.3.3",
+    "sharp": "^0.33.5",
     "vite": "^6.3.5",
     "wgsl_reflect": "^1.0.8"
   }
