@@ -4,7 +4,7 @@
   "description": "A WebGPU game engine for fun and games.",
   "type": "module",
   "scripts": {
-    "cook": "node tools/fragment_preprocessor.js && node tools/shader_preprocessor.js && node tools/meshlet_preprocessor.js && node tools/sbvh_preprocessor.js && node tools/msdf_font_generator.js",
+    "cook": "node tools/texture_importer.js --apply && node tools/fragment_preprocessor.js && node tools/shader_preprocessor.js && node tools/meshlet_preprocessor.js && node tools/sbvh_preprocessor.js && node tools/msdf_font_generator.js",
     "import:textures": "node tools/texture_importer.js",
     "predev": "npm run cook",
     "dev": "node tools/dev_server.js",

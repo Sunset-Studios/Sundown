@@ -921,6 +921,25 @@ export class StandardMaterial {
       }
     }
 
+    // Texture loads complete asynchronously. Bind these callbacks before sampling so
+    // dispatcher registrations keep the StandardMaterial instance as their receiver.
+    standard_material._update_albedo_bindless_handle =
+      standard_material._update_albedo_bindless_handle.bind(standard_material);
+    standard_material._update_normal_bindless_handle =
+      standard_material._update_normal_bindless_handle.bind(standard_material);
+    standard_material._update_roughness_bindless_handle =
+      standard_material._update_roughness_bindless_handle.bind(standard_material);
+    standard_material._update_metallic_bindless_handle =
+      standard_material._update_metallic_bindless_handle.bind(standard_material);
+    standard_material._update_ao_bindless_handle =
+      standard_material._update_ao_bindless_handle.bind(standard_material);
+    standard_material._update_height_bindless_handle =
+      standard_material._update_height_bindless_handle.bind(standard_material);
+    standard_material._update_specular_bindless_handle =
+      standard_material._update_specular_bindless_handle.bind(standard_material);
+    standard_material._update_emission_bindless_handle =
+      standard_material._update_emission_bindless_handle.bind(standard_material);
+
     // Set initial values
     params_buffer.set(
       [
@@ -1019,23 +1038,6 @@ export class StandardMaterial {
     } else {
       standard_material.set_specular(params.specular || 0.1);
     }
-
-    standard_material._update_albedo_bindless_handle =
-      standard_material._update_albedo_bindless_handle.bind(standard_material);
-    standard_material._update_normal_bindless_handle =
-      standard_material._update_normal_bindless_handle.bind(standard_material);
-    standard_material._update_roughness_bindless_handle =
-      standard_material._update_roughness_bindless_handle.bind(standard_material);
-    standard_material._update_metallic_bindless_handle =
-      standard_material._update_metallic_bindless_handle.bind(standard_material);
-    standard_material._update_ao_bindless_handle =
-      standard_material._update_ao_bindless_handle.bind(standard_material);
-    standard_material._update_height_bindless_handle =
-      standard_material._update_height_bindless_handle.bind(standard_material);
-    standard_material._update_specular_bindless_handle =
-      standard_material._update_specular_bindless_handle.bind(standard_material);
-    standard_material._update_emission_bindless_handle =
-      standard_material._update_emission_bindless_handle.bind(standard_material);
 
     return standard_material;
   }

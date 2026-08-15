@@ -699,8 +699,8 @@ export class Mesh {
     return mesh;
   }
 
-  static from_parsed_gltf_mesh(gltf_path, gltf_obj, gltf_mesh) {
-    const key_name = `${gltf_path}#mesh_${gltf_mesh.meshID}`;
+  static from_parsed_gltf_mesh(gltf_path, gltf_obj, gltf_mesh, cache_key_suffix = "") {
+    const key_name = `${gltf_path}#mesh_${gltf_mesh.meshID}${cache_key_suffix}`;
     const cache_key = Name.from(key_name);
     let mesh = ResourceCache.get().fetch(CacheTypes.MESH, cache_key);
     if (mesh) {
@@ -799,12 +799,14 @@ export class Mesh {
     const base_color = base?.baseColorFactor || [1, 1, 1, 1];
     let albedo_tex = null;
     if (base?.baseColorTexture) {
-      const tex = gltf.textures[base.baseColorTexture.index];
+      const texture_index = base.baseColorTexture.index;
+      const tex = gltf.textures[texture_index];
       const src = tex?.base;
       if (src) {
+        const texture_name = `${mesh.name}#texture_${texture_index}_albedo`;
         albedo_tex = {
           paths: [src],
-          name: `${mat_name}_albedo`,
+          name: texture_name,
           format: "rgba8unorm",
           dimension: "2d",
           usage:
@@ -812,7 +814,7 @@ export class Mesh {
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
-          material_notifier: `${mat_name}_albedo`,
+          material_notifier: texture_name,
         };
       }
     }
@@ -826,19 +828,21 @@ export class Mesh {
     // Normal map
     let normal_tex = null;
     if (mat.normalTexture) {
-      const tex = gltf.textures[mat.normalTexture.index];
+      const texture_index = mat.normalTexture.index;
+      const tex = gltf.textures[texture_index];
       const src = tex?.base;
       if (src) {
+        const texture_name = `${mesh.name}#texture_${texture_index}_normal`;
         normal_tex = {
           paths: [src],
-          name: `${mat_name}_normal`,
+          name: texture_name,
           format: "rgba8unorm",
           usage:
             GPUTextureUsage.TEXTURE_BINDING |
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
-          material_notifier: `${mat_name}_normal`,
+          material_notifier: texture_name,
         };
       }
     }
@@ -855,30 +859,33 @@ export class Mesh {
     let r_tex = null;
     let m_tex = null;
     if (base?.metallicRoughnessTexture) {
-      const tex = gltf.textures[base.metallicRoughnessTexture.index];
+      const texture_index = base.metallicRoughnessTexture.index;
+      const tex = gltf.textures[texture_index];
       const src = tex?.base;
       if (src) {
+        const roughness_name = `${mesh.name}#texture_${texture_index}_roughness`;
+        const metallic_name = `${mesh.name}#texture_${texture_index}_metallic`;
         r_tex = {
           paths: [src],
-          name: `${mat_name}_roughness`,
+          name: roughness_name,
           format: "rgba8unorm",
           usage:
             GPUTextureUsage.TEXTURE_BINDING |
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
-          material_notifier: `${mat_name}_roughness`,
+          material_notifier: roughness_name,
         };
         m_tex = {
           paths: [src],
-          name: `${mat_name}_metallic`,
+          name: metallic_name,
           format: "rgba8unorm",
           usage:
             GPUTextureUsage.TEXTURE_BINDING |
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
-          material_notifier: `${mat_name}_metallic`,
+          material_notifier: metallic_name,
         };
       }
     }
@@ -898,19 +905,21 @@ export class Mesh {
     let ao_tex = null;
     let ao_strength = 1.0;
     if (mat.occlusionTexture) {
-      const tex = gltf.textures[mat.occlusionTexture.index];
+      const texture_index = mat.occlusionTexture.index;
+      const tex = gltf.textures[texture_index];
       const src = tex?.base;
       if (src) {
+        const texture_name = `${mesh.name}#texture_${texture_index}_ao`;
         ao_tex = {
           paths: [src],
-          name: `${mat_name}_ao`,
+          name: texture_name,
           format: "rgba8unorm",
           usage:
             GPUTextureUsage.TEXTURE_BINDING |
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
-          material_notifier: `${mat_name}_ao`,
+          material_notifier: texture_name,
         };
       }
       ao_strength = mat.occlusionTexture.strength ?? 1.0;
@@ -928,19 +937,21 @@ export class Mesh {
     let emissive_scalar = (ef[0] + ef[1] + ef[2]) / 3.0;
     emissive_scalar = Math.max(emissive_scalar, 0.0);
     if (mat.emissiveTexture) {
-      const tex = gltf.textures[mat.emissiveTexture.index];
+      const texture_index = mat.emissiveTexture.index;
+      const tex = gltf.textures[texture_index];
       const src = tex?.base;
       if (src) {
+        const texture_name = `${mesh.name}#texture_${texture_index}_emissive`;
         emissive_tex = {
           paths: [src],
-          name: `${mat_name}_emissive`,
+          name: texture_name,
           format: "rgba8unorm",
           usage:
             GPUTextureUsage.TEXTURE_BINDING |
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
-          material_notifier: `${mat_name}_emissive`,
+          material_notifier: texture_name,
         };
       }
     }

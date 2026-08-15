@@ -25,14 +25,16 @@ const pooled_texture_dimension_caps = Object.freeze({
 // Manages a 2D texture array that can grow in capacity and dimensions.
 // ═══════════════════════════════════════════════════════════════════════════════
 class TextureArrayPool {
-  constructor(config) {
+  constructor(config, initial_capacity = MIN_TEXTURES_PER_POOL) {
     this.config = config;
     this.next_index = 0;
     this.pool_key = config.pool_key || "default";
     this.pool_id = TextureArrayPools.next_pool_id++;
-    this.capacity = MIN_TEXTURES_PER_POOL;
+    this.capacity = Math.max(MIN_TEXTURES_PER_POOL, initial_capacity);
     this.ping_pong_index = 0;
     this.members = new Set();
+
+    this._validate_capacity(this.capacity);
 
     this.texture = Texture.create({
       name: `texture_pool_${this.pool_key}`,
@@ -89,12 +91,24 @@ class TextureArrayPool {
     return index;
   }
 
+  ensure_capacity(required_capacity) {
+    if (required_capacity > this.capacity) {
+      this._grow(required_capacity);
+    }
+  }
+
   /**
-   * Doubles the pool capacity while preserving existing content.
+   * Grows the pool capacity while preserving existing content.
    * Since dimensions don't change, a simple texture copy is sufficient.
    */
-  _grow() {
-    this.capacity *= 2;
+  _grow(required_capacity = this.next_index + 1) {
+    // Scene loads reserve their complete layer demand before the first upload, so this
+    // path is normally limited to genuinely incremental additions. A 1.5x fallback
+    // keeps amortized growth while avoiding the nearly 2x unused tail that large pools
+    // commonly get from power-of-two capacity rounding.
+    const grown_capacity = Math.ceil(this.capacity * 1.5);
+    this.capacity = Math.max(required_capacity, grown_capacity);
+    this._validate_capacity(this.capacity);
     const old_ping_pong_index = this.ping_pong_index;
     this.ping_pong_index = (this.ping_pong_index + 1) % 2;
 
@@ -218,6 +232,15 @@ class TextureArrayPool {
       member.config.format = this.config.format;
     }
   }
+
+  _validate_capacity(capacity) {
+    const max_layers = Renderer.get().device.limits.maxTextureArrayLayers;
+    if (capacity > max_layers) {
+      throw new Error(
+        `Texture pool '${this.pool_key}' requires ${capacity} layers, exceeding this device's maxTextureArrayLayers limit of ${max_layers}.`
+      );
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -227,6 +250,46 @@ export class TextureArrayPools {
   static next_pool_id = 0;
   static fallback_texture = null;
   static fallback_view = null;
+  static pending_reservations = new Map();
+  static reservation_keys = new WeakMap();
+
+  /**
+   * Records a streamed texture before asynchronous decode begins. glTF material setup
+   * submits an entire scene synchronously, allowing the first completed texture to size
+   * its pool once instead of walking through several live 8/16/32/... layer arrays.
+   */
+  static reserve(config, texture) {
+    if (!config?.pool_key || !texture || this.reservation_keys.has(texture)) {
+      return;
+    }
+
+    const key = config.pool_key;
+    let reservations = this.pending_reservations.get(key);
+    if (!reservations) {
+      reservations = new Set();
+      this.pending_reservations.set(key, reservations);
+    }
+    reservations.add(texture);
+    this.reservation_keys.set(texture, key);
+  }
+
+  static release_reservation(texture) {
+    const key = this.reservation_keys.get(texture);
+    if (!key) {
+      return;
+    }
+
+    const reservations = this.pending_reservations.get(key);
+    reservations?.delete(texture);
+    if (reservations?.size === 0) {
+      this.pending_reservations.delete(key);
+    }
+    this.reservation_keys.delete(texture);
+  }
+
+  static get_pending_reservation_count(key) {
+    return this.pending_reservations.get(key)?.size ?? 0;
+  }
 
   static get_dimension_cap(pool_key) {
     return pooled_texture_dimension_caps[pool_key] ?? pooled_texture_dimension_caps.default;
@@ -267,10 +330,11 @@ export class TextureArrayPools {
   static allocate_loaded(config, texture) {
     const normalized = this.normalize_pool_config(config);
     const key = normalized.pool_key || "default";
+    const pending_count = this.get_pending_reservation_count(key);
 
     let pool = ResourceCache.get().fetch(CacheTypes.IMAGE_POOL, key);
     if (!pool) {
-      pool = new TextureArrayPool(normalized);
+      pool = new TextureArrayPool(normalized, pending_count);
       ResourceCache.get().store(CacheTypes.IMAGE_POOL, key, pool);
       Renderer.get().mark_bind_groups_dirty(true);
     } else if (pool.config.format !== normalized.format) {
@@ -281,7 +345,16 @@ export class TextureArrayPools {
       pool.resize(normalized);
     }
 
-    const index = pool.allocate(texture);
+    // Include every decode already in flight. This coalesces a burst into one resize
+    // even when only the first completed job has reached the upload provider.
+    pool.ensure_capacity(pool.next_index + Math.max(1, pending_count));
+
+    let index;
+    try {
+      index = pool.allocate(texture);
+    } finally {
+      this.release_reservation(texture);
+    }
 
     return {
       texture: pool.texture,

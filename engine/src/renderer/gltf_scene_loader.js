@@ -34,17 +34,17 @@ export class GLTFSceneLoader {
    * @param {Object} node - The GLTF node containing the mesh reference
    * @returns {Mesh|null} The mesh object, or null if node has no mesh
    */
-  static get_mesh_for_node(gltf_path, gltf_obj, node) {
+  static get_mesh_for_node(gltf_path, gltf_obj, node, mesh_variant = "") {
     if (!node || !node.mesh) return null;
 
     const gltf_mesh = node.mesh;
-    const key = `${gltf_path}#${gltf_mesh.meshID}`;
+    const key = `${gltf_path}#${gltf_mesh.meshID}${mesh_variant}`;
 
     if (this.#mesh_cache.has(key)) {
       return this.#mesh_cache.get(key);
     }
 
-    const mesh = Mesh.from_parsed_gltf_mesh(gltf_path, gltf_obj, gltf_mesh);
+    const mesh = Mesh.from_parsed_gltf_mesh(gltf_path, gltf_obj, gltf_mesh, mesh_variant);
     this.#mesh_cache.set(key, mesh);
 
     return mesh;
@@ -131,6 +131,20 @@ export class GLTFSceneLoader {
     callback = null,
     options = {}
   ) {
+    const blend_material_mode = options.blend_material_mode;
+    if (
+      blend_material_mode !== undefined &&
+      blend_material_mode !== "OPAQUE" &&
+      blend_material_mode !== "MASK"
+    ) {
+      throw new Error(
+        `GLTF blend_material_mode must be 'OPAQUE' or 'MASK', received '${blend_material_mode}'.`
+      );
+    }
+    const mesh_variant = blend_material_mode
+      ? `#blend_as_${blend_material_mode.toLowerCase()}`
+      : "";
+
     // ─────────────────────────────────────────────────────────────────────────
     // INSTANCED/FLAT MODE: Create root entity and load scene hierarchy
     // ─────────────────────────────────────────────────────────────────────────
@@ -143,6 +157,17 @@ export class GLTFSceneLoader {
 
     const loader = new glTFLoader();
     loader.load(gltf_path, (gltf_obj) => {
+      if (blend_material_mode) {
+        // Some conversion pipelines conservatively tag every material as BLEND. An
+        // explicit scene override keeps those materials in the depth-writing path while
+        // MASK still preserves cutout alpha for foliage, grates, lettering, and decals.
+        for (const material of gltf_obj.materials ?? []) {
+          if (material.alphaMode === "BLEND") {
+            material.alphaMode = blend_material_mode;
+          }
+        }
+      }
+
       const entities = [root_entity];
       const scene_meshes = new Set();
 
@@ -153,7 +178,7 @@ export class GLTFSceneLoader {
 
       const spawn_node_hierarchy = (node, parent) => {
         const local_transform = this.get_node_local_transform(node);
-        const mesh = this.get_mesh_for_node(gltf_path, gltf_obj, node);
+        const mesh = this.get_mesh_for_node(gltf_path, gltf_obj, node, mesh_variant);
         if (mesh) {
           scene_meshes.add(mesh);
         }

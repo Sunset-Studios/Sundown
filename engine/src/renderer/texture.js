@@ -222,6 +222,7 @@ export class Texture {
 
   destroy() {
     TextureStreamingProvider.cancel_streaming_load(this);
+    TextureArrayPools.release_reservation(this);
 
     ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
 
@@ -589,7 +590,13 @@ export class Texture {
 
     if (!image) {
       image = new Texture();
-      image.load(config);
+      TextureArrayPools.reserve(config, image);
+      try {
+        image.load(config);
+      } catch (error) {
+        TextureArrayPools.release_reservation(image);
+        throw error;
+      }
       ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
     }
 

@@ -462,6 +462,7 @@ export class TextureStreamingProvider extends StreamProvider {
   }
 
   cancel_stream(request) {
+    TextureArrayPools.release_reservation(request.target);
     this.release_stream_state(request.state);
   }
 
