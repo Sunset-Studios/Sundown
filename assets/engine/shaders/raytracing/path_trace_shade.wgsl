@@ -200,7 +200,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             material.emission_roughness_metallic_tiling.z,
             u32(material.texture_flags1.w), texture_pool_metallic, lod
         );
-        emissive = sample_texture_or_float_param_handle(
+        emissive = sample_emission_handle(
             u32(material.emission_handle), base_uv,
             material.emission_roughness_metallic_tiling.x,
             u32(material.texture_flags2.w), texture_pool_emission, lod

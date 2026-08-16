@@ -105,7 +105,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         texture_pool_albedo,
         lod
     ).xyz;
-    let emission = sample_texture_or_float_param_handle(
+    let emission = sample_emission_handle(
         u32(material.emission_handle),
         uv,
         material.emission_roughness_metallic_tiling.x,

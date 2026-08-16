@@ -212,6 +212,31 @@ fn sample_texture_or_float_param_handle(
     return param_val;
 }
 
+fn sample_emission_handle(
+    tex_handle: u32,
+    uv_coords: vec2<f32>,
+    intensity: f32,
+    flag: u32,
+    pool: texture_2d_array<f32>,
+    lod: f32
+) -> f32 {
+    if ((flag & 1u) != 0u) {
+        let sampled_val = sample_handle_rgba(tex_handle, uv_coords, pool, lod);
+        let channel_index = (flag >> 1u) & 3u;
+        let sampled_emission = select(
+            select(
+                select(sampled_val.r, sampled_val.g, channel_index == 1u),
+                sampled_val.b,
+                channel_index == 2u
+            ),
+            sampled_val.a,
+            channel_index == 3u
+        );
+        return sampled_emission * max(intensity, 0.0);
+    }
+    return max(intensity, 0.0);
+}
+
 // Helper function to safely normalize a vector
 fn safe_normalize(v: vec3<f32>) -> vec3<f32> {
   let len = length(v);

@@ -107,7 +107,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
             texture_pool_albedo,
             lod
         ).xyz;
-        let centroid_emissive = sample_texture_or_float_param_handle(
+        let centroid_emissive = sample_emission_handle(
             u32(material.emission_handle),
             centroid_uv,
             emissive_scalar,

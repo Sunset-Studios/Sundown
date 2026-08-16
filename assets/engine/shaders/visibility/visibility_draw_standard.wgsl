@@ -211,7 +211,7 @@ fn resolve_fragment(
         texture_pool_ao,
         ao_lod
     );
-    let emissive = sample_texture_or_float_param_handle(
+    let emissive = sample_emission_handle(
         u32(material.emission_handle),
         sample_uv,
         material.emission_roughness_metallic_tiling.x,

@@ -956,10 +956,11 @@ export class Mesh {
       }
     }
 
+    // Keep the scalar alongside the optional texture so glTF emissiveFactor and
+    // KHR_materials_emissive_strength modulate textured emitters as specified.
+    std.set_emission(emissive_scalar);
     if (emissive_tex) {
       std.sample_emission(emissive_tex);
-    } else {
-      std.set_emission(emissive_scalar);
     }
 
     return std.material_id;
