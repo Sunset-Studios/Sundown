@@ -62,6 +62,7 @@ export function get_cooked_sbvh_for_mesh(sidecar, mesh_index) {
     primitive_count: manifest_mesh.primitiveCount >>> 0,
     reference_count: manifest_mesh.referenceCount >>> 0,
     node_count: node_count >>> 0,
+    max_depth: manifest_mesh.maxDepth >>> 0,
     node_data: new Float32Array(node_data),
   };
 }

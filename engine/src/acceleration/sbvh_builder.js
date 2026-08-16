@@ -5,7 +5,7 @@
 //  Builds a binary bottom-level acceleration structure from indexed triangle geometry. The builder
 //  evaluates both centroid-based object splits and spatial splits using a binned surface-area
 //  heuristic (SAH). Spatial splits may duplicate a triangle reference across both children, clipping
-//  each duplicate's conservative AABB at the split plane to reduce node overlap.
+//  its exact convex polygon at the split plane to produce tight conservative fragment AABBs.
 //
 //  BUILD PIPELINE
 //
@@ -35,8 +35,57 @@
 export const SBVH_BIN_COUNT = 16; // SAH resolution per axis.
 export const SBVH_MAX_REFERENCE_MULTIPLIER = 2; // Maximum leaf growth from spatial duplication.
 export const SBVH_MAX_SPATIAL_DEPTH = 8; // Restricts expensive spatial evaluation near the root.
+export const SBVH_MAX_TREE_DEPTH = 24; // Must not exceed the traversal shader's node stack.
 const COST_EPSILON = 1e-5; // Requires a meaningful spatial-SAH win over an object split.
 const BOUNDS_EPSILON = 1e-6; // Treats near-zero extents and plane contacts as degenerate.
+const float_rounding_values = new Float32Array(1);
+const float_rounding_bits = new Uint32Array(float_rounding_values.buffer);
+
+/**
+ * Rounds a lower bound outward to the nearest representable f32.
+ *
+ * @param {number} value
+ * @returns {number}
+ */
+function round_min_to_f32(value) {
+  const rounded = Math.fround(value);
+  if (!Number.isFinite(rounded) || rounded <= value) {
+    return rounded;
+  }
+
+  float_rounding_values[0] = rounded;
+  if (rounded === 0.0) {
+    float_rounding_bits[0] = 0x80000001;
+  } else if (rounded > 0.0) {
+    float_rounding_bits[0]--;
+  } else {
+    float_rounding_bits[0]++;
+  }
+  return float_rounding_values[0];
+}
+
+/**
+ * Rounds an upper bound outward to the nearest representable f32.
+ *
+ * @param {number} value
+ * @returns {number}
+ */
+function round_max_to_f32(value) {
+  const rounded = Math.fround(value);
+  if (!Number.isFinite(rounded) || rounded >= value) {
+    return rounded;
+  }
+
+  float_rounding_values[0] = rounded;
+  if (rounded === 0.0) {
+    float_rounding_bits[0] = 0x00000001;
+  } else if (rounded > 0.0) {
+    float_rounding_bits[0]++;
+  } else {
+    float_rounding_bits[0]--;
+  }
+  return float_rounding_values[0];
+}
 
 // ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
 // │                                      BOUNDS PRIMITIVES                                        │
@@ -78,21 +127,103 @@ function is_valid_bounds(bounds) {
 }
 
 /**
- * Copies a triangle reference before one side is clipped by a spatial split.
+ * Builds a triangle reference from an exact convex polygon fragment.
  *
- * @param {object} ref
- * @returns {object}
+ * Spatial references retain their polygon so subsequent split candidates can clip actual geometry
+ * instead of repeatedly chopping an increasingly loose conservative AABB.
+ *
+ * @param {number} tri_id
+ * @param {number[]} polygon - Flat XYZ triples in winding order.
+ * @returns {object|null}
  */
-function clone_ref(ref) {
-  return {
-    tri_id: ref.tri_id,
-    min_x: ref.min_x,
-    min_y: ref.min_y,
-    min_z: ref.min_z,
-    max_x: ref.max_x,
-    max_y: ref.max_y,
-    max_z: ref.max_z,
+function make_ref_from_polygon(tri_id, polygon) {
+  if (!polygon || polygon.length < 9) {
+    return null;
+  }
+
+  let min_x = Infinity;
+  let min_y = Infinity;
+  let min_z = Infinity;
+  let max_x = -Infinity;
+  let max_y = -Infinity;
+  let max_z = -Infinity;
+  for (let i = 0; i < polygon.length; i += 3) {
+    const x = polygon[i + 0];
+    const y = polygon[i + 1];
+    const z = polygon[i + 2];
+    min_x = Math.min(min_x, x);
+    min_y = Math.min(min_y, y);
+    min_z = Math.min(min_z, z);
+    max_x = Math.max(max_x, x);
+    max_y = Math.max(max_y, y);
+    max_z = Math.max(max_z, z);
+  }
+
+  const ref = {
+    tri_id,
+    polygon,
+    min_x,
+    min_y,
+    min_z,
+    max_x,
+    max_y,
+    max_z,
   };
+  return is_valid_bounds(ref) ? ref : null;
+}
+
+/**
+ * Clips a convex polygon against one axis-aligned half-space.
+ *
+ * @param {number[]} polygon - Flat XYZ triples in winding order.
+ * @param {number} axis
+ * @param {number} plane
+ * @param {boolean} keep_less_equal
+ * @returns {number[]|null}
+ */
+function clip_polygon_axis(polygon, axis, plane, keep_less_equal) {
+  if (!polygon || polygon.length < 9) {
+    return null;
+  }
+
+  const clipped = [];
+  let previous_base = polygon.length - 3;
+  let previous_coordinate = polygon[previous_base + axis];
+  let previous_inside = keep_less_equal
+    ? previous_coordinate <= plane
+    : previous_coordinate >= plane;
+
+  for (let current_base = 0; current_base < polygon.length; current_base += 3) {
+    const current_coordinate = polygon[current_base + axis];
+    const current_inside = keep_less_equal
+      ? current_coordinate <= plane
+      : current_coordinate >= plane;
+
+    if (current_inside !== previous_inside) {
+      const denominator = current_coordinate - previous_coordinate;
+      if (denominator !== 0.0) {
+        const t = (plane - previous_coordinate) / denominator;
+        const intersection_x =
+          polygon[previous_base + 0] + (polygon[current_base + 0] - polygon[previous_base + 0]) * t;
+        const intersection_y =
+          polygon[previous_base + 1] + (polygon[current_base + 1] - polygon[previous_base + 1]) * t;
+        const intersection_z =
+          polygon[previous_base + 2] + (polygon[current_base + 2] - polygon[previous_base + 2]) * t;
+        clipped.push(intersection_x, intersection_y, intersection_z);
+        clipped[clipped.length - 3 + axis] = plane;
+      }
+    }
+
+    if (current_inside) {
+      clipped.push(polygon[current_base + 0], polygon[current_base + 1], polygon[current_base + 2]);
+    }
+
+    previous_base = current_base;
+    previous_coordinate = current_coordinate;
+    previous_inside = current_inside;
+  }
+
+  return clipped.length >= 9 ? clipped : null;
 }
 
 /**
@@ -219,26 +350,34 @@ function compute_centroid_bounds(refs) {
 }
 
 /**
- * Intersects a reference AABB with the current node bounds.
+ * Intersects a reference polygon with the current node bounds when required.
  *
- * Spatial references are conservative boxes rather than clipped triangle polygons. Re-clipping them
- * at each node prevents inherited bounds from leaking outside the node's spatial domain.
+ * The normal fast path returns the reference unchanged because every descendant fragment is already
+ * inside its node. Exact clipping remains as a numerical guard for inherited boundary drift.
  *
  * @param {object} ref
  * @param {object} bounds
  * @returns {object|null}
  */
 function clip_ref_to_bounds(ref, bounds) {
-  const clipped = {
-    tri_id: ref.tri_id,
-    min_x: Math.max(ref.min_x, bounds.min_x),
-    min_y: Math.max(ref.min_y, bounds.min_y),
-    min_z: Math.max(ref.min_z, bounds.min_z),
-    max_x: Math.min(ref.max_x, bounds.max_x),
-    max_y: Math.min(ref.max_y, bounds.max_y),
-    max_z: Math.min(ref.max_z, bounds.max_z),
-  };
-  return is_valid_bounds(clipped) ? clipped : null;
+  if (
+    ref.min_x >= bounds.min_x &&
+    ref.min_y >= bounds.min_y &&
+    ref.min_z >= bounds.min_z &&
+    ref.max_x <= bounds.max_x &&
+    ref.max_y <= bounds.max_y &&
+    ref.max_z <= bounds.max_z
+  ) {
+    return ref;
+  }
+
+  let polygon = clip_polygon_axis(ref.polygon, 0, bounds.min_x, false);
+  polygon = polygon ? clip_polygon_axis(polygon, 0, bounds.max_x, true) : null;
+  polygon = polygon ? clip_polygon_axis(polygon, 1, bounds.min_y, false) : null;
+  polygon = polygon ? clip_polygon_axis(polygon, 1, bounds.max_y, true) : null;
+  polygon = polygon ? clip_polygon_axis(polygon, 2, bounds.min_z, false) : null;
+  polygon = polygon ? clip_polygon_axis(polygon, 2, bounds.max_z, true) : null;
+  return polygon ? make_ref_from_polygon(ref.tri_id, polygon) : null;
 }
 
 /**
@@ -251,18 +390,9 @@ function clip_ref_to_bounds(ref, bounds) {
  * @returns {object|null}
  */
 function clip_ref_to_bin(ref, axis, plane_min, plane_max) {
-  const clipped = clone_ref(ref);
-  if (axis === 0) {
-    clipped.min_x = Math.max(clipped.min_x, plane_min);
-    clipped.max_x = Math.min(clipped.max_x, plane_max);
-  } else if (axis === 1) {
-    clipped.min_y = Math.max(clipped.min_y, plane_min);
-    clipped.max_y = Math.min(clipped.max_y, plane_max);
-  } else {
-    clipped.min_z = Math.max(clipped.min_z, plane_min);
-    clipped.max_z = Math.min(clipped.max_z, plane_max);
-  }
-  return is_valid_bounds(clipped) ? clipped : null;
+  let polygon = clip_polygon_axis(ref.polygon, axis, plane_min, false);
+  polygon = polygon ? clip_polygon_axis(polygon, axis, plane_max, true) : null;
+  return polygon ? make_ref_from_polygon(ref.tri_id, polygon) : null;
 }
 
 // ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -300,6 +430,26 @@ function bin_index(value, min_value, extent) {
   }
   const scaled = ((value - min_value) / extent) * SBVH_BIN_COUNT;
   const idx = Math.floor(scaled);
+  return Math.max(0, Math.min(SBVH_BIN_COUNT - 1, idx));
+}
+
+/**
+ * Maps an inclusive maximum coordinate to its final occupied bin.
+ *
+ * A maximum exactly on a bin plane belongs to the bin on the plane's left, matching the spatial
+ * partitioner's `max <= plane` ownership rule.
+ *
+ * @param {number} value
+ * @param {number} min_value
+ * @param {number} extent
+ * @returns {number}
+ */
+function last_bin_index(value, min_value, extent) {
+  if (extent <= BOUNDS_EPSILON) {
+    return 0;
+  }
+  const scaled = ((value - min_value) / extent) * SBVH_BIN_COUNT;
+  const idx = Math.ceil(scaled) - 1;
   return Math.max(0, Math.min(SBVH_BIN_COUNT - 1, idx));
 }
 
@@ -398,9 +548,10 @@ function find_best_object_split(refs) {
  *
  * @param {object[]} refs
  * @param {object} node_bounds
+ * @param {number} max_duplications
  * @returns {{type: string, axis: number, split_index: number, plane: number, cost: number}|null}
  */
-function find_best_spatial_split(refs, node_bounds) {
+function find_best_spatial_split(refs, node_bounds, max_duplications) {
   let best = null;
 
   for (let axis = 0; axis < 3; axis++) {
@@ -425,7 +576,10 @@ function find_best_spatial_split(refs, node_bounds) {
         axis === 0 ? clipped.max_x : axis === 1 ? clipped.max_y : clipped.max_z;
 
       const first_bin = bin_index(clipped_min, axis_min, extent);
-      const last_bin = bin_index(clipped_max, axis_min, extent);
+      let last_bin = last_bin_index(clipped_max, axis_min, extent);
+      if (last_bin < first_bin) {
+        last_bin = first_bin;
+      }
 
       bins[first_bin].enter++;
       bins[last_bin].exit++;
@@ -474,6 +628,11 @@ function find_best_spatial_split(refs, node_bounds) {
         continue;
       }
 
+      const duplication_count = left_count + right_count - refs.length;
+      if (duplication_count > max_duplications) {
+        continue;
+      }
+
       const cost =
         surface_area(left_bounds[i]) * left_count + surface_area(right_bounds[i + 1]) * right_count;
 
@@ -484,6 +643,7 @@ function find_best_spatial_split(refs, node_bounds) {
           split_index: i,
           plane: axis_min + (extent * (i + 1)) / SBVH_BIN_COUNT,
           cost,
+          duplication_count,
         };
       }
     }
@@ -544,7 +704,7 @@ function partition_object(refs, split) {
 
   for (let i = 0; i < refs.length; i++) {
     const ref = refs[i];
-    if (ref_centroid(ref, split.axis) <= split.plane) {
+    if (ref_centroid(ref, split.axis) < split.plane) {
       left.push(ref);
     } else {
       right.push(ref);
@@ -559,32 +719,22 @@ function partition_object(refs, split) {
 }
 
 /**
- * Chooses a single child for a crossing reference when duplication is unavailable.
- *
- * @param {object} ref
- * @param {object} split
- * @returns {"left"|"right"}
- */
-function choose_single_side(ref, split) {
-  return ref_centroid(ref, split.axis) <= split.plane ? "left" : "right";
-}
-
-/**
  * Applies a spatial split, clipping crossing references at the split plane.
  *
- * A crossing reference is duplicated only while the global reference budget has capacity. Once
- * exhausted, its centroid picks one child and the valid clipped half is retained there. The shared
- * state counts emitted leaf references, so every accepted duplication increments it exactly once.
+ * The partition is transactional: either every crossing reference receives both clipped fragments,
+ * or the complete candidate is rejected. This guarantees that the union of emitted leaf bounds
+ * continues to cover the original triangle and prevents failed candidates from consuming budget.
  *
  * @param {object[]} refs
  * @param {object} node_bounds
  * @param {object} split
- * @param {{reference_count: number, max_reference_count: number}} state
- * @returns {{left: object[], right: object[]}|null}
+ * @param {number} max_duplications
+ * @returns {{left: object[], right: object[], duplication_count: number}|null}
  */
-function partition_spatial(refs, node_bounds, split, state) {
+function partition_spatial(refs, node_bounds, split, max_duplications) {
   const left = [];
   const right = [];
+  let duplication_count = 0;
 
   for (let i = 0; i < refs.length; i++) {
     const clipped = clip_ref_to_bounds(refs[i], node_bounds);
@@ -597,56 +747,67 @@ function partition_spatial(refs, node_bounds, split, state) {
     const max_v =
       split.axis === 0 ? clipped.max_x : split.axis === 1 ? clipped.max_y : clipped.max_z;
 
-    if (max_v <= split.plane + BOUNDS_EPSILON) {
+    if (max_v <= split.plane) {
       left.push(clipped);
       continue;
     }
 
-    if (min_v >= split.plane - BOUNDS_EPSILON) {
+    if (min_v >= split.plane) {
       right.push(clipped);
       continue;
     }
 
-    // The reference straddles the plane. Produce conservative bounds for both spatial fragments.
-    const left_ref = clone_ref(clipped);
-    const right_ref = clone_ref(clipped);
-    if (split.axis === 0) {
-      left_ref.max_x = Math.min(left_ref.max_x, split.plane);
-      right_ref.min_x = Math.max(right_ref.min_x, split.plane);
-    } else if (split.axis === 1) {
-      left_ref.max_y = Math.min(left_ref.max_y, split.plane);
-      right_ref.min_y = Math.max(right_ref.min_y, split.plane);
-    } else {
-      left_ref.max_z = Math.min(left_ref.max_z, split.plane);
-      right_ref.min_z = Math.max(right_ref.min_z, split.plane);
-    }
+    // Split the exact convex triangle fragment so both output AABBs are tight on every axis.
+    const left_polygon = clip_polygon_axis(clipped.polygon, split.axis, split.plane, true);
+    const right_polygon = clip_polygon_axis(clipped.polygon, split.axis, split.plane, false);
+    const left_ref = left_polygon ? make_ref_from_polygon(clipped.tri_id, left_polygon) : null;
+    const right_ref = right_polygon ? make_ref_from_polygon(clipped.tri_id, right_polygon) : null;
 
-    const left_valid = is_valid_bounds(left_ref);
-    const right_valid = is_valid_bounds(right_ref);
-
-    if (left_valid && right_valid && state.reference_count < state.max_reference_count) {
+    if (left_ref && right_ref) {
       left.push(left_ref);
       right.push(right_ref);
-      state.reference_count++;
+      duplication_count++;
       continue;
     }
 
-    // Preserve the reference count when the duplication budget has been consumed.
-    const preferred_side = choose_single_side(clipped, split);
-    if (preferred_side === "left" && left_valid) {
+    // Plane contacts can collapse one fragment. Keep the surviving exact fragment without
+    // consuming duplication budget; the opposite side contains no triangle area.
+    if (left_ref) {
       left.push(left_ref);
-    } else if (right_valid) {
+    } else if (right_ref) {
       right.push(right_ref);
-    } else if (left_valid) {
-      left.push(left_ref);
     }
   }
 
-  if (!left.length || !right.length) {
+  if (!left.length || !right.length || duplication_count > max_duplications) {
     return null;
   }
 
-  return { left, right };
+  return { left, right, duplication_count };
+}
+
+/**
+ * Returns the minimum height of a binary subtree with one primitive per leaf.
+ *
+ * @param {number} reference_count
+ * @returns {number}
+ */
+function minimum_subtree_depth(reference_count) {
+  return Math.ceil(Math.log2(Math.max(1, reference_count)));
+}
+
+/**
+ * Checks whether a partition can still be completed within the shader stack contract.
+ *
+ * @param {{left: object[], right: object[]}} partition
+ * @param {number} child_depth
+ * @returns {boolean}
+ */
+function partition_fits_depth(partition, child_depth) {
+  return (
+    child_depth + minimum_subtree_depth(partition.left.length) <= SBVH_MAX_TREE_DEPTH &&
+    child_depth + minimum_subtree_depth(partition.right.length) <= SBVH_MAX_TREE_DEPTH
+  );
 }
 
 // ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -666,7 +827,14 @@ function partition_spatial(refs, node_bounds, split, state) {
  * @returns {object}
  */
 function build_node(refs, depth, state) {
+  if (depth + minimum_subtree_depth(refs.length) > SBVH_MAX_TREE_DEPTH) {
+    throw new Error(
+      `[sbvh] ${refs.length} references at depth ${depth} cannot fit within max depth ${SBVH_MAX_TREE_DEPTH}`
+    );
+  }
+
   if (refs.length === 1) {
+    state.max_depth = Math.max(state.max_depth, depth);
     return {
       leaf: true,
       tri_id: refs[0].tri_id,
@@ -685,21 +853,43 @@ function build_node(refs, depth, state) {
     depth < SBVH_MAX_SPATIAL_DEPTH &&
     refs.length > 2 &&
     state.reference_count < state.max_reference_count;
-  const spatial_split = can_try_spatial ? find_best_spatial_split(refs, node_bounds) : null;
+  const remaining_duplications = state.max_reference_count - state.reference_count;
+  const spatial_split = can_try_spatial
+    ? find_best_spatial_split(refs, node_bounds, remaining_duplications)
+    : null;
 
   let partition = null;
+  let accepted_duplications = 0;
   if (spatial_split && (!object_split || spatial_split.cost + COST_EPSILON < object_split.cost)) {
-    partition = partition_spatial(refs, node_bounds, spatial_split, state);
+    const spatial_partition = partition_spatial(
+      refs,
+      node_bounds,
+      spatial_split,
+      remaining_duplications
+    );
+    if (spatial_partition && partition_fits_depth(spatial_partition, depth + 1)) {
+      partition = spatial_partition;
+      accepted_duplications = spatial_partition.duplication_count;
+    }
   }
 
   // A rejected or degenerate spatial partition falls back to the best object split.
   if (!partition && object_split) {
-    partition = partition_object(refs, object_split);
+    const object_partition = partition_object(refs, object_split);
+    if (object_partition && partition_fits_depth(object_partition, depth + 1)) {
+      partition = object_partition;
+    }
   }
 
   if (!partition) {
     partition = fallback_partition(refs, node_bounds);
   }
+
+  if (!partition_fits_depth(partition, depth + 1)) {
+    throw new Error(`[sbvh] fallback partition exceeded max depth ${SBVH_MAX_TREE_DEPTH}`);
+  }
+
+  state.reference_count += accepted_duplications;
 
   // Build children before emitting this branch so flattening can preserve post-order layout.
   const left_node = build_node(partition.left, depth + 1, state);
@@ -740,13 +930,13 @@ function build_node(refs, depth, state) {
  */
 function write_node(nodes, index, min_x, min_y, min_z, min_w, max_x, max_y, max_z, max_w) {
   const base = index * 8;
-  nodes[base + 0] = min_x;
-  nodes[base + 1] = min_y;
-  nodes[base + 2] = min_z;
+  nodes[base + 0] = round_min_to_f32(min_x);
+  nodes[base + 1] = round_min_to_f32(min_y);
+  nodes[base + 2] = round_min_to_f32(min_z);
   nodes[base + 3] = min_w;
-  nodes[base + 4] = max_x;
-  nodes[base + 5] = max_y;
-  nodes[base + 6] = max_z;
+  nodes[base + 4] = round_max_to_f32(max_x);
+  nodes[base + 5] = round_max_to_f32(max_y);
+  nodes[base + 6] = round_max_to_f32(max_z);
   nodes[base + 7] = max_w;
 }
 
@@ -862,6 +1052,7 @@ export function patch_sbvh_child_indices(node_data, base_node_index, node_data_s
  *   primitive_count: number,
  *   reference_count: number,
  *   node_count: number,
+ *   max_depth: number,
  *   node_data: Float32Array
  * }|null}
  */
@@ -902,8 +1093,10 @@ export function build_sbvh_from_positions_indices(positions, indices) {
     const max_y = Math.max(v0y, v1y, v2y);
     const max_z = Math.max(v0z, v1z, v2z);
 
-    refs[tri_id] = {
+    const polygon = [v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z];
+    refs[tri_id] = make_ref_from_polygon(tri_id, polygon) ?? {
       tri_id,
+      polygon,
       min_x,
       min_y,
       min_z,
@@ -913,6 +1106,12 @@ export function build_sbvh_from_positions_indices(positions, indices) {
     };
   }
 
+  if (minimum_subtree_depth(primitive_count) > SBVH_MAX_TREE_DEPTH) {
+    throw new Error(
+      `[sbvh] ${primitive_count} primitives cannot fit within max depth ${SBVH_MAX_TREE_DEPTH}`
+    );
+  }
+
   // reference_count begins at one leaf per primitive and grows once per accepted duplication.
   const state = {
     reference_count: primitive_count,
@@ -920,6 +1119,7 @@ export function build_sbvh_from_positions_indices(positions, indices) {
       primitive_count,
       Math.ceil(primitive_count * SBVH_MAX_REFERENCE_MULTIPLIER)
     ),
+    max_depth: 0,
   };
 
   const root = build_node(refs, 0, state);
@@ -929,6 +1129,7 @@ export function build_sbvh_from_positions_indices(positions, indices) {
     primitive_count,
     reference_count: state.reference_count,
     node_count: Math.max(1, state.reference_count * 2 - 1),
+    max_depth: state.max_depth,
     node_data,
   };
 }
@@ -944,6 +1145,7 @@ export function build_sbvh_from_positions_indices(positions, indices) {
  *   primitive_count: number,
  *   reference_count: number,
  *   node_count: number,
+ *   max_depth: number,
  *   node_data: Float32Array
  * }|null}
  */

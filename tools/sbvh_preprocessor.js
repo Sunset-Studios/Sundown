@@ -6,6 +6,7 @@ import {
   SBVH_BIN_COUNT,
   SBVH_MAX_REFERENCE_MULTIPLIER,
   SBVH_MAX_SPATIAL_DEPTH,
+  SBVH_MAX_TREE_DEPTH,
   build_sbvh_from_positions_indices,
 } from "../engine/src/acceleration/sbvh_builder.js";
 
@@ -13,7 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const ASSET_ROOT = path.resolve(__dirname, "../assets");
-const GENERATOR_VERSION = 1;
+const GENERATOR_VERSION = 2;
 const NODE_STRIDE = 8 * Float32Array.BYTES_PER_ELEMENT;
 
 const COMPONENT_TYPE_BYTE_SIZE = {
@@ -308,6 +309,7 @@ function build_mesh_payload(document, mesh_index, mesh) {
     primitive_count: sbvh.primitive_count,
     reference_count: sbvh.reference_count,
     node_count: sbvh.node_count,
+    max_depth: sbvh.max_depth,
     node_data: sbvh.node_data,
   };
 }
@@ -321,6 +323,7 @@ function build_output_payload(document, settings) {
       binCount: SBVH_BIN_COUNT,
       maxReferenceMultiplier: SBVH_MAX_REFERENCE_MULTIPLIER,
       maxSpatialDepth: SBVH_MAX_SPATIAL_DEPTH,
+      maxTreeDepth: SBVH_MAX_TREE_DEPTH,
     },
     source: {
       gltf: path.relative(path.dirname(document.path), document.path).replace(/\\/g, "/"),
@@ -351,6 +354,7 @@ function build_output_payload(document, settings) {
       primitiveCount: payload.primitive_count,
       referenceCount: payload.reference_count,
       nodeCount: payload.node_count,
+      maxDepth: payload.max_depth,
       nodeOffset: node_payloads.length / 8,
     });
     for (let i = 0; i < payload.node_data.length; i++) {
@@ -438,6 +442,7 @@ async function main() {
     bin_count: SBVH_BIN_COUNT,
     max_reference_multiplier: SBVH_MAX_REFERENCE_MULTIPLIER,
     max_spatial_depth: SBVH_MAX_SPATIAL_DEPTH,
+    max_tree_depth: SBVH_MAX_TREE_DEPTH,
   };
 
   const gltf_files = [];
