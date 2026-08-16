@@ -183,6 +183,7 @@ export const DebugDrawType = Object.freeze({
   SVLM_Probes: 31,
   GI_SurfaceCache: 32,
   SceneVoxelization: 33,
+  BVH_Ray_Cost: 34,
 });
 
 /**

@@ -193,6 +193,8 @@ export class DebugOverlay {
         return null;
       case DebugDrawType.SceneVoxelization:
         return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.BVH_Ray_Cost:
+        return "debug/debug_overlay_2d.wgsl";
       default:
         return "debug/debug_overlay_2d.wgsl";
     }

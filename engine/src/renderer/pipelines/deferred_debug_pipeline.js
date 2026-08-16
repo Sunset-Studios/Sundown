@@ -50,6 +50,15 @@ const debug_find_closest_mesh_instances_shader_setup = {
   },
 };
 
+const debug_bvh_ray_cost_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "debug/debug_bvh_ray_cost.wgsl",
+      defines: { BVH_TRAVERSAL_COLLECT_STATS: true },
+    },
+  },
+};
+
 export class DeferredDebugPipeline {
   debug_overlay = null;
 
@@ -266,10 +275,57 @@ export class DeferredDebugPipeline {
       scene_voxelizer_debug_image,
       reflections,
       reflections_enabled,
+      tlas_bvh2_bounds,
+      tlas_bvh_info,
+      blas_bvh2_nodes,
+      blas_directory,
+      compact_transforms,
+      index_buffer,
+      entity_index_lookup,
+      force_recreate,
     }
   ) {
     if (debug_view === DebugDrawType.None) {
       return;
+    }
+
+    let bvh_ray_cost_image = null;
+    if (debug_view === DebugDrawType.BVH_Ray_Cost) {
+      bvh_ray_cost_image = render_graph.create_image({
+        name: "debug_bvh_ray_cost",
+        format: "rgba16float",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+        force: force_recreate,
+      });
+
+      render_graph.add_pass(
+        "debug_bvh_ray_cost_trace",
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            tlas_bvh2_bounds,
+            tlas_bvh_info,
+            blas_bvh2_nodes,
+            blas_directory,
+            compact_transforms,
+            index_buffer,
+            entity_index_lookup,
+            bvh_ray_cost_image,
+          ],
+          outputs: [bvh_ray_cost_image],
+          shader_setup: debug_bvh_ray_cost_shader_setup,
+        },
+        (graph, frame_data) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          pass.dispatch(
+            Math.ceil(image_extent.width / 8),
+            Math.ceil(image_extent.height / 8),
+            1
+          );
+        }
+      );
     }
 
     switch (debug_view) {
@@ -583,6 +639,16 @@ export class DeferredDebugPipeline {
           scene_voxelizer_debug_image
             ? DebugDrawType.SceneVoxelization
             : DebugDrawType.None
+        );
+        break;
+      case DebugDrawType.BVH_Ray_Cost:
+        this.debug_overlay.set_properties(
+          bvh_ray_cost_image,
+          0,
+          0,
+          image_extent.width,
+          image_extent.height,
+          DebugDrawType.BVH_Ray_Cost
         );
         break;
       default:

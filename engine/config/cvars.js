@@ -159,6 +159,7 @@ export const engine_cvar_config = Object.freeze({
         svlm_bricks: DebugDrawType.SVLM_Bricks,
         svlm_probes: DebugDrawType.SVLM_Probes,
         scene_voxelization: DebugDrawType.SceneVoxelization,
+        bvh_ray_cost: DebugDrawType.BVH_Ray_Cost,
       },
       description: "Chooses the active renderer debug view.",
     },

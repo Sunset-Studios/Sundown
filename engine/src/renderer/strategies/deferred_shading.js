@@ -1191,6 +1191,14 @@ export class DeferredShadingStrategy {
         scene_voxelizer_debug_image,
         reflections: this.reflections,
         reflections_enabled,
+        tlas_bvh2_bounds: aabb_bounds,
+        tlas_bvh_info,
+        blas_bvh2_nodes,
+        blas_directory,
+        compact_transforms,
+        index_buffer,
+        entity_index_lookup,
+        force_recreate: this.force_recreate,
       });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐

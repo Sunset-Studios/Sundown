@@ -6,6 +6,20 @@ const BVH_TRAVERSAL_WORKGROUP_SIZE = 128u;
 var<workgroup> bvh_blas_node_stack: array<u32, NODE_STACK_SIZE * BVH_TRAVERSAL_WORKGROUP_SIZE>;
 var<private> bvh_stack_lane: u32;
 
+#if BVH_TRAVERSAL_COLLECT_STATS
+struct BVHTraversalStats {
+    tlas_aabb_tests: u32,
+    blas_aabb_tests: u32,
+    triangle_tests: u32,
+};
+
+var<private> bvh_traversal_stats: BVHTraversalStats;
+
+fn bvh_reset_traversal_stats() {
+    bvh_traversal_stats = BVHTraversalStats(0u, 0u, 0u);
+}
+#endif
+
 fn bvh_build_local_ray(ray_world: ptr<function, Ray>, entity_resolved: u32) -> Ray {
     return build_local_ray_from_instance(
         ray_world,
@@ -54,6 +68,9 @@ fn bvh_trace_blas_closest(
             // Deferred leaves revalidate because a nearer subtree may have shortened the ray.
             var leaf_is_visible = node_bounds_valid;
             if (!leaf_is_visible) {
+#if BVH_TRAVERSAL_COLLECT_STATS
+                bvh_traversal_stats.blas_aabb_tests += 1u;
+#endif
                 let t_leaf = intersect_aabb(&current_ray, node.min.xyz, node.max.xyz);
                 leaf_is_visible = t_leaf.x <= t_leaf.y
                     && t_leaf.x < current_ray.direction_and_tmax.w;
@@ -68,6 +85,9 @@ fn bvh_trace_blas_closest(
                 let v0 = vertex_position(vertex_buffer[v0i]);
                 let v1 = vertex_position(vertex_buffer[v1i]);
                 let v2 = vertex_position(vertex_buffer[v2i]);
+#if BVH_TRAVERSAL_COLLECT_STATS
+                bvh_traversal_stats.triangle_tests += 1u;
+#endif
                 var triangle_hit: vec4<f32>;
                 if (cull_backfaces) {
                     triangle_hit = intersect_triangle_front_face(
@@ -103,6 +123,9 @@ fn bvh_trace_blas_closest(
         } else {
             let child_idx = u32(node.min.w);
             let child_node = blas_bvh2_nodes[child_idx];
+#if BVH_TRAVERSAL_COLLECT_STATS
+            bvh_traversal_stats.blas_aabb_tests += 2u;
+#endif
             let t_aabb_child = intersect_aabb(
                 &current_ray,
                 child_node.min.xyz,
@@ -191,6 +214,9 @@ fn bvh_trace_closest(
             var leaf_is_visible = node_bounds_valid;
             var t_leaf_min = node_tmin;
             if (!leaf_is_visible) {
+#if BVH_TRAVERSAL_COLLECT_STATS
+                bvh_traversal_stats.tlas_aabb_tests += 1u;
+#endif
                 let t_leaf = intersect_aabb(&current_ray, node.min.xyz, node.max.xyz);
                 t_leaf_min = t_leaf.x;
                 leaf_is_visible = t_leaf.x <= t_leaf.y
@@ -229,6 +255,9 @@ fn bvh_trace_closest(
         } else {
             let child_idx = u32(node.min.w);
             let child_node = tlas_bvh2_bounds[child_idx];
+#if BVH_TRAVERSAL_COLLECT_STATS
+            bvh_traversal_stats.tlas_aabb_tests += 2u;
+#endif
             let t_aabb_child = intersect_aabb(
                 &current_ray,
                 child_node.min.xyz,
@@ -319,12 +348,18 @@ fn bvh_trace_blas_any(
             let v0 = vertex_position(vertex_buffer[v0i]);
             let v1 = vertex_position(vertex_buffer[v1i]);
             let v2 = vertex_position(vertex_buffer[v2i]);
+#if BVH_TRAVERSAL_COLLECT_STATS
+            bvh_traversal_stats.triangle_tests += 1u;
+#endif
             if (intersect_triangle_any(ray_local, v0, v1, v2)) {
                 return true;
             }
         } else {
             let child_idx = u32(node.min.w);
             let child_node = blas_bvh2_nodes[child_idx];
+#if BVH_TRAVERSAL_COLLECT_STATS
+            bvh_traversal_stats.blas_aabb_tests += 2u;
+#endif
             let t_aabb_child = intersect_aabb(ray_local, child_node.min.xyz, child_node.max.xyz);
             let is_better_child = t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x < ray_local.direction_and_tmax.w;
 
@@ -399,6 +434,9 @@ fn bvh_trace_any(ray: ptr<function, Ray>) -> bool {
         } else {
             let child_idx = u32(current_node.min.w);
             let child_node = tlas_bvh2_bounds[child_idx];
+#if BVH_TRAVERSAL_COLLECT_STATS
+            bvh_traversal_stats.tlas_aabb_tests += 2u;
+#endif
             let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
             let is_better_child = t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x < current_ray.direction_and_tmax.w;
 
