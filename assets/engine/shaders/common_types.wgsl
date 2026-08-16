@@ -130,6 +130,7 @@ struct MeshDirectoryEntry {
     primitive_count: u32,
     first_vertex: u32,
     first_index: u32,
+    lod: u32,
 };
 
 struct StandardMaterialParams {

@@ -9,12 +9,17 @@ import {
   SBVH_MAX_TREE_DEPTH,
   build_sbvh_from_positions_indices,
 } from "../engine/src/acceleration/sbvh_builder.js";
+import {
+  build_mesh_lod_indices,
+  initialize_mesh_lod_simplifier,
+  resolve_mesh_lod_settings,
+} from "./mesh_lod_utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const ASSET_ROOT = path.resolve(__dirname, "../assets");
-const GENERATOR_VERSION = 2;
+const GENERATOR_VERSION = 4;
 const NODE_STRIDE = 8 * Float32Array.BYTES_PER_ELEMENT;
 
 const COMPONENT_TYPE_BYTE_SIZE = {
@@ -149,7 +154,11 @@ function read_accessor_to_float32(document, accessor_index) {
   const base_offset = buffer_view_offset + accessor_offset;
 
   const out = new Float32Array(accessor.count * component_count);
-  const view = new DataView(source_buffer.buffer, source_buffer.byteOffset, source_buffer.byteLength);
+  const view = new DataView(
+    source_buffer.buffer,
+    source_buffer.byteOffset,
+    source_buffer.byteLength
+  );
 
   for (let i = 0; i < accessor.count; i++) {
     const element_offset = base_offset + i * stride;
@@ -251,9 +260,14 @@ function append_rebased_indices(target, source, vertex_base) {
   }
 }
 
+function align_to(value, alignment) {
+  return Math.ceil(value / alignment) * alignment;
+}
+
 function build_mesh_payload(document, mesh_index, mesh) {
   const grouped_indices = new Map();
   const position_values = [];
+  const lod_settings = resolve_mesh_lod_settings(document.json, mesh);
 
   for (let primitive_index = 0; primitive_index < mesh.primitives.length; primitive_index++) {
     const primitive = mesh.primitives[primitive_index];
@@ -276,7 +290,9 @@ function build_mesh_payload(document, mesh_index, mesh) {
 
     const vertex_base = position_values.length / 3;
     append_positions(position_values, source.positions);
-    append_rebased_indices(group_indices, source.indices, vertex_base);
+    const primitive_lods = build_mesh_lod_indices(source.indices, source.positions, lod_settings);
+    const selected_lod = primitive_lods[lod_settings.sbvh_lod] ?? primitive_lods[0];
+    append_rebased_indices(group_indices, selected_lod.indices, vertex_base);
   }
 
   if (position_values.length === 0 || grouped_indices.size === 0) {
@@ -311,6 +327,8 @@ function build_mesh_payload(document, mesh_index, mesh) {
     node_count: sbvh.node_count,
     max_depth: sbvh.max_depth,
     node_data: sbvh.node_data,
+    lod: lod_settings.sbvh_lod,
+    triangle_indices: Uint32Array.from(final_indices),
   };
 }
 
@@ -335,6 +353,7 @@ function build_output_payload(document, settings) {
   };
 
   const node_payloads = [];
+  const triangle_index_payloads = [];
   for (let mesh_index = 0; mesh_index < (document.json.meshes || []).length; mesh_index++) {
     const mesh = document.json.meshes[mesh_index];
     const payload = build_mesh_payload(document, mesh_index, mesh);
@@ -356,17 +375,34 @@ function build_output_payload(document, settings) {
       nodeCount: payload.node_count,
       maxDepth: payload.max_depth,
       nodeOffset: node_payloads.length / 8,
+      lod: payload.lod,
+      triangleIndexOffset: payload.lod > 0 ? triangle_index_payloads.length : 0,
+      triangleIndexCount: payload.lod > 0 ? payload.triangle_indices.length : 0,
     });
     for (let i = 0; i < payload.node_data.length; i++) {
       node_payloads.push(payload.node_data[i]);
+    }
+    if (payload.lod > 0) {
+      for (let i = 0; i < payload.triangle_indices.length; i++) {
+        triangle_index_payloads.push(payload.triangle_indices[i]);
+      }
     }
   }
 
   const nodes_offset = 0;
   const nodes_byte_length = node_payloads.length * Float32Array.BYTES_PER_ELEMENT;
-  const binary = new ArrayBuffer(nodes_byte_length);
-  const node_array = new Float32Array(binary);
+  const triangle_indices_offset = align_to(nodes_byte_length, 16);
+  const triangle_indices_byte_length =
+    triangle_index_payloads.length * Uint32Array.BYTES_PER_ELEMENT;
+  const binary = new ArrayBuffer(triangle_indices_offset + triangle_indices_byte_length);
+  const node_array = new Float32Array(binary, nodes_offset, node_payloads.length);
   node_array.set(node_payloads);
+  const triangle_index_array = new Uint32Array(
+    binary,
+    triangle_indices_offset,
+    triangle_index_payloads.length
+  );
+  triangle_index_array.set(triangle_index_payloads);
 
   manifest.sections = {
     nodes: {
@@ -374,6 +410,12 @@ function build_output_payload(document, settings) {
       stride: NODE_STRIDE,
       count: node_payloads.length / 8,
       elementType: "float32x8",
+    },
+    triangleIndices: {
+      offset: triangle_indices_offset,
+      stride: Uint32Array.BYTES_PER_ELEMENT,
+      count: triangle_index_payloads.length,
+      elementType: "uint32",
     },
   };
 
@@ -444,6 +486,8 @@ async function main() {
     max_spatial_depth: SBVH_MAX_SPATIAL_DEPTH,
     max_tree_depth: SBVH_MAX_TREE_DEPTH,
   };
+
+  await initialize_mesh_lod_simplifier();
 
   const gltf_files = [];
   find_gltf_files(ASSET_ROOT, gltf_files);

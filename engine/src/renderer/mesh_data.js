@@ -260,12 +260,7 @@ export class MeshData {
       );
       view.setUint32(
         base + 28,
-        pack_snorm4x8(
-          tangent[0] ?? 0.0,
-          tangent[1] ?? 0.0,
-          tangent[2] ?? 0.0,
-          tangent[3] ?? 0.0
-        ),
+        pack_snorm4x8(tangent[0] ?? 0.0, tangent[1] ?? 0.0, tangent[2] ?? 0.0, tangent[3] ?? 0.0),
         true
       );
       view.setFloat32(base + 16, uv[0] ?? 0.0, true);
@@ -471,7 +466,8 @@ export class MeshData {
     }
 
     let meshlet_group_element_offset = meshlet_group_offset * meshlet_group_stride;
-    let meshlet_group_element_end = (meshlet_group_offset + upload.meshlet_groups.length) * meshlet_group_stride;
+    let meshlet_group_element_end =
+      (meshlet_group_offset + upload.meshlet_groups.length) * meshlet_group_stride;
     this.meshlet_group_buffer.write_raw(
       this.meshlet_group_data.subarray(meshlet_group_element_offset, meshlet_group_element_end),
       meshlet_group_element_offset
@@ -483,12 +479,17 @@ export class MeshData {
     mesh.meshlet_group_buffer_offset = meshlet_group_offset;
     mesh.meshlet_count = upload.meshlets.length;
     mesh.meshlet_group_count = upload.meshlet_groups.length;
-    mesh.meshlet_sections = upload.sections.map((section) => ({
-      meshlet_offset: meshlet_offset + section.meshlet_offset,
-      meshlet_count: section.meshlet_count,
-      meshlet_group_offset: meshlet_group_offset + section.meshlet_group_offset,
-      meshlet_group_count: section.meshlet_group_count,
+    const upload_lods = upload.lods ?? [{ lod: 0, sections: upload.sections }];
+    const meshlet_lods = upload_lods.map((lod_data, lod) => ({
+      lod: lod_data.lod ?? lod,
+      sections: lod_data.sections.map((section) => ({
+        meshlet_offset: meshlet_offset + section.meshlet_offset,
+        meshlet_count: section.meshlet_count,
+        meshlet_group_offset: meshlet_group_offset + section.meshlet_group_offset,
+        meshlet_group_count: section.meshlet_group_count,
+      })),
     }));
+    mesh._set_meshlet_lods(meshlet_lods, upload.default_min_lod);
 
     this.meshlet_buffer_head = meshlet_offset + upload.meshlets.length;
     this.meshlet_vertex_buffer_head = meshlet_vertex_offset + upload.meshlet_vertices.length;

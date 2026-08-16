@@ -20,6 +20,8 @@ import { get_cooked_sbvh_for_mesh, load_sbvh_sidecar_async } from "../accelerati
 const discard_cpu_data = true;
 
 export class Mesh {
+  static default_min_lod = 0;
+
   name = "";
   vertices = [];
   packed_vertex_data = null;
@@ -41,6 +43,10 @@ export class Mesh {
   meshlet_group_buffer_offset = -1;
   meshlet_count = 0;
   meshlet_group_count = 0;
+  meshlet_lods = [];
+  min_lod = Mesh.default_min_lod;
+  selected_lod = 0;
+  _min_lod_explicit = false;
 
   pending_loader = null;
   pending_runtime_meshlet_build = null;
@@ -81,7 +87,66 @@ export class Mesh {
     this.meshlet_group_buffer_offset = -1;
     this.meshlet_count = 0;
     this.meshlet_group_count = 0;
+    this.meshlet_lods.length = 0;
+    this.selected_lod = 0;
     this.pending_runtime_meshlet_build = null;
+  }
+
+  /** Sets the project default applied to meshes without an asset or call-site override. */
+  static set_default_min_lod(min_lod) {
+    this.default_min_lod = Math.max(0, Math.floor(Number(min_lod) || 0));
+  }
+
+  get lod_count() {
+    return Math.max(1, this.meshlet_lods.length);
+  }
+
+  /** Sets this mesh's LOD floor and selects it immediately for manual LOD inspection. */
+  set_min_lod(min_lod) {
+    this._min_lod_explicit = true;
+    this._set_min_lod(min_lod);
+  }
+
+  _set_min_lod(min_lod) {
+    const requested_lod = Math.max(0, Math.floor(Number(min_lod) || 0));
+    this.min_lod =
+      this.meshlet_lods.length > 0
+        ? Math.min(requested_lod, this.meshlet_lods.length - 1)
+        : requested_lod;
+    this.select_lod(this.min_lod);
+  }
+
+  /** Selects an available LOD without allowing a future runtime policy to cross the floor. */
+  select_lod(lod) {
+    if (this.meshlet_lods.length === 0) {
+      this.selected_lod = Math.max(this.min_lod, Math.floor(Number(lod) || 0));
+      return;
+    }
+
+    const selected_lod = Math.min(
+      Math.max(this.min_lod, Math.floor(Number(lod) || 0)),
+      this.meshlet_lods.length - 1
+    );
+    const lod_data = this.meshlet_lods[selected_lod];
+    if (!lod_data) {
+      return;
+    }
+
+    const changed = this.selected_lod !== selected_lod;
+    this.selected_lod = selected_lod;
+    this.meshlet_sections = lod_data.sections.map((section) => ({ ...section }));
+    if (changed && this.name) {
+      RenderTaskQueue.invalidate_mesh(Name.from(this.name));
+    }
+  }
+
+  _set_meshlet_lods(meshlet_lods, asset_default_min_lod = null) {
+    this.meshlet_lods = meshlet_lods;
+    if (!this._min_lod_explicit) {
+      this._set_min_lod(asset_default_min_lod ?? Mesh.default_min_lod);
+    } else {
+      this._set_min_lod(this.min_lod);
+    }
   }
 
   static _get_tangents_and_bitangents(positions, uvs) {
@@ -243,7 +308,10 @@ export class Mesh {
           mesh.pending_runtime_meshlet_build = null;
           mesh.meshlet_sections = build_empty_runtime_meshlet_sections(sections.length);
         }
-        console.error(`[meshlet_runtime] failed to build runtime meshlets for ${mesh.name}:`, error);
+        console.error(
+          `[meshlet_runtime] failed to build runtime meshlets for ${mesh.name}:`,
+          error
+        );
       });
   }
 
@@ -644,16 +712,22 @@ export class Mesh {
     return this.from_gltf("engine/models/sphere/sphere.gltf");
   }
 
-  static from_gltf(gltf_path, mesh_index = 0) {
+  static from_gltf(gltf_path, mesh_index = 0, options = {}) {
     const key_name = `${gltf_path}#mesh_${mesh_index}`;
     const cache_key = Name.from(key_name);
     let mesh = ResourceCache.get().fetch(CacheTypes.MESH, cache_key);
     if (mesh) {
+      if (options.min_lod !== undefined) {
+        mesh.set_min_lod(options.min_lod);
+      }
       return mesh;
     }
 
     mesh = new Mesh();
     mesh.name = key_name;
+    if (options.min_lod !== undefined) {
+      mesh.set_min_lod(options.min_lod);
+    }
 
     MeshData.register(mesh);
 

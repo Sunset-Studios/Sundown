@@ -87,10 +87,7 @@ export function load_meshlet_sidecar_async(gltf_path) {
 
       return {
         manifest: bundle.manifest,
-        meshlet_view: new DataView(
-          bundle.binary,
-          bundle.manifest.sections.meshlets.offset
-        ),
+        meshlet_view: new DataView(bundle.binary, bundle.manifest.sections.meshlets.offset),
         meshlet_vertices: new Uint32Array(
           bundle.binary,
           bundle.manifest.sections.meshletVertices.offset,
@@ -115,7 +112,7 @@ export function load_meshlet_sidecar_async(gltf_path) {
   return sidecar_promise;
 }
 
-function get_meshlet_primitive_info(sidecar, mesh_index, primitive_index) {
+function get_meshlet_primitive_info(sidecar, mesh_index, primitive_index, lod = 0) {
   if (!sidecar || mesh_index < 0) {
     return null;
   }
@@ -123,7 +120,12 @@ function get_meshlet_primitive_info(sidecar, mesh_index, primitive_index) {
   if (!manifest_mesh) {
     return null;
   }
-  return manifest_mesh.primitives?.[primitive_index] ?? null;
+  const primitive_info = manifest_mesh.primitives?.[primitive_index] ?? null;
+  if (!primitive_info || !Array.isArray(primitive_info.lods)) {
+    return lod === 0 ? primitive_info : null;
+  }
+  const lod_info = primitive_info.lods[lod];
+  return lod_info ? { ...primitive_info, ...lod_info } : null;
 }
 
 function read_meshlet_record(sidecar, meshlet_index) {
@@ -238,7 +240,7 @@ function analyze_gltf_primitives(gltf_obj, gltf_mesh, resolved_mesh_index) {
     const index_count =
       primitive.indices === null || primitive.indices === undefined
         ? vertex_count
-        : gltf_obj.accessors[primitive.indices]?.count ?? 0;
+        : (gltf_obj.accessors[primitive.indices]?.count ?? 0);
 
     primitive_descriptors.push({
       mesh_index: resolved_mesh_index,
@@ -260,7 +262,11 @@ function analyze_gltf_primitives(gltf_obj, gltf_mesh, resolved_mesh_index) {
   const section_defs = [];
   const section_index_by_material = new Map();
   let running_first_index = 0;
-  for (let material_order_index = 0; material_order_index < material_order.length; material_order_index++) {
+  for (
+    let material_order_index = 0;
+    material_order_index < material_order.length;
+    material_order_index++
+  ) {
     const material_index = material_order[material_order_index];
     const index_count = index_count_by_material_order[material_order_index] ?? 0;
     if (index_count <= 0) {
@@ -409,9 +415,7 @@ function build_generated_tangent_data(positions, normals, uvs, indices, vertex_c
       const by = nz * tx - nx * tz;
       const bz = nx * ty - ny * tx;
       if (
-        bx * tan2[normal_offset] +
-        by * tan2[normal_offset + 1] +
-        bz * tan2[normal_offset + 2] <
+        bx * tan2[normal_offset] + by * tan2[normal_offset + 1] + bz * tan2[normal_offset + 2] <
         0.0
       ) {
         handedness = -1.0;
@@ -506,7 +510,7 @@ function write_primitive_vertices_to_staging(
       tx = tangents[tangent_offset] ?? 0.0;
       ty = tangents[tangent_offset + 1] ?? 0.0;
       tz = tangents[tangent_offset + 2] ?? 0.0;
-      tw = tangent_components >= 4 ? tangents[tangent_offset + 3] ?? 1.0 : 1.0;
+      tw = tangent_components >= 4 ? (tangents[tangent_offset + 3] ?? 1.0) : 1.0;
 
       if (has_normal) {
         const nt_dot_t = nx * tx + ny * ty + nz * tz;
@@ -533,7 +537,12 @@ function write_primitive_vertices_to_staging(
   }
 }
 
-function write_primitive_indices_to_staging(target_indices, write_offsets, descriptor, source_indices) {
+function write_primitive_indices_to_staging(
+  target_indices,
+  write_offsets,
+  descriptor,
+  source_indices
+) {
   if (descriptor.section_index < 0 || descriptor.index_count <= 0) {
     return;
   }
@@ -547,7 +556,11 @@ function write_primitive_indices_to_staging(target_indices, write_offsets, descr
 }
 
 function create_runtime_meshlet_upload_data(positions, indices, sections, settings) {
-  if (!(positions instanceof Float32Array) || !(indices instanceof Uint32Array) || indices.length < 3) {
+  if (
+    !(positions instanceof Float32Array) ||
+    !(indices instanceof Uint32Array) ||
+    indices.length < 3
+  ) {
     return null;
   }
 
@@ -556,9 +569,7 @@ function create_runtime_meshlet_upload_data(positions, indices, sections, settin
   const meshlet_triangles = [];
   const meshlet_groups = [];
   const section_descriptors =
-    sections && sections.length > 0
-      ? sections
-      : [{ first_index: 0, index_count: indices.length }];
+    sections && sections.length > 0 ? sections : [{ first_index: 0, index_count: indices.length }];
   const section_payload = build_empty_meshlet_sections(section_descriptors.length);
 
   for (let section_index = 0; section_index < section_descriptors.length; section_index++) {
@@ -584,10 +595,7 @@ function create_runtime_meshlet_upload_data(positions, indices, sections, settin
       continue;
     }
 
-    const section_groups = build_meshlet_groups(
-      section_meshlets,
-      settings.cluster_group_size
-    );
+    const section_groups = build_meshlet_groups(section_meshlets, settings.cluster_group_size);
     const payload_section = section_payload[section_index];
     payload_section.meshlet_offset = meshlets.length;
     payload_section.meshlet_group_offset = meshlet_groups.length;
@@ -684,8 +692,6 @@ function create_meshlet_upload_data(sidecar, primitive_descriptors, section_coun
   const meshlet_vertices = [];
   const meshlet_triangles = [];
   const meshlet_groups = [];
-  const sections = build_empty_meshlet_sections(section_count);
-
   const sorted_descriptors = primitive_descriptors
     .filter((descriptor) => descriptor.section_index >= 0)
     .sort((a, b) => {
@@ -695,87 +701,93 @@ function create_meshlet_upload_data(sidecar, primitive_descriptors, section_coun
       if (diff !== 0) return diff;
       return a.primitive_index - b.primitive_index;
     });
+  const manifest_mesh = sidecar.manifest.meshes?.[sorted_descriptors[0]?.mesh_index];
+  const lod_count = Math.max(1, manifest_mesh?.lodCount ?? 1);
+  const lods = [];
 
-  for (const descriptor of sorted_descriptors) {
-    const primitive_info = get_meshlet_primitive_info(
-      sidecar,
-      descriptor.mesh_index,
-      descriptor.primitive_index
-    );
-    const use_meshlets =
-      primitive_info &&
-      primitive_info.skipped !== true &&
-      primitive_info.mode === 4 &&
-      primitive_info.meshletCount > 0 &&
-      primitive_info.vertexCount === descriptor.vertex_count;
+  for (let lod = 0; lod < lod_count; lod++) {
+    const sections = build_empty_meshlet_sections(section_count);
 
-    if (!use_meshlets) {
-      continue;
-    }
-
-    const section = sections[descriptor.section_index];
-    if (section.meshlet_count === 0) {
-      section.meshlet_offset = meshlets.length;
-      section.meshlet_group_offset = meshlet_groups.length;
-    }
-
-    for (let meshlet_offset = 0; meshlet_offset < primitive_info.meshletCount; meshlet_offset++) {
-      const meshlet_record = transform_meshlet_record(
-        read_meshlet_record(
-          sidecar,
-          primitive_info.meshletOffset + meshlet_offset
-        ),
-        descriptor
+    for (const descriptor of sorted_descriptors) {
+      const primitive_info = get_meshlet_primitive_info(
+        sidecar,
+        descriptor.mesh_index,
+        descriptor.primitive_index,
+        lod
       );
-      const rebased_vertex_offset = meshlet_vertices.length;
-      const rebased_triangle_offset = meshlet_triangles.length;
+      const use_meshlets =
+        primitive_info &&
+        primitive_info.skipped !== true &&
+        primitive_info.mode === 4 &&
+        primitive_info.meshletCount > 0 &&
+        primitive_info.vertexCount === descriptor.vertex_count;
 
-      for (let i = 0; i < meshlet_record.vertex_count; i++) {
-        const local_vertex = sidecar.meshlet_vertices[meshlet_record.vertex_offset + i] ?? 0;
-        meshlet_vertices.push(descriptor.vertex_offset + local_vertex);
+      if (!use_meshlets) {
+        continue;
       }
 
-      const triangle_index_count = meshlet_record.triangle_count * 3;
-      for (let i = 0; i < triangle_index_count; i++) {
-        meshlet_triangles.push(sidecar.meshlet_triangles[meshlet_record.triangle_offset + i] ?? 0);
+      const section = sections[descriptor.section_index];
+      if (section.meshlet_count === 0) {
+        section.meshlet_offset = meshlets.length;
+        section.meshlet_group_offset = meshlet_groups.length;
+      }
+      const primitive_meshlet_offset = meshlets.length;
+
+      for (let meshlet_offset = 0; meshlet_offset < primitive_info.meshletCount; meshlet_offset++) {
+        const meshlet_record = transform_meshlet_record(
+          read_meshlet_record(sidecar, primitive_info.meshletOffset + meshlet_offset),
+          descriptor
+        );
+        const rebased_vertex_offset = meshlet_vertices.length;
+        const rebased_triangle_offset = meshlet_triangles.length;
+
+        for (let i = 0; i < meshlet_record.vertex_count; i++) {
+          const local_vertex = sidecar.meshlet_vertices[meshlet_record.vertex_offset + i] ?? 0;
+          meshlet_vertices.push(descriptor.vertex_offset + local_vertex);
+        }
+
+        const triangle_index_count = meshlet_record.triangle_count * 3;
+        for (let i = 0; i < triangle_index_count; i++) {
+          meshlet_triangles.push(
+            sidecar.meshlet_triangles[meshlet_record.triangle_offset + i] ?? 0
+          );
+        }
+
+        meshlets.push({
+          vertex_offset: rebased_vertex_offset,
+          vertex_count: meshlet_record.vertex_count,
+          triangle_offset: rebased_triangle_offset,
+          triangle_count: meshlet_record.triangle_count,
+          center: meshlet_record.center,
+          radius: meshlet_record.radius,
+          bounds_min: meshlet_record.bounds_min,
+          bounds_max: meshlet_record.bounds_max,
+          normal_cone_axis: meshlet_record.normal_cone_axis,
+          normal_cone_cutoff: meshlet_record.normal_cone_cutoff,
+        });
       }
 
-      meshlets.push({
-        vertex_offset: rebased_vertex_offset,
-        vertex_count: meshlet_record.vertex_count,
-        triangle_offset: rebased_triangle_offset,
-        triangle_count: meshlet_record.triangle_count,
-        center: meshlet_record.center,
-        radius: meshlet_record.radius,
-        bounds_min: meshlet_record.bounds_min,
-        bounds_max: meshlet_record.bounds_max,
-        normal_cone_axis: meshlet_record.normal_cone_axis,
-        normal_cone_cutoff: meshlet_record.normal_cone_cutoff,
-      });
+      for (let group_offset = 0; group_offset < primitive_info.meshletGroupCount; group_offset++) {
+        const group_record = transform_meshlet_group_record(
+          read_meshlet_group_record(sidecar, primitive_info.meshletGroupOffset + group_offset),
+          descriptor
+        );
+        meshlet_groups.push({
+          meshlet_offset:
+            primitive_meshlet_offset + (group_record.meshlet_offset - primitive_info.meshletOffset),
+          meshlet_count: group_record.meshlet_count,
+          center: group_record.center,
+          radius: group_record.radius,
+          bounds_min: group_record.bounds_min,
+          bounds_max: group_record.bounds_max,
+        });
+      }
+
+      section.meshlet_count += primitive_info.meshletCount;
+      section.meshlet_group_count += primitive_info.meshletGroupCount;
     }
 
-    for (let group_offset = 0; group_offset < primitive_info.meshletGroupCount; group_offset++) {
-      const group_record = transform_meshlet_group_record(
-        read_meshlet_group_record(
-          sidecar,
-          primitive_info.meshletGroupOffset + group_offset
-        ),
-        descriptor
-      );
-      meshlet_groups.push({
-        meshlet_offset:
-          section.meshlet_offset +
-          (group_record.meshlet_offset - primitive_info.meshletOffset),
-        meshlet_count: group_record.meshlet_count,
-        center: group_record.center,
-        radius: group_record.radius,
-        bounds_min: group_record.bounds_min,
-        bounds_max: group_record.bounds_max,
-      });
-    }
-
-    section.meshlet_count += primitive_info.meshletCount;
-    section.meshlet_group_count += primitive_info.meshletGroupCount;
+    lods.push({ lod, sections });
   }
 
   if (meshlets.length === 0) {
@@ -787,7 +799,9 @@ function create_meshlet_upload_data(sidecar, primitive_descriptors, section_coun
     meshlet_vertices: Uint32Array.from(meshlet_vertices),
     meshlet_triangles: Uint8Array.from(meshlet_triangles),
     meshlet_groups,
-    sections,
+    sections: lods[0].sections,
+    lods,
+    default_min_lod: manifest_mesh?.defaultMinLod,
   };
 }
 
@@ -825,7 +839,16 @@ function finalize_gltf_build(mesh, gltf_obj, build_state, sidecar) {
   mesh.vertices = null;
   mesh.packed_vertex_data = vertex_upload_bytes;
   mesh.cpu_position_data = positions_xyz;
-  mesh.indices = indices;
+  let upload_indices = indices;
+  if (mesh.cooked_sbvh?.triangle_indices?.length > 0) {
+    mesh.cooked_sbvh.index_offset = indices.length;
+    upload_indices = new Uint32Array(indices.length + mesh.cooked_sbvh.triangle_indices.length);
+    upload_indices.set(indices);
+    upload_indices.set(mesh.cooked_sbvh.triangle_indices, indices.length);
+  } else if (mesh.cooked_sbvh) {
+    mesh.cooked_sbvh.index_offset = 0;
+  }
+  mesh.indices = upload_indices;
   mesh.vertex_count = total_vertex_count;
   mesh.index_count = indices.length;
   mesh.bounds_min_and_max = bounds_min_and_max;
@@ -853,12 +876,8 @@ function finalize_gltf_build(mesh, gltf_obj, build_state, sidecar) {
 export function prepare_gltf_mesh_build(mesh, gltf_obj, gltf_mesh, mesh_index) {
   mesh._reset_build_state();
 
-  const {
-    primitive_descriptors,
-    section_defs,
-    total_vertex_count,
-    total_index_count,
-  } = analyze_gltf_primitives(gltf_obj, gltf_mesh, mesh_index);
+  const { primitive_descriptors, section_defs, total_vertex_count, total_index_count } =
+    analyze_gltf_primitives(gltf_obj, gltf_mesh, mesh_index);
 
   const vertex_upload_bytes = new Uint8Array(total_vertex_count * vertex_stride);
   const vertex_view = new DataView(vertex_upload_bytes.buffer);
@@ -879,7 +898,12 @@ export function prepare_gltf_mesh_build(mesh, gltf_obj, gltf_mesh, mesh_index) {
       positions_xyz,
       bounds_min_and_max
     );
-    write_primitive_indices_to_staging(indices, section_write_offsets, descriptor, primitive_data.indices);
+    write_primitive_indices_to_staging(
+      indices,
+      section_write_offsets,
+      descriptor,
+      primitive_data.indices
+    );
   }
 
   return {

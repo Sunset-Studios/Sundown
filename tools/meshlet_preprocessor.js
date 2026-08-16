@@ -4,6 +4,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { MeshoptClusterizer } from "meshoptimizer/clusterizer";
 import {
+  build_mesh_lod_indices,
+  initialize_mesh_lod_simplifier,
+  resolve_mesh_lod_settings,
+} from "./mesh_lod_utils.js";
+import {
   build_meshlet_groups,
   build_meshlets,
   compute_position_bounds,
@@ -15,7 +20,7 @@ const __dirname = path.dirname(__filename);
 
 const ASSET_ROOT = path.resolve(__dirname, "../assets");
 
-const GENERATOR_VERSION = 2;
+const GENERATOR_VERSION = 4;
 const DEFAULT_MAX_VERTICES = 64;
 const DEFAULT_MIN_TRIANGLES = 24;
 const DEFAULT_MAX_TRIANGLES = 124;
@@ -161,7 +166,11 @@ function read_accessor_to_float32(document, accessor_index) {
   const base_offset = buffer_view_offset + accessor_offset;
 
   const out = new Float32Array(accessor.count * component_count);
-  const view = new DataView(source_buffer.buffer, source_buffer.byteOffset, source_buffer.byteLength);
+  const view = new DataView(
+    source_buffer.buffer,
+    source_buffer.byteOffset,
+    source_buffer.byteLength
+  );
 
   for (let i = 0; i < accessor.count; i++) {
     const element_offset = base_offset + i * stride;
@@ -220,7 +229,7 @@ function load_gltf_document(gltf_path, settings) {
   };
 }
 
-function process_primitive(document, primitive_index, primitive, settings) {
+function process_primitive(document, primitive_index, primitive, settings, lod_settings) {
   if ((primitive.mode ?? 4) !== 4) {
     return {
       primitive: primitive_index,
@@ -277,18 +286,27 @@ function process_primitive(document, primitive_index, primitive, settings) {
   }
 
   const primitive_bounds = compute_position_bounds(positions);
-  const meshlets = sort_meshlets_spatially(
-    build_meshlets(indices, positions, settings),
-    primitive_bounds
-  );
-  const meshlet_groups = build_meshlet_groups(meshlets, settings.cluster_group_size);
+  const lods = build_mesh_lod_indices(indices, positions, lod_settings).map((lod_data) => {
+    const meshlets = sort_meshlets_spatially(
+      build_meshlets(lod_data.indices, positions, settings),
+      primitive_bounds
+    );
+    const meshlet_groups = build_meshlet_groups(meshlets, settings.cluster_group_size);
+    let meshlet_vertex_count = 0;
+    let meshlet_triangle_index_count = 0;
+    for (const meshlet of meshlets) {
+      meshlet_vertex_count += meshlet.global_vertices.length;
+      meshlet_triangle_index_count += meshlet.local_indices.length;
+    }
 
-  let meshlet_vertex_count = 0;
-  let meshlet_triangle_index_count = 0;
-  for (const meshlet of meshlets) {
-    meshlet_vertex_count += meshlet.global_vertices.length;
-    meshlet_triangle_index_count += meshlet.local_indices.length;
-  }
+    return {
+      ...lod_data,
+      meshlets,
+      meshlet_groups,
+      meshlet_vertex_count,
+      meshlet_triangle_index_count,
+    };
+  });
 
   return {
     primitive: primitive_index,
@@ -298,10 +316,7 @@ function process_primitive(document, primitive_index, primitive, settings) {
     vertex_count: positions.length / 3,
     triangle_count: indices.length / 3,
     bounds: primitive_bounds,
-    meshlets,
-    meshlet_groups,
-    meshlet_vertex_count,
-    meshlet_triangle_index_count,
+    lods,
   };
 }
 
@@ -333,88 +348,109 @@ function build_output_payload(document, settings) {
 
   for (let mesh_index = 0; mesh_index < (document.json.meshes || []).length; mesh_index++) {
     const mesh = document.json.meshes[mesh_index];
+    const lod_settings = resolve_mesh_lod_settings(document.json, mesh);
     const manifest_mesh = {
       mesh: mesh_index,
       name: mesh.name || null,
+      lodCount: lod_settings.ratios.length,
+      defaultMinLod: lod_settings.has_min_lod ? lod_settings.min_lod : null,
+      lodRatios: lod_settings.ratios,
       primitives: [],
     };
 
     for (let primitive_index = 0; primitive_index < mesh.primitives.length; primitive_index++) {
       const primitive = mesh.primitives[primitive_index];
-      const processed = process_primitive(document, primitive_index, primitive, settings);
+      const processed = process_primitive(
+        document,
+        primitive_index,
+        primitive,
+        settings,
+        lod_settings
+      );
 
       if (processed.skipped) {
         manifest_mesh.primitives.push(processed);
         continue;
       }
 
-      const primitive_meshlet_offset = meshlet_records.length;
-      const primitive_vertex_offset = meshlet_vertex_records.length;
-      const primitive_triangle_offset = meshlet_triangle_records.length;
-      const primitive_group_offset = meshlet_group_records.length;
-
-      for (const meshlet of processed.meshlets) {
-        const record = {
-          vertex_offset: meshlet_vertex_records.length,
-          vertex_count: meshlet.global_vertices.length,
-          triangle_offset: meshlet_triangle_records.length,
-          triangle_count: meshlet.local_indices.length / 3,
-          center: meshlet.center,
-          radius: meshlet.radius,
-          bounds_min: meshlet.bounds_min,
-          bounds_max: meshlet.bounds_max,
-          normal_cone_axis: meshlet.normal_cone_axis,
-          normal_cone_cutoff: meshlet.normal_cone_cutoff,
-        };
-
-        meshlet_records.push(record);
-        meshlet_vertex_records.push(...meshlet.global_vertices);
-        meshlet_triangle_records.push(...meshlet.local_indices);
-      }
-
-      for (const group of processed.meshlet_groups) {
-        meshlet_group_records.push({
-          meshlet_offset: primitive_meshlet_offset + group.local_meshlet_offset,
-          meshlet_count: group.meshlet_count,
-          center: group.center,
-          radius: group.radius,
-          bounds_min: group.bounds_min,
-          bounds_max: group.bounds_max,
-        });
-      }
-
-      manifest_mesh.primitives.push({
+      const primitive_manifest = {
         primitive: primitive_index,
         mode: processed.mode,
         material: processed.material,
         skipped: false,
         vertexCount: processed.vertex_count,
         triangleCount: processed.triangle_count,
-        meshletCount: processed.meshlets.length,
-        meshletVertexCount: processed.meshlet_vertex_count,
-        meshletTriangleIndexCount: processed.meshlet_triangle_index_count,
-        meshletOffset: primitive_meshlet_offset,
-        meshletVertexOffset: primitive_vertex_offset,
-        meshletTriangleIndexOffset: primitive_triangle_offset,
-        meshletGroupOffset: primitive_group_offset,
-        meshletGroupCount: processed.meshlet_groups.length,
         bounds: processed.bounds,
-      });
+        lods: [],
+      };
+
+      for (const processed_lod of processed.lods) {
+        const primitive_meshlet_offset = meshlet_records.length;
+        const primitive_vertex_offset = meshlet_vertex_records.length;
+        const primitive_triangle_offset = meshlet_triangle_records.length;
+        const primitive_group_offset = meshlet_group_records.length;
+
+        for (const meshlet of processed_lod.meshlets) {
+          meshlet_records.push({
+            vertex_offset: meshlet_vertex_records.length,
+            vertex_count: meshlet.global_vertices.length,
+            triangle_offset: meshlet_triangle_records.length,
+            triangle_count: meshlet.local_indices.length / 3,
+            center: meshlet.center,
+            radius: meshlet.radius,
+            bounds_min: meshlet.bounds_min,
+            bounds_max: meshlet.bounds_max,
+            normal_cone_axis: meshlet.normal_cone_axis,
+            normal_cone_cutoff: meshlet.normal_cone_cutoff,
+          });
+          meshlet_vertex_records.push(...meshlet.global_vertices);
+          meshlet_triangle_records.push(...meshlet.local_indices);
+        }
+
+        for (const group of processed_lod.meshlet_groups) {
+          meshlet_group_records.push({
+            meshlet_offset: primitive_meshlet_offset + group.local_meshlet_offset,
+            meshlet_count: group.meshlet_count,
+            center: group.center,
+            radius: group.radius,
+            bounds_min: group.bounds_min,
+            bounds_max: group.bounds_max,
+          });
+        }
+
+        primitive_manifest.lods.push({
+          lod: processed_lod.lod,
+          targetRatio: processed_lod.target_ratio,
+          actualRatio: processed_lod.actual_ratio,
+          simplificationError: processed_lod.error,
+          triangleCount: processed_lod.indices.length / 3,
+          meshletCount: processed_lod.meshlets.length,
+          meshletVertexCount: processed_lod.meshlet_vertex_count,
+          meshletTriangleIndexCount: processed_lod.meshlet_triangle_index_count,
+          meshletOffset: primitive_meshlet_offset,
+          meshletVertexOffset: primitive_vertex_offset,
+          meshletTriangleIndexOffset: primitive_triangle_offset,
+          meshletGroupOffset: primitive_group_offset,
+          meshletGroupCount: processed_lod.meshlet_groups.length,
+        });
+      }
+
+      // Preserve the v2 LOD0 fields so older runtimes can still render freshly cooked assets.
+      Object.assign(primitive_manifest, primitive_manifest.lods[0]);
+      manifest_mesh.primitives.push(primitive_manifest);
     }
 
     manifest.meshes.push(manifest_mesh);
   }
 
   const meshlets_byte_length = meshlet_records.length * MESHLET_STRUCT_STRIDE;
-  const meshlet_vertices_byte_length = meshlet_vertex_records.length * Uint32Array.BYTES_PER_ELEMENT;
+  const meshlet_vertices_byte_length =
+    meshlet_vertex_records.length * Uint32Array.BYTES_PER_ELEMENT;
   const meshlet_triangles_byte_length = meshlet_triangle_records.length;
   const meshlet_groups_byte_length = meshlet_group_records.length * MESHLET_GROUP_STRUCT_STRIDE;
 
   const meshlets_offset = 0;
-  const meshlet_vertices_offset = align_to(
-    meshlets_offset + meshlets_byte_length,
-    16
-  );
+  const meshlet_vertices_offset = align_to(meshlets_offset + meshlets_byte_length, 16);
   const meshlet_triangles_offset = align_to(
     meshlet_vertices_offset + meshlet_vertices_byte_length,
     16
@@ -565,8 +601,15 @@ function process_gltf_file(gltf_path, settings) {
       if (primitive.skipped) {
         continue;
       }
-      meshlet_count += primitive.meshletCount;
-      group_count += primitive.meshletGroupCount;
+      if (Array.isArray(primitive.lods)) {
+        for (const lod of primitive.lods) {
+          meshlet_count += lod.meshletCount;
+          group_count += lod.meshletGroupCount;
+        }
+      } else {
+        meshlet_count += primitive.meshletCount;
+        group_count += primitive.meshletGroupCount;
+      }
     }
   }
 
@@ -601,6 +644,7 @@ async function main() {
   }
 
   await MeshoptClusterizer.ready;
+  await initialize_mesh_lod_simplifier();
 
   const gltf_files = [];
   find_gltf_files(ASSET_ROOT, gltf_files);
@@ -631,10 +675,7 @@ async function main() {
       );
     } catch (error) {
       summary.failed++;
-      console.error(
-        `[meshlet_preprocessor] failed ${format_asset_path(gltf_path)}:`,
-        error
-      );
+      console.error(`[meshlet_preprocessor] failed ${format_asset_path(gltf_path)}:`, error);
     }
   }
 
@@ -651,4 +692,3 @@ main().catch((error) => {
   console.error("[meshlet_preprocessor] fatal:", error);
   process.exit(1);
 });
-

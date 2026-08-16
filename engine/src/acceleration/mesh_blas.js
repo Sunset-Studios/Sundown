@@ -41,7 +41,7 @@ const BVH2_NODE_DATA_SIZE = 8; // BVH2 node: AABB (6 floats) + metadata (2 u32)
 const INITIAL_MAX_PAGES = 256; // Conservative initial allocation (16K nodes)
 const PAGE_SIZE = 64; // Nodes per page (optimal for GPU workgroup size)
 const UINT32_BYTES = 4; // Standard 32-bit integer size
-const DIRECTORY_ENTRY_SIZE = 5; // Per-mesh metadata: [bvh2_base, leaf_count, primitive_count, first_vertex, first_index]
+const DIRECTORY_ENTRY_SIZE = 6; // [bvh2_base, leaf_count, primitive_count, first_vertex, first_index, lod]
 
 // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
 // │                         🔧 COMPUTE SHADER BUILD CONFIGURATION                                │
@@ -237,7 +237,7 @@ export class MeshBLAS {
     this.#mesh_metadata.delete(mesh_id);
     this.#dirty_meshes.delete(mesh_id);
   }
-  
+
   /**
    * ┌─────────────────────────────────────────────────────────────────────────────────────────┐
    * │                        📊 RECALCULATE ALLOCATION COUNTS                                  │
@@ -256,7 +256,7 @@ export class MeshBLAS {
         allocation.base_node_index + allocation.actual_node_count
       );
     }
-    
+
     // Recalculate directory entry count (highest mesh_id + 1)
     this.#directory_entry_count = 0;
     for (const mesh_id of this.#mesh_metadata.keys()) {
@@ -288,7 +288,7 @@ export class MeshBLAS {
 
     const mesh_id = mesh.mesh_data_index;
     const first_vertex = mesh.vertex_buffer_offset || 0;
-    const first_index = mesh.index_buffer_offset || 0;
+    const first_index = (mesh.index_buffer_offset || 0) + (mesh.cooked_sbvh?.index_offset || 0);
     const triangle_count = Math.floor(mesh.index_count / 3);
     if (triangle_count <= 0) return;
 
@@ -299,6 +299,7 @@ export class MeshBLAS {
         reference_count: mesh.cooked_sbvh.reference_count,
         node_count: mesh.cooked_sbvh.node_count,
         node_data: mesh.cooked_sbvh.node_data,
+        lod: mesh.cooked_sbvh.lod ?? 0,
       };
     } else if ((mesh.vertices || mesh.cpu_position_data) && mesh.indices) {
       sbvh_build = build_mesh_sbvh(mesh);
@@ -310,6 +311,7 @@ export class MeshBLAS {
           reference_count: existing_meta.leaf_count,
           node_count: existing_meta.bvh2_node_count,
           node_data: existing_meta.local_node_data,
+          lod: existing_meta.lod ?? 0,
         };
       }
     }
@@ -324,6 +326,7 @@ export class MeshBLAS {
       sbvh_build.reference_count,
       first_vertex,
       first_index,
+      sbvh_build.lod ?? 0,
       sbvh_build.node_data
     );
 
@@ -445,6 +448,7 @@ export class MeshBLAS {
    * @param {number} reference_count - Number of BLAS leaf references after spatial splitting
    * @param {number} first_vertex - Vertex buffer offset for this mesh
    * @param {object} first_index - Index buffer offset for this mesh
+   * @param {number} lod - Offline mesh LOD used to build the BLAS
    * @param {Float32Array} node_data - Flattened BLAS node payload for GPU upload
    * @private
    */
@@ -454,6 +458,7 @@ export class MeshBLAS {
     reference_count,
     first_vertex,
     first_index,
+    lod,
     node_data
   ) {
     const index_buffer = MeshData.index_buffer;
@@ -482,6 +487,7 @@ export class MeshBLAS {
     this.#directory[directory_offset + 2] = primitive_count >>> 0;
     this.#directory[directory_offset + 3] = first_vertex >>> 0;
     this.#directory[directory_offset + 4] = first_index >>> 0;
+    this.#directory[directory_offset + 5] = lod >>> 0;
 
     // Write directory entry to GPU
     this.#directory_buffer.write_raw(
@@ -499,6 +505,7 @@ export class MeshBLAS {
     this.#mesh_metadata.set(mesh_id, {
       first_vertex: first_vertex,
       first_index: first_index,
+      lod: lod,
       primitive_count: primitive_count,
       leaf_count: reference_count,
       bvh2_base_node_index: bvh2_base_index,
@@ -559,7 +566,7 @@ export class MeshBLAS {
     };
 
     this.#bvh2_allocations.set(mesh_id, allocation);
-    
+
     // Update actual allocated node count
     this.#bvh2_allocated_node_count = Math.max(
       this.#bvh2_allocated_node_count,
@@ -568,7 +575,6 @@ export class MeshBLAS {
 
     return allocation.base_node_index;
   }
-
 
   /**
    * Ensure contiguous free BVH2 pages are available, growing buffer if needed.
@@ -579,7 +585,6 @@ export class MeshBLAS {
     const additional_pages = Math.max(required_pages, this.#bvh2_max_pages);
     this.#grow_bvh2_buffer(additional_pages);
   }
-
 
   /**
    * Find index of contiguous free BVH2 page run.
@@ -605,7 +610,6 @@ export class MeshBLAS {
 
     return -1;
   }
-
 
   /**
    * Grow the BVH2 nodes buffer by adding additional pages.
@@ -647,7 +651,6 @@ export class MeshBLAS {
       this.#dirty_meshes.add(mesh_id);
     }
   }
-
 
   /**
    * Ensure directory has capacity for the given mesh ID.
@@ -705,8 +708,7 @@ export class MeshBLAS {
    */
   static #create_scratch_buffers(primitive_capacity) {
     const max_thread_blocks = Math.max(1, Math.ceil(primitive_capacity / SCRATCH_TILE_SIZE));
-    const pass_histogram_size =
-      max_thread_blocks * SCRATCH_RADIX * SCRATCH_RADIX_PASSES;
+    const pass_histogram_size = max_thread_blocks * SCRATCH_RADIX * SCRATCH_RADIX_PASSES;
 
     this.#morton_codes_buffer = Buffer.create({
       name: "mesh_blas_morton_codes",
@@ -859,7 +861,6 @@ export class MeshBLAS {
   static get bounds_size() {
     return this.#bvh2_blas_size;
   }
-
 
   // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
   // │                              🔍 MESH METADATA & GPU DATA                                     │
