@@ -3148,7 +3148,11 @@ export class BistroTestScene extends Scene {
       "engine/models/bistro/bistro_exterior.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
-      [1, 1, 1]
+      [1, 1, 1],
+      null,
+      null,
+      null,
+      { blend_material_mode: "MASK" }
     );
     this.entities.push(bistro_root);
 
@@ -4558,7 +4562,7 @@ export class UI3DTestScene extends Scene {
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
   //await scene_switcher.add_scene(textures_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(ui_3d_scene);
   //await scene_switcher.add_scene(sponza_scene);
@@ -4566,7 +4570,7 @@ export class UI3DTestScene extends Scene {
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(backrooms_scene);
   //await scene_switcher.add_scene(city_scene);
-  await scene_switcher.add_scene(scifi_city_scene);
+  //await scene_switcher.add_scene(scifi_city_scene);
 
   simulator.add_sim_layer(scene_switcher);
   simulator.add_sim_layer(new SceneSettingsPanel(scene_switcher));

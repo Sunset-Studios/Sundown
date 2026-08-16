@@ -8,7 +8,11 @@ struct SurfaceCacheTemporalParams {
     spatial_filter_radius: f32,
     recurrent_blur_max_radius: f32,
     recurrent_blur_history_frames: f32,
+    recurrent_blur_min_strength: f32,
+    recurrent_blur_max_strength: f32,
     _padding0: f32,
+    _padding1: f32,
+    _padding2: f32,
 };
 
 struct SurfaceCacheHistoryTap {
@@ -44,8 +48,10 @@ fn surface_cache_history_tap(
     tap_coord: vec2<i32>,
     tap_weight: f32,
     resolution: vec2<u32>,
+    current_position: vec3<f32>,
     current_normal: vec3<f32>,
     current_linear_depth: f32,
+    compare_surface_plane: bool,
     view_index: u32
 ) -> SurfaceCacheHistoryTap {
     // Static reprojection commonly produces one unit bilinear weight and three
@@ -98,7 +104,25 @@ fn surface_cache_history_tap(
     let relative_depth_delta = abs(
         previous_linear_depth - current_linear_depth
     ) / max(current_linear_depth, 1e-3);
-    if (relative_depth_delta > temporal_params.depth_threshold) {
+    let relative_plane_delta = abs(dot(
+        previous_position - current_position,
+        current_normal
+    )) / max(current_linear_depth, 1e-3);
+    // Wide blur taps should follow the receiving plane. Raw view-depth deltas
+    // reject one screen axis on sloped surfaces and turn a circular kernel into
+    // an iso-depth streak; ordinary bilinear reprojection keeps its strict
+    // depth comparison.
+    let geometry_delta = select(
+        relative_depth_delta,
+        relative_plane_delta,
+        compare_surface_plane
+    );
+    let geometry_threshold = select(
+        temporal_params.depth_threshold,
+        max(temporal_params.depth_threshold * 0.5, 0.005),
+        compare_surface_plane
+    );
+    if (geometry_delta > geometry_threshold) {
         return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
     }
 
@@ -390,14 +414,15 @@ fn surface_cache_reliability(sample_count: f32) -> f32 {
     return sqrt(sample_count / 32.0);
 }
 
-// Low-age history has not accumulated enough independent cache observations
-// to hide reconstruction noise. Recurrently filter that history over a sparse,
-// geometry-aware footprint, then shrink both the radius and blend as it matures.
+// Recurrently filter the complete valid history over a sparse, geometry-aware
+// footprint. Low-age history receives the configured maximum blur while mature
+// history retains the minimum, so converged GI still sheds residual noise.
 // Keeping the center age prevents neighboring mature pixels from prematurely
-// disabling the filter on a newly exposed surface.
+// weakening the filter on a newly exposed surface.
 fn surface_cache_recurrent_blur_history(
     previous_pixel: vec2<f32>,
     resolution: vec2<u32>,
+    current_position: vec3<f32>,
     current_normal: vec3<f32>,
     current_linear_depth: f32,
     view_index: u32,
@@ -405,11 +430,9 @@ fn surface_cache_recurrent_blur_history(
 ) -> vec4<f32> {
     let blur_history_frames = temporal_params.recurrent_blur_history_frames;
     let maximum_radius = temporal_params.recurrent_blur_max_radius;
-    if (
-        maximum_radius < 0.5 ||
-        blur_history_frames <= 1.0 ||
-        history.w >= blur_history_frames
-    ) {
+    let minimum_strength = temporal_params.recurrent_blur_min_strength;
+    let maximum_strength = temporal_params.recurrent_blur_max_strength;
+    if (maximum_radius < 0.5 || maximum_strength <= 0.0) {
         return history;
     }
 
@@ -418,8 +441,9 @@ fn surface_cache_recurrent_blur_history(
         0.0,
         1.0
     );
-    let blur_amount = 1.0 - smoothstep(0.0, 1.0, history_progress);
-    let tap_stride = max(i32(ceil(maximum_radius * blur_amount)), 1);
+    let convergence = smoothstep(0.0, 1.0, history_progress);
+    let blur_strength = mix(maximum_strength, minimum_strength, convergence);
+    let tap_stride = max(i32(ceil(maximum_radius * blur_strength)), 1);
     let previous_center = vec2<i32>(floor(previous_pixel + vec2<f32>(0.5)));
     let kernel = vec3<f32>(0.27901, 0.44198, 0.27901);
     let center_weight = kernel.y * kernel.y;
@@ -438,8 +462,10 @@ fn surface_cache_recurrent_blur_history(
                 previous_center + vec2<i32>(tap_x, tap_y) * tap_stride,
                 kernel_weight,
                 resolution,
+                current_position,
                 current_normal,
                 current_linear_depth,
+                true,
                 view_index
             );
             if (tap.weight <= 1e-5) {
@@ -457,7 +483,7 @@ fn surface_cache_recurrent_blur_history(
     }
     let blurred_history = color_sum / color_weight_sum;
     return vec4<f32>(
-        mix(history.xyz, blurred_history, blur_amount),
+        mix(history.xyz, blurred_history, blur_strength),
         history.w
     );
 }
@@ -623,8 +649,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         previous_base,
         bilinear_weights.x,
         resolution,
+        current_position,
         current_normal,
         current_linear_depth,
+        false,
         view_index
     );
     var history_sum = tap_00.value;
@@ -633,8 +661,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         previous_base + vec2<i32>(1, 0),
         bilinear_weights.y,
         resolution,
+        current_position,
         current_normal,
         current_linear_depth,
+        false,
         view_index
     );
     history_sum += tap_10.value;
@@ -643,8 +673,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         previous_base + vec2<i32>(0, 1),
         bilinear_weights.z,
         resolution,
+        current_position,
         current_normal,
         current_linear_depth,
+        false,
         view_index
     );
     history_sum += tap_01.value;
@@ -653,8 +685,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         previous_base + vec2<i32>(1, 1),
         bilinear_weights.w,
         resolution,
+        current_position,
         current_normal,
         current_linear_depth,
+        false,
         view_index
     );
     history_sum += tap_11.value;
@@ -694,6 +728,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         history = surface_cache_recurrent_blur_history(
             previous_pixel,
             resolution,
+            current_position,
             current_normal,
             current_linear_depth,
             view_index,
