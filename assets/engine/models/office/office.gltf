@@ -6944,6 +6944,16 @@
 	],
 	"meshes":[
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.006",
 			"primitives":[
 				{
@@ -6958,6 +6968,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.008",
 			"primitives":[
 				{
@@ -6972,6 +6992,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.007",
 			"primitives":[
 				{
@@ -6986,6 +7016,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.005",
 			"primitives":[
 				{
@@ -7001,6 +7041,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.003",
 			"primitives":[
 				{
@@ -7015,6 +7065,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.004",
 			"primitives":[
 				{
@@ -7029,6 +7089,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.002",
 			"primitives":[
 				{
@@ -7045,6 +7115,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.001",
 			"primitives":[
 				{
@@ -7061,6 +7141,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh",
 			"primitives":[
 				{
@@ -7075,6 +7165,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.010",
 			"primitives":[
 				{
@@ -7090,6 +7190,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.009",
 			"primitives":[
 				{
@@ -7104,6 +7214,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.015",
 			"primitives":[
 				{
@@ -7118,6 +7238,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.011",
 			"primitives":[
 				{
@@ -7133,6 +7263,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.013",
 			"primitives":[
 				{
@@ -7148,6 +7288,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.014",
 			"primitives":[
 				{
@@ -7163,6 +7313,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.012",
 			"primitives":[
 				{
@@ -7178,6 +7338,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.016",
 			"primitives":[
 				{
@@ -7193,6 +7363,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.017",
 			"primitives":[
 				{
@@ -7208,6 +7388,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.018",
 			"primitives":[
 				{
@@ -7223,6 +7413,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.020",
 			"primitives":[
 				{
@@ -7238,6 +7438,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.019",
 			"primitives":[
 				{
@@ -7253,6 +7463,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.027",
 			"primitives":[
 				{
@@ -7267,6 +7487,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.029",
 			"primitives":[
 				{
@@ -7281,6 +7511,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.028",
 			"primitives":[
 				{
@@ -7295,6 +7535,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.026",
 			"primitives":[
 				{
@@ -7310,6 +7560,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.024",
 			"primitives":[
 				{
@@ -7324,6 +7584,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.025",
 			"primitives":[
 				{
@@ -7338,6 +7608,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.022",
 			"primitives":[
 				{
@@ -7354,6 +7634,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.023",
 			"primitives":[
 				{
@@ -7370,6 +7660,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.021",
 			"primitives":[
 				{
@@ -7384,6 +7684,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.031",
 			"primitives":[
 				{
@@ -7399,6 +7709,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.030",
 			"primitives":[
 				{
@@ -7413,6 +7733,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.036",
 			"primitives":[
 				{
@@ -7427,6 +7757,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.034",
 			"primitives":[
 				{
@@ -7442,6 +7782,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.035",
 			"primitives":[
 				{
@@ -7457,6 +7807,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.033",
 			"primitives":[
 				{
@@ -7472,6 +7832,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.032",
 			"primitives":[
 				{
@@ -7487,6 +7857,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.037",
 			"primitives":[
 				{
@@ -7502,6 +7882,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.038",
 			"primitives":[
 				{
@@ -7517,6 +7907,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.039",
 			"primitives":[
 				{
@@ -7532,6 +7932,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.041",
 			"primitives":[
 				{
@@ -7547,6 +7957,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.040",
 			"primitives":[
 				{
@@ -7562,6 +7982,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.048",
 			"primitives":[
 				{
@@ -7576,6 +8006,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.050",
 			"primitives":[
 				{
@@ -7590,6 +8030,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.049",
 			"primitives":[
 				{
@@ -7604,6 +8054,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.047",
 			"primitives":[
 				{
@@ -7619,6 +8079,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.045",
 			"primitives":[
 				{
@@ -7633,6 +8103,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.046",
 			"primitives":[
 				{
@@ -7647,6 +8127,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.043",
 			"primitives":[
 				{
@@ -7663,6 +8153,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.044",
 			"primitives":[
 				{
@@ -7679,6 +8179,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.042",
 			"primitives":[
 				{
@@ -7693,6 +8203,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.052",
 			"primitives":[
 				{
@@ -7708,6 +8228,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.051",
 			"primitives":[
 				{
@@ -7722,6 +8252,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.057",
 			"primitives":[
 				{
@@ -7736,6 +8276,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.055",
 			"primitives":[
 				{
@@ -7751,6 +8301,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.056",
 			"primitives":[
 				{
@@ -7766,6 +8326,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.054",
 			"primitives":[
 				{
@@ -7781,6 +8351,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.053",
 			"primitives":[
 				{
@@ -7796,6 +8376,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.058",
 			"primitives":[
 				{
@@ -7811,6 +8401,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.059",
 			"primitives":[
 				{
@@ -7826,6 +8426,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.060",
 			"primitives":[
 				{
@@ -7841,6 +8451,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.062",
 			"primitives":[
 				{
@@ -7856,6 +8476,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.061",
 			"primitives":[
 				{
@@ -7871,6 +8501,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.069",
 			"primitives":[
 				{
@@ -7885,6 +8525,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.071",
 			"primitives":[
 				{
@@ -7899,6 +8549,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.070",
 			"primitives":[
 				{
@@ -7913,6 +8573,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.068",
 			"primitives":[
 				{
@@ -7928,6 +8598,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.066",
 			"primitives":[
 				{
@@ -7942,6 +8622,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.067",
 			"primitives":[
 				{
@@ -7956,6 +8646,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.064",
 			"primitives":[
 				{
@@ -7972,6 +8672,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.065",
 			"primitives":[
 				{
@@ -7988,6 +8698,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.063",
 			"primitives":[
 				{
@@ -8002,6 +8722,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.073",
 			"primitives":[
 				{
@@ -8017,6 +8747,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.072",
 			"primitives":[
 				{
@@ -8031,6 +8771,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.078",
 			"primitives":[
 				{
@@ -8045,6 +8795,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.076",
 			"primitives":[
 				{
@@ -8060,6 +8820,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.077",
 			"primitives":[
 				{
@@ -8075,6 +8845,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.075",
 			"primitives":[
 				{
@@ -8090,6 +8870,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.074",
 			"primitives":[
 				{
@@ -8105,6 +8895,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.079",
 			"primitives":[
 				{
@@ -8120,6 +8920,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.080",
 			"primitives":[
 				{
@@ -8135,6 +8945,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.081",
 			"primitives":[
 				{
@@ -8150,6 +8970,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.083",
 			"primitives":[
 				{
@@ -8165,6 +8995,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.082",
 			"primitives":[
 				{
@@ -8180,6 +9020,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.090",
 			"primitives":[
 				{
@@ -8194,6 +9044,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.092",
 			"primitives":[
 				{
@@ -8208,6 +9068,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.091",
 			"primitives":[
 				{
@@ -8222,6 +9092,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.089",
 			"primitives":[
 				{
@@ -8237,6 +9117,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.087",
 			"primitives":[
 				{
@@ -8251,6 +9141,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.088",
 			"primitives":[
 				{
@@ -8265,6 +9165,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.085",
 			"primitives":[
 				{
@@ -8281,6 +9191,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.086",
 			"primitives":[
 				{
@@ -8297,6 +9217,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.084",
 			"primitives":[
 				{
@@ -8311,6 +9241,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.094",
 			"primitives":[
 				{
@@ -8326,6 +9266,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.093",
 			"primitives":[
 				{
@@ -8340,6 +9290,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.099",
 			"primitives":[
 				{
@@ -8354,6 +9314,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.097",
 			"primitives":[
 				{
@@ -8369,6 +9339,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.098",
 			"primitives":[
 				{
@@ -8384,6 +9364,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.096",
 			"primitives":[
 				{
@@ -8399,6 +9389,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.095",
 			"primitives":[
 				{
@@ -8414,6 +9414,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.100",
 			"primitives":[
 				{
@@ -8429,6 +9439,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.101",
 			"primitives":[
 				{
@@ -8444,6 +9464,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.102",
 			"primitives":[
 				{
@@ -8459,6 +9489,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.104",
 			"primitives":[
 				{
@@ -8474,6 +9514,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.103",
 			"primitives":[
 				{
@@ -8489,6 +9539,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.111",
 			"primitives":[
 				{
@@ -8503,6 +9563,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.113",
 			"primitives":[
 				{
@@ -8517,6 +9587,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.112",
 			"primitives":[
 				{
@@ -8531,6 +9611,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.110",
 			"primitives":[
 				{
@@ -8546,6 +9636,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.108",
 			"primitives":[
 				{
@@ -8560,6 +9660,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.109",
 			"primitives":[
 				{
@@ -8574,6 +9684,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.106",
 			"primitives":[
 				{
@@ -8590,6 +9710,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.107",
 			"primitives":[
 				{
@@ -8606,6 +9736,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.105",
 			"primitives":[
 				{
@@ -8620,6 +9760,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.115",
 			"primitives":[
 				{
@@ -8635,6 +9785,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.114",
 			"primitives":[
 				{
@@ -8649,6 +9809,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.120",
 			"primitives":[
 				{
@@ -8663,6 +9833,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.118",
 			"primitives":[
 				{
@@ -8678,6 +9858,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.119",
 			"primitives":[
 				{
@@ -8693,6 +9883,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.117",
 			"primitives":[
 				{
@@ -8708,6 +9908,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.116",
 			"primitives":[
 				{
@@ -8723,6 +9933,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.121",
 			"primitives":[
 				{
@@ -8738,6 +9958,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.122",
 			"primitives":[
 				{
@@ -8753,6 +9983,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.123",
 			"primitives":[
 				{
@@ -8768,6 +10008,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.125",
 			"primitives":[
 				{
@@ -8783,6 +10033,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.124",
 			"primitives":[
 				{
@@ -8798,6 +10058,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.132",
 			"primitives":[
 				{
@@ -8812,6 +10082,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.134",
 			"primitives":[
 				{
@@ -8826,6 +10106,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.133",
 			"primitives":[
 				{
@@ -8840,6 +10130,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.131",
 			"primitives":[
 				{
@@ -8855,6 +10155,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.129",
 			"primitives":[
 				{
@@ -8869,6 +10179,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.130",
 			"primitives":[
 				{
@@ -8883,6 +10203,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.127",
 			"primitives":[
 				{
@@ -8899,6 +10229,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.128",
 			"primitives":[
 				{
@@ -8915,6 +10255,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.126",
 			"primitives":[
 				{
@@ -8929,6 +10279,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.136",
 			"primitives":[
 				{
@@ -8944,6 +10304,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.135",
 			"primitives":[
 				{
@@ -8958,6 +10328,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.141",
 			"primitives":[
 				{
@@ -8972,6 +10352,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.139",
 			"primitives":[
 				{
@@ -8987,6 +10377,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.140",
 			"primitives":[
 				{
@@ -9002,6 +10402,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.138",
 			"primitives":[
 				{
@@ -9017,6 +10427,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.137",
 			"primitives":[
 				{
@@ -9032,6 +10452,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.142",
 			"primitives":[
 				{
@@ -9047,6 +10477,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.143",
 			"primitives":[
 				{
@@ -9062,6 +10502,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.144",
 			"primitives":[
 				{
@@ -9077,6 +10527,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.146",
 			"primitives":[
 				{
@@ -9092,6 +10552,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.145",
 			"primitives":[
 				{
@@ -9107,6 +10577,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.153",
 			"primitives":[
 				{
@@ -9121,6 +10601,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.155",
 			"primitives":[
 				{
@@ -9135,6 +10625,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.154",
 			"primitives":[
 				{
@@ -9149,6 +10649,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.152",
 			"primitives":[
 				{
@@ -9164,6 +10674,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.150",
 			"primitives":[
 				{
@@ -9178,6 +10698,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.151",
 			"primitives":[
 				{
@@ -9192,6 +10722,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.148",
 			"primitives":[
 				{
@@ -9208,6 +10748,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.149",
 			"primitives":[
 				{
@@ -9224,6 +10774,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.147",
 			"primitives":[
 				{
@@ -9238,6 +10798,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.157",
 			"primitives":[
 				{
@@ -9253,6 +10823,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.156",
 			"primitives":[
 				{
@@ -9267,6 +10847,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.162",
 			"primitives":[
 				{
@@ -9281,6 +10871,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.160",
 			"primitives":[
 				{
@@ -9296,6 +10896,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.161",
 			"primitives":[
 				{
@@ -9311,6 +10921,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.159",
 			"primitives":[
 				{
@@ -9326,6 +10946,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.158",
 			"primitives":[
 				{
@@ -9341,6 +10971,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.163",
 			"primitives":[
 				{
@@ -9356,6 +10996,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.164",
 			"primitives":[
 				{
@@ -9371,6 +11021,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.165",
 			"primitives":[
 				{
@@ -9386,6 +11046,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.167",
 			"primitives":[
 				{
@@ -9401,6 +11071,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.166",
 			"primitives":[
 				{
@@ -9416,6 +11096,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.174",
 			"primitives":[
 				{
@@ -9430,6 +11120,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.176",
 			"primitives":[
 				{
@@ -9444,6 +11144,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.175",
 			"primitives":[
 				{
@@ -9458,6 +11168,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.173",
 			"primitives":[
 				{
@@ -9473,6 +11193,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.171",
 			"primitives":[
 				{
@@ -9487,6 +11217,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.172",
 			"primitives":[
 				{
@@ -9501,6 +11241,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.169",
 			"primitives":[
 				{
@@ -9517,6 +11267,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.170",
 			"primitives":[
 				{
@@ -9533,6 +11293,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.168",
 			"primitives":[
 				{
@@ -9547,6 +11317,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.178",
 			"primitives":[
 				{
@@ -9562,6 +11342,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.177",
 			"primitives":[
 				{
@@ -9576,6 +11366,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.183",
 			"primitives":[
 				{
@@ -9590,6 +11390,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.181",
 			"primitives":[
 				{
@@ -9605,6 +11415,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.182",
 			"primitives":[
 				{
@@ -9620,6 +11440,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.180",
 			"primitives":[
 				{
@@ -9635,6 +11465,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.179",
 			"primitives":[
 				{
@@ -9650,6 +11490,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.184",
 			"primitives":[
 				{
@@ -9665,6 +11515,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.185",
 			"primitives":[
 				{
@@ -9680,6 +11540,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.186",
 			"primitives":[
 				{
@@ -9695,6 +11565,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.188",
 			"primitives":[
 				{
@@ -9710,6 +11590,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.187",
 			"primitives":[
 				{
@@ -9725,6 +11615,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.195",
 			"primitives":[
 				{
@@ -9739,6 +11639,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.197",
 			"primitives":[
 				{
@@ -9753,6 +11663,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.196",
 			"primitives":[
 				{
@@ -9767,6 +11687,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.194",
 			"primitives":[
 				{
@@ -9782,6 +11712,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.192",
 			"primitives":[
 				{
@@ -9796,6 +11736,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.193",
 			"primitives":[
 				{
@@ -9810,6 +11760,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.190",
 			"primitives":[
 				{
@@ -9826,6 +11786,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.191",
 			"primitives":[
 				{
@@ -9842,6 +11812,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.189",
 			"primitives":[
 				{
@@ -9856,6 +11836,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.199",
 			"primitives":[
 				{
@@ -9871,6 +11861,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.198",
 			"primitives":[
 				{
@@ -9885,6 +11885,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.204",
 			"primitives":[
 				{
@@ -9899,6 +11909,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.202",
 			"primitives":[
 				{
@@ -9914,6 +11934,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.203",
 			"primitives":[
 				{
@@ -9929,6 +11959,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.201",
 			"primitives":[
 				{
@@ -9944,6 +11984,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.200",
 			"primitives":[
 				{
@@ -9959,6 +12009,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.205",
 			"primitives":[
 				{
@@ -9974,6 +12034,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.206",
 			"primitives":[
 				{
@@ -9989,6 +12059,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.207",
 			"primitives":[
 				{
@@ -10004,6 +12084,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.209",
 			"primitives":[
 				{
@@ -10019,6 +12109,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.208",
 			"primitives":[
 				{
@@ -10034,6 +12134,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.210",
 			"primitives":[
 				{
@@ -10048,6 +12158,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.211",
 			"primitives":[
 				{
@@ -10063,6 +12183,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.214",
 			"primitives":[
 				{
@@ -10077,6 +12207,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.212",
 			"primitives":[
 				{
@@ -10092,6 +12232,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.213",
 			"primitives":[
 				{
@@ -10107,6 +12257,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.217",
 			"primitives":[
 				{
@@ -10122,6 +12282,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.216",
 			"primitives":[
 				{
@@ -10137,6 +12307,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.215",
 			"primitives":[
 				{
@@ -10152,6 +12332,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.219",
 			"primitives":[
 				{
@@ -10166,6 +12356,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.218",
 			"primitives":[
 				{
@@ -10180,6 +12380,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.222",
 			"primitives":[
 				{
@@ -10195,6 +12405,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.221",
 			"primitives":[
 				{
@@ -10209,6 +12429,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.220",
 			"primitives":[
 				{
@@ -10224,6 +12454,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.240",
 			"primitives":[
 				{
@@ -10239,6 +12479,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.239",
 			"primitives":[
 				{
@@ -10253,6 +12503,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.242",
 			"primitives":[
 				{
@@ -10268,6 +12528,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.241",
 			"primitives":[
 				{
@@ -10282,6 +12552,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.243",
 			"primitives":[
 				{
@@ -10297,6 +12577,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.244",
 			"primitives":[
 				{
@@ -10312,6 +12602,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.231",
 			"primitives":[
 				{
@@ -10326,6 +12626,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.232",
 			"primitives":[
 				{
@@ -10340,6 +12650,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.254",
 			"primitives":[
 				{
@@ -10354,6 +12674,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.253",
 			"primitives":[
 				{
@@ -10369,6 +12699,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.264",
 			"primitives":[
 				{
@@ -10383,6 +12723,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.263",
 			"primitives":[
 				{
@@ -10398,6 +12748,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.262",
 			"primitives":[
 				{
@@ -10412,6 +12772,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.261",
 			"primitives":[
 				{
@@ -10427,6 +12797,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.260",
 			"primitives":[
 				{
@@ -10441,6 +12821,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.259",
 			"primitives":[
 				{
@@ -10456,6 +12846,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.258",
 			"primitives":[
 				{
@@ -10470,6 +12870,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.257",
 			"primitives":[
 				{
@@ -10485,6 +12895,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.256",
 			"primitives":[
 				{
@@ -10499,6 +12919,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.255",
 			"primitives":[
 				{
@@ -10514,6 +12944,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.227",
 			"primitives":[
 				{
@@ -10528,6 +12968,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.228",
 			"primitives":[
 				{
@@ -10542,6 +12992,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.225",
 			"primitives":[
 				{
@@ -10557,6 +13017,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.224",
 			"primitives":[
 				{
@@ -10571,6 +13041,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.230",
 			"primitives":[
 				{
@@ -10585,6 +13065,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.229",
 			"primitives":[
 				{
@@ -10599,6 +13089,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.265",
 			"primitives":[
 				{
@@ -10613,6 +13113,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.266",
 			"primitives":[
 				{
@@ -10627,6 +13137,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.267",
 			"primitives":[
 				{
@@ -10641,6 +13161,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.268",
 			"primitives":[
 				{
@@ -10655,6 +13185,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.269",
 			"primitives":[
 				{
@@ -10669,6 +13209,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.270",
 			"primitives":[
 				{
@@ -10683,6 +13233,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.271",
 			"primitives":[
 				{
@@ -10697,6 +13257,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.272",
 			"primitives":[
 				{
@@ -10711,6 +13281,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.273",
 			"primitives":[
 				{
@@ -10725,6 +13305,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.274",
 			"primitives":[
 				{
@@ -10739,6 +13329,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.275",
 			"primitives":[
 				{
@@ -10753,6 +13353,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.276",
 			"primitives":[
 				{
@@ -10767,6 +13377,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.277",
 			"primitives":[
 				{
@@ -10781,6 +13401,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.278",
 			"primitives":[
 				{
@@ -10795,6 +13425,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.335",
 			"primitives":[
 				{
@@ -10809,6 +13449,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.336",
 			"primitives":[
 				{
@@ -10823,6 +13473,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.337",
 			"primitives":[
 				{
@@ -10837,6 +13497,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.338",
 			"primitives":[
 				{
@@ -10851,6 +13521,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.339",
 			"primitives":[
 				{
@@ -10865,6 +13545,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.340",
 			"primitives":[
 				{
@@ -10879,6 +13569,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.341",
 			"primitives":[
 				{
@@ -10893,6 +13593,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.342",
 			"primitives":[
 				{
@@ -10907,6 +13617,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.343",
 			"primitives":[
 				{
@@ -10921,6 +13641,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.344",
 			"primitives":[
 				{
@@ -10935,6 +13665,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.345",
 			"primitives":[
 				{
@@ -10949,6 +13689,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.346",
 			"primitives":[
 				{
@@ -10963,6 +13713,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.347",
 			"primitives":[
 				{
@@ -10977,6 +13737,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.348",
 			"primitives":[
 				{
@@ -10991,6 +13761,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.349",
 			"primitives":[
 				{
@@ -11005,6 +13785,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.350",
 			"primitives":[
 				{
@@ -11019,6 +13809,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.351",
 			"primitives":[
 				{
@@ -11033,6 +13833,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.352",
 			"primitives":[
 				{
@@ -11047,6 +13857,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.353",
 			"primitives":[
 				{
@@ -11061,6 +13881,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.354",
 			"primitives":[
 				{
@@ -11075,6 +13905,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.355",
 			"primitives":[
 				{
@@ -11089,6 +13929,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.356",
 			"primitives":[
 				{
@@ -11103,6 +13953,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.357",
 			"primitives":[
 				{
@@ -11117,6 +13977,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.358",
 			"primitives":[
 				{
@@ -11131,6 +14001,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.359",
 			"primitives":[
 				{
@@ -11145,6 +14025,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.360",
 			"primitives":[
 				{
@@ -11159,6 +14049,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.361",
 			"primitives":[
 				{
@@ -11173,6 +14073,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.362",
 			"primitives":[
 				{
@@ -11187,6 +14097,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.363",
 			"primitives":[
 				{
@@ -11201,6 +14121,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.364",
 			"primitives":[
 				{
@@ -11215,6 +14145,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.365",
 			"primitives":[
 				{
@@ -11229,6 +14169,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.366",
 			"primitives":[
 				{
@@ -11243,6 +14193,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.367",
 			"primitives":[
 				{
@@ -11257,6 +14217,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.368",
 			"primitives":[
 				{
@@ -11271,6 +14241,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.369",
 			"primitives":[
 				{
@@ -11285,6 +14265,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.370",
 			"primitives":[
 				{
@@ -11299,6 +14289,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.371",
 			"primitives":[
 				{
@@ -11313,6 +14313,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.372",
 			"primitives":[
 				{
@@ -11327,6 +14337,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.373",
 			"primitives":[
 				{
@@ -11341,6 +14361,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.374",
 			"primitives":[
 				{
@@ -11355,6 +14385,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.375",
 			"primitives":[
 				{
@@ -11369,6 +14409,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.376",
 			"primitives":[
 				{
@@ -11383,6 +14433,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.377",
 			"primitives":[
 				{
@@ -11397,6 +14457,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.378",
 			"primitives":[
 				{
@@ -11411,6 +14481,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.379",
 			"primitives":[
 				{
@@ -11425,6 +14505,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.380",
 			"primitives":[
 				{
@@ -11439,6 +14529,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.381",
 			"primitives":[
 				{
@@ -11453,6 +14553,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.382",
 			"primitives":[
 				{
@@ -11467,6 +14577,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.383",
 			"primitives":[
 				{
@@ -11481,6 +14601,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.279",
 			"primitives":[
 				{
@@ -11495,6 +14625,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.280",
 			"primitives":[
 				{
@@ -11509,6 +14649,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.281",
 			"primitives":[
 				{
@@ -11523,6 +14673,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.282",
 			"primitives":[
 				{
@@ -11537,6 +14697,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.283",
 			"primitives":[
 				{
@@ -11551,6 +14721,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.284",
 			"primitives":[
 				{
@@ -11565,6 +14745,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.285",
 			"primitives":[
 				{
@@ -11579,6 +14769,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.286",
 			"primitives":[
 				{
@@ -11593,6 +14793,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.287",
 			"primitives":[
 				{
@@ -11607,6 +14817,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.288",
 			"primitives":[
 				{
@@ -11621,6 +14841,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.289",
 			"primitives":[
 				{
@@ -11635,6 +14865,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.290",
 			"primitives":[
 				{
@@ -11649,6 +14889,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.291",
 			"primitives":[
 				{
@@ -11663,6 +14913,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.292",
 			"primitives":[
 				{
@@ -11677,6 +14937,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.293",
 			"primitives":[
 				{
@@ -11691,6 +14961,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.294",
 			"primitives":[
 				{
@@ -11705,6 +14985,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.295",
 			"primitives":[
 				{
@@ -11719,6 +15009,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.296",
 			"primitives":[
 				{
@@ -11733,6 +15033,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.297",
 			"primitives":[
 				{
@@ -11747,6 +15057,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.298",
 			"primitives":[
 				{
@@ -11761,6 +15081,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.299",
 			"primitives":[
 				{
@@ -11775,6 +15105,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.300",
 			"primitives":[
 				{
@@ -11789,6 +15129,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.301",
 			"primitives":[
 				{
@@ -11803,6 +15153,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.302",
 			"primitives":[
 				{
@@ -11817,6 +15177,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.303",
 			"primitives":[
 				{
@@ -11831,6 +15201,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.304",
 			"primitives":[
 				{
@@ -11845,6 +15225,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.305",
 			"primitives":[
 				{
@@ -11859,6 +15249,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.306",
 			"primitives":[
 				{
@@ -11873,6 +15273,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.307",
 			"primitives":[
 				{
@@ -11887,6 +15297,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.308",
 			"primitives":[
 				{
@@ -11901,6 +15321,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.309",
 			"primitives":[
 				{
@@ -11915,6 +15345,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.310",
 			"primitives":[
 				{
@@ -11929,6 +15369,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.311",
 			"primitives":[
 				{
@@ -11943,6 +15393,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.312",
 			"primitives":[
 				{
@@ -11957,6 +15417,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.313",
 			"primitives":[
 				{
@@ -11971,6 +15441,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.314",
 			"primitives":[
 				{
@@ -11985,6 +15465,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.315",
 			"primitives":[
 				{
@@ -11999,6 +15489,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.316",
 			"primitives":[
 				{
@@ -12013,6 +15513,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.317",
 			"primitives":[
 				{
@@ -12027,6 +15537,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.318",
 			"primitives":[
 				{
@@ -12041,6 +15561,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.319",
 			"primitives":[
 				{
@@ -12055,6 +15585,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.320",
 			"primitives":[
 				{
@@ -12069,6 +15609,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.321",
 			"primitives":[
 				{
@@ -12083,6 +15633,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.322",
 			"primitives":[
 				{
@@ -12097,6 +15657,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.323",
 			"primitives":[
 				{
@@ -12111,6 +15681,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.324",
 			"primitives":[
 				{
@@ -12125,6 +15705,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.325",
 			"primitives":[
 				{
@@ -12139,6 +15729,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.326",
 			"primitives":[
 				{
@@ -12153,6 +15753,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.327",
 			"primitives":[
 				{
@@ -12167,6 +15777,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.328",
 			"primitives":[
 				{
@@ -12181,6 +15801,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.329",
 			"primitives":[
 				{
@@ -12195,6 +15825,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.330",
 			"primitives":[
 				{
@@ -12209,6 +15849,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.331",
 			"primitives":[
 				{
@@ -12223,6 +15873,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.332",
 			"primitives":[
 				{
@@ -12237,6 +15897,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.333",
 			"primitives":[
 				{
@@ -12251,6 +15921,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.334",
 			"primitives":[
 				{
@@ -12265,6 +15945,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.238",
 			"primitives":[
 				{
@@ -12279,6 +15969,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.226",
 			"primitives":[
 				{
@@ -12294,6 +15994,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.245",
 			"primitives":[
 				{
@@ -12308,6 +16018,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.246",
 			"primitives":[
 				{
@@ -12323,6 +16043,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.251",
 			"primitives":[
 				{
@@ -12337,6 +16067,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.252",
 			"primitives":[
 				{
@@ -12352,6 +16092,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.249",
 			"primitives":[
 				{
@@ -12366,6 +16116,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.250",
 			"primitives":[
 				{
@@ -12381,6 +16141,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.247",
 			"primitives":[
 				{
@@ -12395,6 +16165,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.248",
 			"primitives":[
 				{
@@ -12410,6 +16190,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.234",
 			"primitives":[
 				{
@@ -12424,6 +16214,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.233",
 			"primitives":[
 				{
@@ -12439,6 +16239,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.235",
 			"primitives":[
 				{
@@ -12453,6 +16263,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.236",
 			"primitives":[
 				{
@@ -12468,6 +16288,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.237",
 			"primitives":[
 				{
@@ -12483,6 +16313,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.223",
 			"primitives":[
 				{
@@ -12498,6 +16338,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.385",
 			"primitives":[
 				{
@@ -12513,6 +16363,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.384",
 			"primitives":[
 				{
@@ -12528,6 +16388,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.387",
 			"primitives":[
 				{
@@ -12543,6 +16413,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.386",
 			"primitives":[
 				{
@@ -12558,6 +16438,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.394",
 			"primitives":[
 				{
@@ -12573,6 +16463,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.388",
 			"primitives":[
 				{
@@ -12588,6 +16488,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.389",
 			"primitives":[
 				{
@@ -12603,6 +16513,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.391",
 			"primitives":[
 				{
@@ -12618,6 +16538,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.393",
 			"primitives":[
 				{
@@ -12633,6 +16563,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.392",
 			"primitives":[
 				{
@@ -12648,6 +16588,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Mesh.390",
 			"primitives":[
 				{

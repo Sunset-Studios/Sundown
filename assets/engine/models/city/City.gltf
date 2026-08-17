@@ -50025,6 +50025,16 @@
 	],
 	"meshes":[
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.001",
 			"primitives":[
 				{
@@ -50039,6 +50049,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.002",
 			"primitives":[
 				{
@@ -50064,6 +50084,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.003",
 			"primitives":[
 				{
@@ -50078,6 +50108,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene",
 			"primitives":[
 				{
@@ -50128,6 +50168,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.004",
 			"primitives":[
 				{
@@ -50160,6 +50210,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.005",
 			"primitives":[
 				{
@@ -50183,6 +50243,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.006",
 			"primitives":[
 				{
@@ -50206,6 +50276,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.007",
 			"primitives":[
 				{
@@ -50229,6 +50309,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.008",
 			"primitives":[
 				{
@@ -50252,6 +50342,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.009",
 			"primitives":[
 				{
@@ -50302,6 +50402,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.010",
 			"primitives":[
 				{
@@ -50334,6 +50444,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.011",
 			"primitives":[
 				{
@@ -50375,6 +50495,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.012",
 			"primitives":[
 				{
@@ -50389,6 +50519,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.013",
 			"primitives":[
 				{
@@ -50430,6 +50570,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.014",
 			"primitives":[
 				{
@@ -50516,6 +50666,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.015",
 			"primitives":[
 				{
@@ -50539,6 +50699,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.016",
 			"primitives":[
 				{
@@ -50580,6 +50750,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.017",
 			"primitives":[
 				{
@@ -50603,6 +50783,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.018",
 			"primitives":[
 				{
@@ -50671,6 +50861,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.019",
 			"primitives":[
 				{
@@ -50721,6 +50921,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.020",
 			"primitives":[
 				{
@@ -50744,6 +50954,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.021",
 			"primitives":[
 				{
@@ -50767,6 +50987,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.022",
 			"primitives":[
 				{
@@ -50781,6 +51011,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.023",
 			"primitives":[
 				{
@@ -50822,6 +51062,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.024",
 			"primitives":[
 				{
@@ -50845,6 +51095,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.025",
 			"primitives":[
 				{
@@ -50895,6 +51155,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.026",
 			"primitives":[
 				{
@@ -50909,6 +51179,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.027",
 			"primitives":[
 				{
@@ -50923,6 +51203,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.028",
 			"primitives":[
 				{
@@ -50937,6 +51227,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.080",
 			"primitives":[
 				{
@@ -50951,6 +51251,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.081",
 			"primitives":[
 				{
@@ -50965,6 +51275,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.082",
 			"primitives":[
 				{
@@ -50979,6 +51299,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.083",
 			"primitives":[
 				{
@@ -50993,6 +51323,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.084",
 			"primitives":[
 				{
@@ -51007,6 +51347,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.085",
 			"primitives":[
 				{
@@ -51021,6 +51371,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.029",
 			"primitives":[
 				{
@@ -51035,6 +51395,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.030",
 			"primitives":[
 				{
@@ -51067,6 +51437,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.032",
 			"primitives":[
 				{
@@ -51090,6 +51470,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.031",
 			"primitives":[
 				{
@@ -51113,6 +51503,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.033",
 			"primitives":[
 				{
@@ -51136,6 +51536,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.034",
 			"primitives":[
 				{
@@ -51150,6 +51560,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.035",
 			"primitives":[
 				{
@@ -51191,6 +51611,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.036",
 			"primitives":[
 				{
@@ -51214,6 +51644,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.037",
 			"primitives":[
 				{
@@ -51237,6 +51677,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.038",
 			"primitives":[
 				{
@@ -51251,6 +51701,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.039",
 			"primitives":[
 				{
@@ -51292,6 +51752,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.040",
 			"primitives":[
 				{
@@ -51306,6 +51776,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.041",
 			"primitives":[
 				{
@@ -51347,6 +51827,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.042",
 			"primitives":[
 				{
@@ -51388,6 +51878,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.043",
 			"primitives":[
 				{
@@ -51429,6 +51929,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.044",
 			"primitives":[
 				{
@@ -51461,6 +51971,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.045",
 			"primitives":[
 				{
@@ -51484,6 +52004,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.046",
 			"primitives":[
 				{
@@ -51525,6 +52055,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.047",
 			"primitives":[
 				{
@@ -51548,6 +52088,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.048",
 			"primitives":[
 				{
@@ -51562,6 +52112,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.049",
 			"primitives":[
 				{
@@ -51594,6 +52154,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.050",
 			"primitives":[
 				{
@@ -51653,6 +52223,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.051",
 			"primitives":[
 				{
@@ -51676,6 +52256,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.052",
 			"primitives":[
 				{
@@ -51708,6 +52298,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.053",
 			"primitives":[
 				{
@@ -51731,6 +52331,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.054",
 			"primitives":[
 				{
@@ -51754,6 +52364,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.055",
 			"primitives":[
 				{
@@ -51786,6 +52406,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.056",
 			"primitives":[
 				{
@@ -51809,6 +52439,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.057",
 			"primitives":[
 				{
@@ -51823,6 +52463,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.058",
 			"primitives":[
 				{
@@ -51864,6 +52514,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.059",
 			"primitives":[
 				{
@@ -51896,6 +52556,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.060",
 			"primitives":[
 				{
@@ -51919,6 +52589,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.061",
 			"primitives":[
 				{
@@ -51987,6 +52667,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.064",
 			"primitives":[
 				{
@@ -52019,6 +52709,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.063",
 			"primitives":[
 				{
@@ -52033,6 +52733,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.065",
 			"primitives":[
 				{
@@ -52056,6 +52766,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.067",
 			"primitives":[
 				{
@@ -52070,6 +52790,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.066",
 			"primitives":[
 				{
@@ -52084,6 +52814,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.069",
 			"primitives":[
 				{
@@ -52116,6 +52856,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.068",
 			"primitives":[
 				{
@@ -52139,6 +52889,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.062",
 			"primitives":[
 				{
@@ -52180,6 +52940,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.086",
 			"primitives":[
 				{
@@ -52194,6 +52964,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.087",
 			"primitives":[
 				{
@@ -52208,6 +52988,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.088",
 			"primitives":[
 				{
@@ -52222,6 +53012,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.070",
 			"primitives":[
 				{
@@ -52281,6 +53081,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.071",
 			"primitives":[
 				{
@@ -52304,6 +53114,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.072",
 			"primitives":[
 				{
@@ -52327,6 +53147,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.089",
 			"primitives":[
 				{
@@ -52341,6 +53171,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.090",
 			"primitives":[
 				{
@@ -52355,6 +53195,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.091",
 			"primitives":[
 				{
@@ -52369,6 +53219,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.073",
 			"primitives":[
 				{
@@ -52392,6 +53252,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.074",
 			"primitives":[
 				{
@@ -52424,6 +53294,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.075",
 			"primitives":[
 				{
@@ -52447,6 +53327,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.076",
 			"primitives":[
 				{
@@ -52470,6 +53360,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.077",
 			"primitives":[
 				{
@@ -52493,6 +53393,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.078",
 			"primitives":[
 				{
@@ -52528,6 +53438,16 @@
 			]
 		},
 		{
+			"extras":{
+				"sundown":{
+					"meshLod":{
+						"ratios":[1.0, 0.5, 0.25, 0.125],
+						"maxError":0.01,
+						"minLod":0,
+						"sbvhLod":2
+					}
+				}
+			},
 			"name":"Scene.079",
 			"primitives":[
 				{

@@ -34,6 +34,17 @@ struct SurfaceCacheCurrentEstimate {
     valid_tap_count: f32,
 };
 
+const RECURRENT_BLUR_RING_OFFSETS: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
+    vec2<f32>( 0.9238795,  0.3826834),
+    vec2<f32>( 0.3826834,  0.9238795),
+    vec2<f32>(-0.3826834,  0.9238795),
+    vec2<f32>(-0.9238795,  0.3826834),
+    vec2<f32>(-0.9238795, -0.3826834),
+    vec2<f32>(-0.3826834, -0.9238795),
+    vec2<f32>( 0.3826834, -0.9238795),
+    vec2<f32>( 0.9238795, -0.3826834)
+);
+
 @group(1) @binding(0) var<uniform> temporal_params: SurfaceCacheTemporalParams;
 @group(1) @binding(1) var current_diffuse: texture_2d<f32>;
 @group(1) @binding(2) var history_diffuse: texture_2d<f32>;
@@ -443,39 +454,39 @@ fn surface_cache_recurrent_blur_history(
     );
     let convergence = smoothstep(0.0, 1.0, history_progress);
     let blur_strength = mix(maximum_strength, minimum_strength, convergence);
-    let tap_stride = max(i32(ceil(maximum_radius * blur_strength)), 1);
+    let tap_radius = max(maximum_radius * blur_strength, 1.0);
     let previous_center = vec2<i32>(floor(previous_pixel + vec2<f32>(0.5)));
-    let kernel = vec3<f32>(0.27901, 0.44198, 0.27901);
-    let center_weight = kernel.y * kernel.y;
+    // A widened 3x3 kernel collapses onto three scanlines and its corner taps
+    // sit sqrt(2) farther from the center than its axial taps. An octagonal
+    // ring keeps every history sample on the requested radius; the half-step
+    // rotation also prevents the strongest taps from sharing a horizontal row.
+    let center_weight = 0.2;
+    let ring_weight = (1.0 - center_weight) / 8.0;
     let center_reliability = surface_cache_reliability(history.w);
     var color_sum = history.xyz * center_weight * center_reliability;
     var color_weight_sum = center_weight * center_reliability;
 
-    for (var tap_y = -1; tap_y <= 1; tap_y = tap_y + 1) {
-        for (var tap_x = -1; tap_x <= 1; tap_x = tap_x + 1) {
-            if (tap_x == 0 && tap_y == 0) {
-                continue;
-            }
-            let kernel_weight = kernel[u32(tap_x + 1)] *
-                kernel[u32(tap_y + 1)];
-            let tap = surface_cache_history_tap(
-                previous_center + vec2<i32>(tap_x, tap_y) * tap_stride,
-                kernel_weight,
-                resolution,
-                current_position,
-                current_normal,
-                current_linear_depth,
-                true,
-                view_index
-            );
-            if (tap.weight <= 1e-5) {
-                continue;
-            }
-            let tap_history_frames = tap.value.w / tap.weight;
-            let tap_reliability = surface_cache_reliability(tap_history_frames);
-            color_sum += tap.value.xyz * tap_reliability;
-            color_weight_sum += tap.weight * tap_reliability;
+    for (var tap_index = 0u; tap_index < 8u; tap_index = tap_index + 1u) {
+        let tap_offset = vec2<i32>(round(
+            RECURRENT_BLUR_RING_OFFSETS[tap_index] * tap_radius
+        ));
+        let tap = surface_cache_history_tap(
+            previous_center + tap_offset,
+            ring_weight,
+            resolution,
+            current_position,
+            current_normal,
+            current_linear_depth,
+            true,
+            view_index
+        );
+        if (tap.weight <= 1e-5) {
+            continue;
         }
+        let tap_history_frames = tap.value.w / tap.weight;
+        let tap_reliability = surface_cache_reliability(tap_history_frames);
+        color_sum += tap.value.xyz * tap_reliability;
+        color_weight_sum += tap.weight * tap_reliability;
     }
 
     if (color_weight_sum <= 1e-5) {

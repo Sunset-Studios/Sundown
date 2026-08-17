@@ -18,6 +18,7 @@ import { GPUMemoryView } from "./gpu_memory_view.js";
 import { MLTraceTool } from "./ml_trace.js";
 import { CVarTool } from "./cvar_tool.js";
 import { MeshletStats } from "./meshlet_stats.js";
+import { MeshLODTool } from "./mesh_lod_tool.js";
 import { warn } from "../utility/logging.js";
 
 // Constants for naming and key codes
@@ -96,6 +97,7 @@ export class DevConsole extends SimulationLayer {
     this.register_command("svlm", new SVLMTool());
     this.register_command("cvar", new CVarTool());
     this.register_command("meshlet_stats", new MeshletStats());
+    this.register_command("mesh_lod", new MeshLODTool());
   }
 
   update(delta_time) {
@@ -175,7 +177,7 @@ export class DevConsole extends SimulationLayer {
         if (this.suggestion_index !== -1) {
           input_state.value = this.current_suggestions[this.suggestion_index];
         }
-        
+
         this._handle_command(input_state.value);
 
         this.hide();
