@@ -263,11 +263,20 @@ struct SurfaceCacheTapSample {
     irradiance: vec3<f32>,
     sample_count: f32,
     geometry_weight: f32,
+    error_variance: f32,
 };
 
 struct SurfaceCacheLevelSample {
     value: vec4<f32>,
     confidence: f32,
+    error_variance: f32,
+};
+
+struct SurfaceCachePresentationSample {
+    value: vec4<f32>,
+    confidence: f32,
+    standard_error: f32,
+    fallback_weight: f32,
 };
 
 const SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD: f32 = 0.82;
@@ -329,7 +338,7 @@ fn surface_cache_sample_descriptor(
         context.hash_search_count
     );
     if (patch_index_i < 0) {
-        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0, 0.0);
     }
 
     let patch_index = u32(patch_index_i);
@@ -337,14 +346,14 @@ fn surface_cache_sample_descriptor(
     // Newly allocated patches are common during camera movement. Reject them
     // before normalizing geometry or evaluating any spatial weights.
     if (sample_count <= 0.0) {
-        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0, 0.0);
     }
     // Patch normals have already been normalized by the feedback pass. This
     // removes the most expensive repeated arithmetic in the accepted-tap path.
     let patch_normal = surface_cache[patch_index].normal_cell_exponent.xyz;
     let normal_alignment = dot(context.receiver_normal, patch_normal);
     if (normal_alignment < SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD) {
-        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0, 0.0);
     }
 
     let position_delta = surface_cache[patch_index].position_frame.xyz -
@@ -354,7 +363,7 @@ fn surface_cache_sample_descriptor(
         abs(dot(position_delta, patch_normal))
     );
     if (plane_distance > plane_limit) {
-        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0, 0.0);
     }
     let normalized_plane_distance = plane_distance * inverse_plane_sigma;
     let plane_weight = exp(
@@ -380,7 +389,7 @@ fn surface_cache_sample_descriptor(
     }
     let geometry_weight = plane_weight * normal_weight * normal_weight * history_weight;
     if (geometry_weight <= 1e-5) {
-        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0);
+        return SurfaceCacheTapSample(vec3<f32>(0.0), 0.0, 0.0, 0.0);
     }
 
     let irradiance = max(
@@ -390,7 +399,15 @@ fn surface_cache_sample_descriptor(
         ),
         vec3<f32>(0.0)
     );
-    return SurfaceCacheTapSample(irradiance, sample_count, geometry_weight);
+    let history = surface_cache[patch_index].history;
+    let sample_variance = max(history.w - history.z * history.z, 0.0);
+    let error_variance = sample_variance / max(sample_count, 1.0);
+    return SurfaceCacheTapSample(
+        irradiance,
+        sample_count,
+        geometry_weight,
+        error_variance
+    );
 }
 
 fn surface_cache_sample_level_nearest(
@@ -407,7 +424,8 @@ fn surface_cache_sample_level_nearest(
     );
     return SurfaceCacheLevelSample(
         vec4<f32>(tap.irradiance, tap.sample_count),
-        clamp(tap.geometry_weight, 0.0, 1.0)
+        clamp(tap.geometry_weight, 0.0, 1.0),
+        tap.error_variance
     );
 }
 
@@ -444,6 +462,7 @@ fn surface_cache_sample_level(
     var irradiance_sum = vec3<f32>(0.0);
     var sample_count_sum = 0.0;
     var weight_sum = 0.0;
+    var error_variance_sum = 0.0;
     for (var tap_y = 0i; tap_y <= 1i; tap_y = tap_y + 1i) {
         for (var tap_x = 0i; tap_x <= 1i; tap_x = tap_x + 1i) {
             let tap_offset = vec2<i32>(tap_x, tap_y);
@@ -476,6 +495,7 @@ fn surface_cache_sample_level(
             let weight = bilinear_weight * tap.geometry_weight;
             irradiance_sum += tap.irradiance * weight;
             sample_count_sum += tap.sample_count * weight;
+            error_variance_sum += tap.error_variance * weight * weight;
             weight_sum += weight;
         }
     }
@@ -488,7 +508,8 @@ fn surface_cache_sample_level(
     }
     return SurfaceCacheLevelSample(
         vec4<f32>(irradiance_sum, sample_count_sum) / weight_sum,
-        clamp(weight_sum, 0.0, 1.0)
+        clamp(weight_sum, 0.0, 1.0),
+        error_variance_sum / (weight_sum * weight_sum)
     );
 }
 
@@ -503,29 +524,202 @@ fn surface_cache_finalize_sample(sample: vec4<f32>) -> vec4<f32> {
     return surface_cache_finalize_irradiance_sample(sample);
 }
 
-fn surface_cache_blend_level_samples(
+fn surface_cache_blend_level_estimates(
     fine_sample: SurfaceCacheLevelSample,
     coarse_sample: SurfaceCacheLevelSample,
     blend: f32
-) -> vec4<f32> {
+) -> SurfaceCacheLevelSample {
     let lod_blend = clamp(blend, 0.0, 1.0);
     let fine_weight = (1.0 - lod_blend) * fine_sample.confidence;
     let coarse_weight = lod_blend * coarse_sample.confidence;
     let weight_sum = fine_weight + coarse_weight;
     if (weight_sum > 1e-5) {
-        return (
-            fine_sample.value * fine_weight +
-            coarse_sample.value * coarse_weight
-        ) / weight_sum;
+        return SurfaceCacheLevelSample(
+            (
+                fine_sample.value * fine_weight +
+                coarse_sample.value * coarse_weight
+            ) / weight_sum,
+            clamp(weight_sum, 0.0, 1.0),
+            (
+                fine_sample.error_variance * fine_weight * fine_weight +
+                coarse_sample.error_variance * coarse_weight * coarse_weight
+            ) / (weight_sum * weight_sum)
+        );
     }
 
     // At a sparse edge the nominal LOD can have no geometrically compatible
     // taps. Select the better-supported neighbor without treating a missing
     // level as black irradiance.
-    return select(
-        fine_sample.value,
-        coarse_sample.value,
-        coarse_sample.confidence > fine_sample.confidence
+    if (coarse_sample.confidence > fine_sample.confidence) {
+        return coarse_sample;
+    }
+    return fine_sample;
+}
+
+fn surface_cache_blend_level_samples(
+    fine_sample: SurfaceCacheLevelSample,
+    coarse_sample: SurfaceCacheLevelSample,
+    blend: f32
+) -> vec4<f32> {
+    return surface_cache_blend_level_estimates(
+        fine_sample,
+        coarse_sample,
+        blend
+    ).value;
+}
+
+fn surface_cache_level_estimate_confidence(
+    sample: SurfaceCacheLevelSample
+) -> f32 {
+    if (sample.value.w <= 0.0 || sample.confidence <= 1e-5) {
+        return 0.0;
+    }
+
+    // Sample count prevents a coincidentally zero first-frame variance from
+    // promoting a patch. Standard error then lets smooth, low-variance patches
+    // mature sooner than difficult emissive or high-contrast neighborhoods.
+    let sample_readiness = smoothstep(
+        SURFACE_CACHE_MIN_QUERY_SAMPLES,
+        64.0,
+        sample.value.w
+    );
+    let sample_luminance = max(luminance(sample.value.xyz), 0.05);
+    let relative_error = sqrt(max(sample.error_variance, 0.0)) /
+        sample_luminance;
+    let uncertainty_readiness = 1.0 - smoothstep(0.15, 0.75, relative_error);
+    return clamp(
+        sample.confidence * sample_readiness * uncertainty_readiness,
+        0.0,
+        1.0
+    );
+}
+
+// Resolve native cache levels separately from their one-level-coarser parent.
+// A young native estimate remains hidden behind a compatible mature parent
+// until its measured confidence crosses the configured promotion window.
+fn surface_cache_presentation_sample_context(
+    context: SurfaceCacheLookupContext
+) -> SurfaceCachePresentationSample {
+    let exponent_value = surface_cache_cell_exponent_value(
+        context.receiver_position,
+        surface_cache_params
+    );
+    let native_fine_exponent = i32(floor(exponent_value));
+    let native_coarse_exponent = min(
+        native_fine_exponent + 1,
+        SURFACE_CACHE_MAX_CELL_EXPONENT
+    );
+    let level_blend = select(
+        smoothstep(
+            SURFACE_CACHE_LEVEL_BLEND_START,
+            SURFACE_CACHE_LEVEL_BLEND_END,
+            fract(exponent_value)
+        ),
+        0.0,
+        native_fine_exponent == native_coarse_exponent
+    );
+
+    let native_fine = surface_cache_sample_level(
+        context,
+        native_fine_exponent
+    );
+    var native = native_fine;
+    var native_coarse = native_fine;
+    if (native_coarse_exponent != native_fine_exponent) {
+        native_coarse = surface_cache_sample_level(
+            context,
+            native_coarse_exponent
+        );
+        native = surface_cache_blend_level_estimates(
+            native_fine,
+            native_coarse,
+            level_blend
+        );
+    }
+
+    let parent_fine_exponent = native_coarse_exponent;
+    let parent_coarse_exponent = min(
+        parent_fine_exponent + 1,
+        SURFACE_CACHE_MAX_CELL_EXPONENT
+    );
+    let parent_fine = native_coarse;
+    var parent = parent_fine;
+    if (parent_coarse_exponent != parent_fine_exponent) {
+        parent = surface_cache_blend_level_estimates(
+            parent_fine,
+            surface_cache_sample_level(context, parent_coarse_exponent),
+            level_blend
+        );
+    }
+
+    let native_confidence = surface_cache_level_estimate_confidence(native);
+    let parent_confidence = surface_cache_level_estimate_confidence(parent);
+    var presented = native;
+    var presented_confidence = native_confidence;
+    var fallback_weight = 0.0;
+
+    if (parent.value.w > 0.0 && parent.confidence > 1e-5) {
+        if (native.value.w <= 0.0 || native.confidence <= 1e-5) {
+            presented = parent;
+            presented_confidence = parent_confidence;
+            fallback_weight = 1.0;
+        } else {
+            let native_promotion = smoothstep(
+                surface_cache_params.native_promotion_start_confidence,
+                surface_cache_params.native_promotion_end_confidence,
+                native_confidence
+            );
+            // Never hold on to a parent which is less trustworthy than the
+            // native level. This also keeps a newly allocated parent from
+            // becoming another noisy fallback during a large reveal.
+            let weak_parent_release = 1.0 - smoothstep(
+                0.0,
+                0.5,
+                parent_confidence
+            );
+            let inferior_parent_release = smoothstep(
+                0.0,
+                0.2,
+                native_confidence - parent_confidence
+            );
+            let parent_release = max(
+                weak_parent_release,
+                inferior_parent_release
+            );
+            let promotion = max(native_promotion, parent_release);
+            fallback_weight = 1.0 - promotion;
+            presented = SurfaceCacheLevelSample(
+                mix(parent.value, native.value, promotion),
+                mix(parent.confidence, native.confidence, promotion),
+                mix(
+                    parent.error_variance,
+                    native.error_variance,
+                    promotion * promotion
+                )
+            );
+            presented_confidence = mix(
+                parent_confidence,
+                native_confidence,
+                promotion
+            );
+        }
+    }
+
+    let boost = surface_cache_params.indirect_boost;
+    return SurfaceCachePresentationSample(
+        vec4<f32>(presented.value.xyz * boost, presented.value.w),
+        presented_confidence,
+        sqrt(max(presented.error_variance, 0.0)) * boost,
+        fallback_weight
+    );
+}
+
+fn surface_cache_presentation_sample_normalized(
+    position: vec3<f32>,
+    normal: vec3<f32>
+) -> SurfaceCachePresentationSample {
+    return surface_cache_presentation_sample_context(
+        surface_cache_lookup_context_normalized(position, normal)
     );
 }
 

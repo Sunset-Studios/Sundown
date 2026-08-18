@@ -499,124 +499,6 @@ fn surface_cache_recurrent_blur_history(
     );
 }
 
-// When no temporal source exists, widen the current-frame reconstruction over
-// four à-trous scales. The sparse footprint combines many independently
-// gathered cache cells without paying this cost on temporally stable pixels.
-fn surface_cache_reconstruct_disocclusion(
-    coord: vec2<i32>,
-    resolution: vec2<u32>,
-    current_position: vec3<f32>,
-    current_normal: vec3<f32>,
-    current_linear_depth: f32,
-    view_index: u32,
-    center: vec4<f32>
-) -> vec4<f32> {
-    let radii = array<i32, 4>(2, 4, 8, 16);
-    var color_sum = vec3<f32>(0.0);
-    var color_weight_sum = 0.0;
-    var sample_count_sum = 0.0;
-    var geometry_weight_sum = 0.0;
-    let inverse_depth = 1.0 / max(current_linear_depth, 1e-3);
-    let plane_threshold = temporal_params.depth_threshold * 0.5;
-
-    for (var scale_index = 0u; scale_index < 4u; scale_index = scale_index + 1u) {
-        let radius = radii[scale_index];
-        let scale_weight = 1.0 / (1.0 + f32(scale_index));
-        for (var tap_y = -1; tap_y <= 1; tap_y = tap_y + 1) {
-            for (var tap_x = -1; tap_x <= 1; tap_x = tap_x + 1) {
-                if (tap_x == 0 && tap_y == 0) {
-                    continue;
-                }
-                let tap_coord = coord + vec2<i32>(tap_x, tap_y) * radius;
-                if (
-                    tap_coord.x < 0 || tap_coord.y < 0 ||
-                    tap_coord.x >= i32(resolution.x) ||
-                    tap_coord.y >= i32(resolution.y)
-                ) {
-                    continue;
-                }
-
-                let tap = textureLoad(current_diffuse, tap_coord, 0);
-                if (tap.w <= 0.0) {
-                    continue;
-                }
-                let tap_normal_data = textureLoad(
-                    gbuffer_normal,
-                    tap_coord,
-                    0
-                ).xyz;
-                if (dot(tap_normal_data, tap_normal_data) <= 1e-8) {
-                    continue;
-                }
-                let tap_normal = normalize(tap_normal_data);
-                let normal_alignment = dot(current_normal, tap_normal);
-                if (normal_alignment < temporal_params.normal_threshold) {
-                    continue;
-                }
-
-                let tap_depth = textureLoad(depth_texture, tap_coord, 0).r;
-                if (tap_depth >= 1.0) {
-                    continue;
-                }
-                let tap_position = reconstruct_world_position(
-                    coord_to_uv(tap_coord, resolution),
-                    tap_depth,
-                    view_index
-                );
-                let tap_linear_depth = abs(
-                    (view_buffer[view_index].view_matrix * vec4<f32>(tap_position, 1.0)).z
-                );
-                let relative_depth_delta = abs(
-                    tap_linear_depth - current_linear_depth
-                ) * inverse_depth;
-                let relative_plane_delta = abs(dot(
-                    tap_position - current_position,
-                    current_normal
-                )) * inverse_depth;
-                if (
-                    relative_depth_delta > temporal_params.depth_threshold ||
-                    relative_plane_delta > plane_threshold
-                ) {
-                    continue;
-                }
-
-                let depth_amount = relative_depth_delta /
-                    max(temporal_params.depth_threshold, 1e-4);
-                let depth_weight = exp(-2.0 * depth_amount * depth_amount);
-                let normal_weight = smoothstep(
-                    temporal_params.normal_threshold,
-                    1.0,
-                    normal_alignment
-                );
-                let geometry_weight = scale_weight * depth_weight * normal_weight;
-                // Sample count is used only as a denoiser reliability signal;
-                // it does not alter cache LOD selection or fallback behavior.
-                let reliability = surface_cache_reliability(tap.w);
-                let color_weight = geometry_weight * reliability;
-                color_sum += tap.xyz * color_weight;
-                color_weight_sum += color_weight;
-                sample_count_sum += tap.w * geometry_weight;
-                geometry_weight_sum += geometry_weight;
-            }
-        }
-    }
-
-    if (center.w > 0.0) {
-        let center_reliability = surface_cache_reliability(center.w);
-        color_sum += center.xyz * center_reliability;
-        color_weight_sum += center_reliability;
-        sample_count_sum += center.w;
-        geometry_weight_sum += 1.0;
-    }
-    if (color_weight_sum <= 1e-5 || geometry_weight_sum <= 1e-5) {
-        return center;
-    }
-    return vec4<f32>(
-        color_sum / color_weight_sum,
-        sample_count_sum / geometry_weight_sum
-    );
-}
-
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let resolution = textureDimensions(current_diffuse);
@@ -747,7 +629,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
     }
     // Luminance moments are consumed only by the history-clipping path. True
-    // disocclusions skip that arithmetic while retaining the same reconstruction.
+    // disocclusions skip that arithmetic and are reconstructed by the masked
+    // à-trous passes recorded after temporal accumulation.
     let current_estimate = surface_cache_reconstruct_current(
         coord,
         resolution,
@@ -758,18 +641,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         view_index,
         history_valid
     );
-    var current = current_estimate.value;
-    if (!history_valid) {
-        current = surface_cache_reconstruct_disocclusion(
-            coord,
-            resolution,
-            current_position,
-            current_normal,
-            current_linear_depth,
-            view_index,
-            center
-        );
-    }
+    let current = current_estimate.value;
 
     let current_valid = current.w >= 2.0;
     if (!current_valid) {

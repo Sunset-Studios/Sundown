@@ -48,8 +48,8 @@ struct SurfaceCacheParams {
     bootstrap_patch_capacity: f32,
     mature_patch_update_period: u32,
     maximum_ray_count_per_frame: u32,
-    _padding1: u32,
-    _padding2: u32,
+    native_promotion_start_confidence: f32,
+    native_promotion_end_confidence: f32,
 };
 
 struct SurfaceCacheCellLevels {

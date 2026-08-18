@@ -1151,12 +1151,14 @@ export class SurfaceRadianceCache extends GIModule {
         accumulate_bootstrap: compute_shader("gi/surface_cache_accumulate_bootstrap.wgsl"),
         resolve: compute_shader("gi/surface_cache_resolve.wgsl"),
         temporal: compute_shader("gi/surface_cache_temporal.wgsl"),
+        atrous: compute_shader("gi/surface_cache_atrous.wgsl"),
         debug: compute_shader("gi/surface_cache_debug.wgsl"),
       },
     });
     this.params_data = new Float32Array(24);
     this.params_u32_data = new Uint32Array(this.params_data.buffer);
     this.temporal_params_data = new Float32Array(12);
+    this.atrous_params_data = new Float32Array(8);
     this.counters_reset_data = new Uint32Array(11);
     this.counters_buffer = null;
     this.counters_data = null;
@@ -1333,6 +1335,14 @@ export class SurfaceRadianceCache extends GIModule {
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
+    this.create_image(render_graph, "resolve_aux", {
+      name: "surface_cache_resolve_aux",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
     this.create_buffer(render_graph, "surface_cache_sh", {
       name: "surface_cache_sh",
       size: sh_size,
@@ -1357,6 +1367,20 @@ export class SurfaceRadianceCache extends GIModule {
           force: force_recreate,
         });
       }
+      this.create_image(render_graph, "atrous_scratch", {
+        name: "surface_cache_atrous_scratch",
+        format: "rgba16float",
+        width,
+        height,
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+        force: force_recreate,
+      });
+      this.create_buffer(render_graph, "atrous_params", {
+        name: "surface_cache_atrous_params",
+        size: this.atrous_params_data.length,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        force: force_recreate,
+      });
     }
   }
 
@@ -1399,8 +1423,12 @@ export class SurfaceRadianceCache extends GIModule {
       this.params_data[19] = context.bootstrap_enabled ? context.bootstrap_patch_capacity : 0;
       this.params_u32_data[20] = context.mature_patch_update_period;
       this.params_u32_data[21] = context.maximum_ray_count_per_frame;
-      this.params_u32_data[22] = 0;
-      this.params_u32_data[23] = 0;
+      this.params_data[22] = clamp(config.native_promotion_start_confidence ?? 0.3, 0.0, 0.99);
+      this.params_data[23] = clamp(
+        config.native_promotion_end_confidence ?? 0.85,
+        this.params_data[22] + 0.01,
+        1.0
+      );
       graph.get_physical_buffer(params).write_raw(this.params_data);
       this.counters_reset_data.fill(0);
       this.counters_reset_data[5] = context.force_full_update ? 1 : 0;
@@ -1638,6 +1666,7 @@ export class SurfaceRadianceCache extends GIModule {
     const sh = this.get_resource("surface_cache_sh");
     const direct = this.get_resource("direct_output");
     const diffuse = this.get_resource("diffuse_output");
+    const resolve_aux = this.get_resource("resolve_aux");
     const { width, height, inputs } = context;
 
     this.add_compute_pass(
@@ -1705,8 +1734,9 @@ export class SurfaceRadianceCache extends GIModule {
           diffuse,
           direct,
           hashmap_entries,
+          resolve_aux,
         ],
-        outputs: [diffuse, direct],
+        outputs: [diffuse, direct, resolve_aux],
       },
       (graph, frame_data) =>
         graph
@@ -1815,6 +1845,77 @@ export class SurfaceRadianceCache extends GIModule {
           .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1)
     );
 
+    const atrous_enabled = context.config.disocclusion_atrous_enabled !== false;
+    const requested_atrous_pass_count = atrous_enabled
+      ? clamp(Math.floor(context.config.disocclusion_atrous_pass_count ?? 4), 0, 6)
+      : 0;
+    // One scratch texture alternates with the current history. An even pass
+    // count leaves the filtered result in history_curr for next-frame reuse.
+    const atrous_pass_count =
+      requested_atrous_pass_count > 0
+        ? requested_atrous_pass_count + (requested_atrous_pass_count & 1)
+        : 0;
+    const atrous_scratch = this.get_resource("atrous_scratch");
+    const atrous_params = this.get_resource("atrous_params");
+    let atrous_read = history_curr;
+    let atrous_write = atrous_scratch;
+    for (let pass_index = 0; pass_index < atrous_pass_count; pass_index++) {
+      this.add_graph_local_pass(
+        render_graph,
+        `surface_cache_atrous_upload_${history_frame}_${pass_index}`,
+        (graph) => {
+          this.atrous_params_data[0] = 1 << pass_index;
+          this.atrous_params_data[1] = Math.max(
+            context.config.disocclusion_atrous_phi_depth ?? 0.015,
+            0.0001
+          );
+          this.atrous_params_data[2] = Math.max(
+            context.config.disocclusion_atrous_phi_normal ?? 64.0,
+            1.0
+          );
+          this.atrous_params_data[3] = Math.max(
+            context.config.disocclusion_atrous_luma_sigma ?? 2.0,
+            0.01
+          );
+          this.atrous_params_data[4] = clamp(
+            context.config.disocclusion_atrous_confidence_threshold ?? 0.85,
+            0.0,
+            1.0
+          );
+          this.atrous_params_data[5] = Math.max(
+            Math.floor(context.config.disocclusion_atrous_history_frames ?? 12),
+            1
+          );
+          this.atrous_params_data[6] = 0;
+          this.atrous_params_data[7] = 0;
+          graph.get_physical_buffer(atrous_params).write_raw(this.atrous_params_data);
+        }
+      );
+      this.add_compute_pass(
+        render_graph,
+        "atrous",
+        `surface_cache_atrous_${history_frame}_${pass_index}`,
+        {
+          inputs: [
+            atrous_params,
+            atrous_read,
+            resolve_aux,
+            inputs.depth_texture,
+            inputs.gbuffer_normal,
+            atrous_write,
+          ],
+          outputs: [atrous_write],
+        },
+        (graph, frame_data) =>
+          graph
+            .get_physical_pass(frame_data.current_pass)
+            .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1)
+      );
+      const previous_read = atrous_read;
+      atrous_read = atrous_write;
+      atrous_write = previous_read;
+    }
+
     this.import_resource("diffuse_output", history_curr);
   }
 
@@ -1916,7 +2017,7 @@ export class SurfaceRadianceCache extends GIModule {
       (context.total_patches + context.bootstrap_patch_capacity) * 4 +
       this.counters_data.byteLength +
       SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT * Uint32Array.BYTES_PER_ELEMENT;
-    const output_texture_count = context.config.screen_reconstruction_enabled === false ? 1 : 3;
+    const output_texture_count = context.config.screen_reconstruction_enabled === false ? 2 : 5;
     const output_bytes = context.width * context.height * 8 * output_texture_count + 8;
 
     return {
