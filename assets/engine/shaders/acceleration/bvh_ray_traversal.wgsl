@@ -6,6 +6,74 @@ const BVH_TRAVERSAL_WORKGROUP_SIZE = 128u;
 var<workgroup> bvh_blas_node_stack: array<u32, NODE_STACK_SIZE * BVH_TRAVERSAL_WORKGROUP_SIZE>;
 var<private> bvh_stack_lane: u32;
 
+// Keep traversal state smaller than the public hit payload. Vertex indices are
+// reconstructed once after traversal instead of occupying registers while a
+// ray continues through the TLAS and additional BLAS candidates.
+struct BVHBLASHitState {
+    t_hit: f32,
+    tri_id_local: u32,
+    barycentrics: vec2<f32>,
+    front_face: u32,
+    has_hit: u32,
+};
+
+struct BVHClosestHitState {
+    t_hit: f32,
+    prim_store: u32,
+    mesh_id: u32,
+    tri_id_local: u32,
+    barycentrics: vec2<f32>,
+    front_face: u32,
+    has_hit: u32,
+};
+
+fn make_miss_blas_hit_state(t_max: f32) -> BVHBLASHitState {
+    return BVHBLASHitState(
+        t_max,
+        INVALID_IDX,
+        vec2<f32>(0.0),
+        0u,
+        0u
+    );
+}
+
+fn make_miss_closest_hit_state(t_max: f32) -> BVHClosestHitState {
+    return BVHClosestHitState(
+        t_max,
+        INVALID_IDX,
+        INVALID_IDX,
+        INVALID_IDX,
+        vec2<f32>(0.0),
+        0u,
+        0u
+    );
+}
+
+fn finalize_closest_hit(
+    hit: BVHClosestHitState,
+    tlas_only: bool
+) -> RayHitCompact {
+    var result = make_miss_ray_hit_compact(hit.t_hit);
+    result.t_hit = hit.t_hit;
+    result.prim_store = hit.prim_store;
+    result.mesh_id = hit.mesh_id;
+    result.tri_id_local = hit.tri_id_local;
+    result.barycentrics = hit.barycentrics;
+    result.has_hit = hit.has_hit;
+
+    if (hit.has_hit != 0u && !tlas_only) {
+        let mesh_directory_entry = blas_directory[hit.mesh_id];
+        let tri_base = mesh_directory_entry.first_index + hit.tri_id_local * 3u;
+        result.tri_indices = vec4<u32>(
+            mesh_directory_entry.first_vertex + index_buffer[tri_base + 0u],
+            mesh_directory_entry.first_vertex + index_buffer[tri_base + 1u],
+            mesh_directory_entry.first_vertex + index_buffer[tri_base + 2u],
+            hit.front_face
+        );
+    }
+    return result;
+}
+
 #if BVH_TRAVERSAL_COLLECT_STATS
 struct BVHTraversalStats {
     tlas_aabb_tests: u32,
@@ -33,9 +101,8 @@ fn bvh_trace_blas_closest(
     ray_local: ptr<function, Ray>,
     mesh_asset_id: u32,
     cull_backfaces: bool
-) -> RayHitCompact {
-    var result = make_miss_ray_hit_compact((*ray_local).direction_and_tmax.w);
-    result.mesh_id = mesh_asset_id;
+) -> BVHBLASHitState {
+    var result = make_miss_blas_hit_state((*ray_local).direction_and_tmax.w);
 
     let mesh_directory_entry = blas_directory[mesh_asset_id];
     let leaf_count = mesh_directory_entry.leaf_count;
@@ -110,58 +177,60 @@ fn bvh_trace_blas_closest(
                     result.t_hit = t_tri;
                     result.barycentrics = triangle_hit.yz;
                     result.tri_id_local = tri_id;
-                    result.tri_indices = vec4<u32>(
-                        v0i,
-                        v1i,
-                        v2i,
-                        u32(triangle_hit.w)
-                    );
+                    result.front_face = u32(triangle_hit.w);
                     result.has_hit = 1u;
                     current_ray.direction_and_tmax.w = t_tri;
                 }
             }
         } else {
             let child_idx = u32(node.min.w);
-            let child_node = blas_bvh2_nodes[child_idx];
 #if BVH_TRAVERSAL_COLLECT_STATS
             bvh_traversal_stats.blas_aabb_tests += 2u;
 #endif
-            let t_aabb_child = intersect_aabb(
-                &current_ray,
-                child_node.min.xyz,
-                child_node.max.xyz
-            );
+            var t_aabb_child: vec2<f32>;
+            {
+                let child_node = blas_bvh2_nodes[child_idx];
+                t_aabb_child = intersect_aabb(
+                    &current_ray,
+                    child_node.min.xyz,
+                    child_node.max.xyz
+                );
+            }
             let is_better_child = t_aabb_child.x <= t_aabb_child.y
                 && t_aabb_child.x < current_ray.direction_and_tmax.w;
 
             let child_idx_1 = u32(node.max.w);
-            let child_node_1 = blas_bvh2_nodes[child_idx_1];
-            let t_aabb_child_1 = intersect_aabb(
-                &current_ray,
-                child_node_1.min.xyz,
-                child_node_1.max.xyz
-            );
+            var t_aabb_child_1: vec2<f32>;
+            {
+                let child_node_1 = blas_bvh2_nodes[child_idx_1];
+                t_aabb_child_1 = intersect_aabb(
+                    &current_ray,
+                    child_node_1.min.xyz,
+                    child_node_1.max.xyz
+                );
+            }
             let is_better_child_1 = t_aabb_child_1.x <= t_aabb_child_1.y
                 && t_aabb_child_1.x < current_ray.direction_and_tmax.w;
 
             if (is_better_child && is_better_child_1) {
                 let child_1_is_nearer = t_aabb_child_1.x < t_aabb_child.x;
                 node_idx = select(child_idx, child_idx_1, child_1_is_nearer);
-                node.min = select(child_node.min, child_node_1.min, child_1_is_nearer);
-                node.max = select(child_node.max, child_node_1.max, child_1_is_nearer);
                 bvh_blas_node_stack[stack_size * BVH_TRAVERSAL_WORKGROUP_SIZE + bvh_stack_lane] =
                     select(child_idx_1, child_idx, child_1_is_nearer);
                 stack_size = stack_size + 1u;
+                // Reloading the selected child trades one cacheable node read
+                // for a shorter live range of both 32-byte child records.
+                node = blas_bvh2_nodes[node_idx];
                 node_bounds_valid = true;
                 continue;
             } else if (is_better_child) {
                 node_idx = child_idx;
-                node = child_node;
+                node = blas_bvh2_nodes[node_idx];
                 node_bounds_valid = true;
                 continue;
             } else if (is_better_child_1) {
                 node_idx = child_idx_1;
-                node = child_node_1;
+                node = blas_bvh2_nodes[node_idx];
                 node_bounds_valid = true;
                 continue;
             }
@@ -184,10 +253,10 @@ fn bvh_trace_closest(
     tlas_only: bool,
     cull_backfaces: bool
 ) -> RayHitCompact {
-    var result = make_miss_ray_hit_compact((*ray).direction_and_tmax.w);
+    var result = make_miss_closest_hit_state((*ray).direction_and_tmax.w);
 
     if (tlas_bvh_info.bvh2_count == 0u) {
-        return result;
+        return finalize_closest_hit(result, tlas_only);
     }
 
     var node_stack: array<u32, NODE_STACK_SIZE>;
@@ -244,9 +313,13 @@ fn bvh_trace_closest(
                         );
 
                         if (blas_hit.has_hit != 0u) {
-                            result = blas_hit;
+                            result.t_hit = blas_hit.t_hit;
                             result.prim_store = prim_store;
                             result.mesh_id = mesh_id;
+                            result.tri_id_local = blas_hit.tri_id_local;
+                            result.barycentrics = blas_hit.barycentrics;
+                            result.front_face = blas_hit.front_face;
+                            result.has_hit = 1u;
                             current_ray.direction_and_tmax.w = min(current_ray.direction_and_tmax.w, result.t_hit);
                         }
                     }
@@ -254,47 +327,52 @@ fn bvh_trace_closest(
             }
         } else {
             let child_idx = u32(node.min.w);
-            let child_node = tlas_bvh2_bounds[child_idx];
 #if BVH_TRAVERSAL_COLLECT_STATS
             bvh_traversal_stats.tlas_aabb_tests += 2u;
 #endif
-            let t_aabb_child = intersect_aabb(
-                &current_ray,
-                child_node.min.xyz,
-                child_node.max.xyz
-            );
+            var t_aabb_child: vec2<f32>;
+            {
+                let child_node = tlas_bvh2_bounds[child_idx];
+                t_aabb_child = intersect_aabb(
+                    &current_ray,
+                    child_node.min.xyz,
+                    child_node.max.xyz
+                );
+            }
             let is_better_child = t_aabb_child.x <= t_aabb_child.y
                 && t_aabb_child.x < result.t_hit;
 
             let child_idx_1 = u32(node.max.w);
-            let child_node_1 = tlas_bvh2_bounds[child_idx_1];
-            let t_aabb_child_1 = intersect_aabb(
-                &current_ray,
-                child_node_1.min.xyz,
-                child_node_1.max.xyz
-            );
+            var t_aabb_child_1: vec2<f32>;
+            {
+                let child_node_1 = tlas_bvh2_bounds[child_idx_1];
+                t_aabb_child_1 = intersect_aabb(
+                    &current_ray,
+                    child_node_1.min.xyz,
+                    child_node_1.max.xyz
+                );
+            }
             let is_better_child_1 = t_aabb_child_1.x <= t_aabb_child_1.y
                 && t_aabb_child_1.x < result.t_hit;
 
             if (is_better_child && is_better_child_1) {
                 let child_1_is_nearer = t_aabb_child_1.x < t_aabb_child.x;
                 node_idx = select(child_idx, child_idx_1, child_1_is_nearer);
-                node.min = select(child_node.min, child_node_1.min, child_1_is_nearer);
-                node.max = select(child_node.max, child_node_1.max, child_1_is_nearer);
                 node_tmin = select(t_aabb_child.x, t_aabb_child_1.x, child_1_is_nearer);
                 node_stack[stack_size] = select(child_idx_1, child_idx, child_1_is_nearer);
                 stack_size = stack_size + 1u;
+                node = tlas_bvh2_bounds[node_idx];
                 node_bounds_valid = true;
                 continue;
             } else if (is_better_child) {
                 node_idx = child_idx;
-                node = child_node;
+                node = tlas_bvh2_bounds[node_idx];
                 node_tmin = t_aabb_child.x;
                 node_bounds_valid = true;
                 continue;
             } else if (is_better_child_1) {
                 node_idx = child_idx_1;
-                node = child_node_1;
+                node = tlas_bvh2_bounds[node_idx];
                 node_tmin = t_aabb_child_1.x;
                 node_bounds_valid = true;
                 continue;
@@ -310,7 +388,7 @@ fn bvh_trace_closest(
         node = tlas_bvh2_bounds[node_idx];
     }
 
-    return result;
+    return finalize_closest_hit(result, tlas_only);
 }
 
 fn bvh_trace_blas_any(

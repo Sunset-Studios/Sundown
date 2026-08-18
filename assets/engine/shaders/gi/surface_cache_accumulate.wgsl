@@ -49,7 +49,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         patch_index = update_indices[source_index];
     }
     let rays_per_patch = select(
-        surface_cache_regular_rays_per_patch(surface_cache_params),
+        max(counters.regular_rays_per_patch, 1u),
         max(counters.bootstrap_rays_per_patch, 1u),
         bootstrap_batch
     );
@@ -93,7 +93,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 sample_radiance * sampling_weight
             )
         );
-        let sample_luminance = luminance(sample_radiance);
+        // Moments must follow the same measure as the SH estimator. Under
+        // importance sampling, normalize the inverse-PDF contribution by the
+        // hemisphere solid angle so uniform sampling remains the identity case.
+        let moment_radiance = sample_radiance * sampling_weight / (2.0 * PI);
+        let sample_luminance = luminance(moment_radiance);
         luminance_sum += sample_luminance;
         luminance_squared_sum += sample_luminance * sample_luminance;
         valid_sample_count += 1.0;

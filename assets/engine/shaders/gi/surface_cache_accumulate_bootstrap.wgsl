@@ -74,7 +74,8 @@ fn cs(
                 sample_radiance * sampling_weight
             )
         );
-        let sample_luminance = luminance(sample_radiance);
+        let moment_radiance = sample_radiance * sampling_weight / (2.0 * PI);
+        let sample_luminance = luminance(moment_radiance);
         lane_moment_sum += vec4<f32>(
             sample_luminance,
             sample_luminance * sample_luminance,

@@ -88,11 +88,23 @@ fn cs() {
     let bootstrap_ray_count = bootstrap_patch_count *
         bootstrap_rays_per_patch;
     let remaining_ray_count = maximum_ray_count - bootstrap_ray_count;
-    let update_patch_count = min(
-        available_update_patch_count,
-        remaining_ray_count / regular_rays_per_patch
-    );
-    let regular_ray_count = update_patch_count * regular_rays_per_patch;
+    var update_patch_count = 0u;
+    var scheduled_regular_rays_per_patch = 0u;
+    if (available_update_patch_count > 0u && remaining_ray_count > 0u) {
+        // Spread the regular budget breadth-first too. Underconverged patches
+        // should advance together instead of allowing a raster-ordered subset
+        // to consume a full batch before the rest receive their next sample.
+        update_patch_count = min(
+            available_update_patch_count,
+            remaining_ray_count
+        );
+        scheduled_regular_rays_per_patch = min(
+            regular_rays_per_patch,
+            max(remaining_ray_count / update_patch_count, 1u)
+        );
+    }
+    let regular_ray_count = update_patch_count *
+        scheduled_regular_rays_per_patch;
     var regular_schedule_offset = 0u;
     if (
         update_patch_count < available_update_patch_count &&
@@ -136,6 +148,10 @@ fn cs() {
     atomicStore(
         &counters.available_update_patch_count,
         available_update_patch_count
+    );
+    atomicStore(
+        &counters.regular_rays_per_patch,
+        scheduled_regular_rays_per_patch
     );
 
     let parallel_bootstrap_accumulation =

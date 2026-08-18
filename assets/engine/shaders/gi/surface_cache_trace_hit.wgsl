@@ -41,9 +41,7 @@ fn surface_cache_shared_patch_slot(
 ) -> u32 {
     let workgroup_begin = (work_index / 128u) * 128u;
     let workgroup_end = workgroup_begin + 128u;
-    let regular_rays_per_patch = surface_cache_regular_rays_per_patch(
-        surface_cache_params
-    );
+    let regular_rays_per_patch = max(counters.regular_rays_per_patch, 1u);
     let regular_ray_count = surface_cache_regular_ray_count(
         counters,
         surface_cache_params
@@ -69,6 +67,7 @@ fn surface_cache_shared_patch_slot(
 
 fn trace_surface_cache_prepared_ray(
     direction: vec3<f32>,
+    sampling_weight: f32,
     origin_tmin: vec4<f32>,
     ray_data_index: u32
 ) {
@@ -84,7 +83,7 @@ fn trace_surface_cache_prepared_ray(
 
     hit_info[ray_data_index].ray_direction_sampling_weight = vec4<f32>(
         direction,
-        2.0 * PI
+        sampling_weight
     );
     hit_info[ray_data_index].hit_identity.x = INVALID_IDX;
 
@@ -113,7 +112,8 @@ fn trace_surface_cache_prepared_ray(
 fn trace_surface_cache_ray(
     patch_index: u32,
     ray_index_in_patch: u32,
-    ray_data_index: u32
+    ray_data_index: u32,
+    bootstrap_batch: bool
 ) {
     let surface_patch = surface_cache[patch_index];
     let normal = safe_normalize(surface_patch.normal_cell_exponent.xyz);
@@ -121,7 +121,12 @@ fn trace_surface_cache_ray(
     let ray_sample = generate_ray_sample(
         seed,
         normal,
-        u32(surface_patch.history.y) + ray_index_in_patch
+        u32(surface_patch.history.y) + ray_index_in_patch,
+        select(
+            0.0,
+            SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY,
+            bootstrap_batch
+        )
     );
     let direction = ray_sample.direction;
     let cell_exponent = surface_cache_grid_key_cell_exponent(surface_patch.grid_key);
@@ -134,7 +139,12 @@ fn trace_surface_cache_ray(
         surface_patch.position_frame.xyz + normal * origin_offset,
         origin_offset * 0.25
     );
-    trace_surface_cache_prepared_ray(direction, origin_tmin, ray_data_index);
+    trace_surface_cache_prepared_ray(
+        direction,
+        ray_sample.sampling_weight,
+        origin_tmin,
+        ray_data_index
+    );
 }
 
 @compute @workgroup_size(128, 1, 1)
@@ -156,7 +166,7 @@ fn cs(
     // bootstrap can intentionally assign one ray to each patch during a large
     // admission wave, so use the direct path for that exceptional frame.
     let use_shared_patch_setup =
-        surface_cache_regular_rays_per_patch(surface_cache_params) >= 2u &&
+        counters.regular_rays_per_patch >= 2u &&
         (
             counters.bootstrap_patch_count == 0u ||
             counters.bootstrap_rays_per_patch >= 2u
@@ -226,13 +236,19 @@ fn cs(
         );
         let r1 = fract(rotation.x + sequence_value * 0.7548776662466927);
         let r2 = fract(rotation.y + sequence_value * 0.5698402909980532);
-        let direction = sample_uniform_hemisphere_surface_cache(
+        let ray_sample = sample_mis_hemisphere_surface_cache(
             normal_history.xyz,
             r1,
-            r2
+            r2,
+            select(
+                0.0,
+                SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY,
+                work.bootstrap_batch != 0u
+            )
         );
         trace_surface_cache_prepared_ray(
-            direction,
+            ray_sample.direction,
+            ray_sample.sampling_weight,
             shared_patch_origin_tmin[shared_slot],
             work.data_index
         );
@@ -259,6 +275,7 @@ fn cs(
     trace_surface_cache_ray(
         patch_index,
         work.ray_index_in_patch,
-        work.data_index
+        work.data_index,
+        work.bootstrap_batch != 0u
     );
 }

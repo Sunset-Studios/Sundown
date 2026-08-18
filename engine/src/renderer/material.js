@@ -1374,7 +1374,7 @@ export class StandardMaterial {
     this.mark_params_dirty();
   }
 
-  sample_specular(texture_config, channel = TextureChannel.R) {
+  sample_specular(texture_config, channel = TextureChannel.R, sqrt_modulate = false) {
     if (!texture_config) return;
 
     const params_buffer = MaterialAllocationTable.params_data;
@@ -1406,6 +1406,9 @@ export class StandardMaterial {
     let flag = 1;
     if (channel >= 0 && channel <= 3) {
       flag |= channel << 1;
+    }
+    if (sqrt_modulate) {
+      flag |= 1 << 3;
     }
     params_buffer[offset + texture_flags2_offset + 2] = flag;
 

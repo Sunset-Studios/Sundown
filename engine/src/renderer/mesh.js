@@ -19,6 +19,37 @@ import { get_cooked_sbvh_for_mesh, load_sbvh_sidecar_async } from "../accelerati
 
 const discard_cpu_data = true;
 
+function get_finite_gltf_number(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function get_gltf_dielectric_reflectance(material) {
+  const extensions = material.extensions ?? {};
+  const ior_extension = extensions.KHR_materials_ior;
+  const specular_extension = extensions.KHR_materials_specular;
+
+  const ior = Math.max(get_finite_gltf_number(ior_extension?.ior, 1.5), 1.0);
+  const dielectric_f0 = ((ior - 1.0) / Math.max(ior + 1.0, 1e-4)) ** 2;
+
+  const specular_factor = Math.max(
+    get_finite_gltf_number(specular_extension?.specularFactor, 1.0),
+    0.0
+  );
+  const specular_color = specular_extension?.specularColorFactor ?? [1.0, 1.0, 1.0];
+  const specular_color_luminance = Math.max(
+    0.2126 * get_finite_gltf_number(specular_color[0], 1.0) +
+      0.7152 * get_finite_gltf_number(specular_color[1], 1.0) +
+      0.0722 * get_finite_gltf_number(specular_color[2], 1.0),
+    0.0
+  );
+
+  const f0 = Math.min(dielectric_f0 * specular_factor * specular_color_luminance, 1.0);
+
+  // Sundown reconstructs dielectric F0 as 0.16 * reflectance^2 in lighting shaders.
+  return Math.min(Math.sqrt(f0 / 0.16), 1.0);
+}
+
 export class Mesh {
   static default_min_lod = 0;
 
@@ -973,6 +1004,33 @@ export class Mesh {
       std.sample_metallic(m_tex, TextureChannel.B);
     } else {
       std.set_metallic(metallic_val);
+    }
+
+    // Preserve glTF dielectric Fresnel strength for direct lighting and SSR hit confidence.
+    std.set_specular(get_gltf_dielectric_reflectance(mat));
+    const specular_texture_info = mat.extensions?.KHR_materials_specular?.specularTexture;
+    if (specular_texture_info) {
+      const texture_index = specular_texture_info.index;
+      const tex = gltf.textures[texture_index];
+      const src = tex?.base;
+      if (src) {
+        const texture_name = `${mesh.name}#texture_${texture_index}_specular`;
+        std.sample_specular(
+          {
+            paths: [src],
+            name: texture_name,
+            format: "rgba8unorm",
+            usage:
+              GPUTextureUsage.TEXTURE_BINDING |
+              GPUTextureUsage.COPY_DST |
+              GPUTextureUsage.RENDER_ATTACHMENT,
+            flip_y: false,
+            material_notifier: texture_name,
+          },
+          TextureChannel.A,
+          true
+        );
+      }
     }
 
     // Ambient occlusion (R channel), strength scales AO value

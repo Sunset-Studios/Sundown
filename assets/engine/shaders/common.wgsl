@@ -207,7 +207,11 @@ fn sample_texture_or_float_param_handle(
     if ((flag & 1u) != 0u) {
         let sampled_val = sample_handle_rgba(tex_handle, uv_coords, pool, lod);
         let channel_index = (flag >> 1u) & 3u;
-        return select(select(select(sampled_val.r, sampled_val.g, channel_index == 1u), sampled_val.b, channel_index == 2u), sampled_val.a, channel_index == 3u);
+        let channel_value = select(select(select(sampled_val.r, sampled_val.g, channel_index == 1u), sampled_val.b, channel_index == 2u), sampled_val.a, channel_index == 3u);
+        if ((flag & 8u) != 0u) {
+            return param_val * sqrt(max(channel_value, 0.0));
+        }
+        return channel_value;
     }
     return param_val;
 }

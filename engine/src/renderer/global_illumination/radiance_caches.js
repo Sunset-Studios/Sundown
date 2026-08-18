@@ -1157,7 +1157,7 @@ export class SurfaceRadianceCache extends GIModule {
     this.params_data = new Float32Array(24);
     this.params_u32_data = new Uint32Array(this.params_data.buffer);
     this.temporal_params_data = new Float32Array(12);
-    this.counters_reset_data = new Uint32Array(10);
+    this.counters_reset_data = new Uint32Array(11);
     this.counters_buffer = null;
     this.counters_data = null;
     this.stats_enabled = false;
@@ -1293,7 +1293,7 @@ export class SurfaceRadianceCache extends GIModule {
     } else {
       this.create_buffer(render_graph, "counters", {
         name: SURFACE_CACHE_COUNTERS_NAME,
-        size: 10,
+        size: 11,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         force: force_recreate,
       });
@@ -1864,7 +1864,7 @@ export class SurfaceRadianceCache extends GIModule {
       this.counters_buffer.destroy();
     }
 
-    this.counters_data = new Uint32Array(10);
+    this.counters_data = new Uint32Array(11);
     this.counters_buffer = Buffer.create({
       name: SURFACE_CACHE_COUNTERS_NAME,
       raw_data: this.counters_data,
@@ -1894,6 +1894,9 @@ export class SurfaceRadianceCache extends GIModule {
           1,
           context.bootstrap_rays_per_patch
         )
+      : 0;
+    const regular_rays_per_patch = update_patch_count > 0
+      ? clamp(this.counters_data[10] || 1, 1, context.rays_per_patch)
       : 0;
     const deferred_patch_count = Math.max(
       active_patch_count - bootstrap_patch_count - update_patch_count,
@@ -1930,7 +1933,8 @@ export class SurfaceRadianceCache extends GIModule {
         0
       ),
       deferred_patch_count,
-      rays_per_patch: context.rays_per_patch,
+      rays_per_patch: regular_rays_per_patch,
+      maximum_regular_rays_per_patch: context.rays_per_patch,
       bootstrap_rays_per_patch,
       maximum_bootstrap_rays_per_patch: context.bootstrap_rays_per_patch,
       bootstrap_ray_budget_fraction: clamp(
@@ -1940,7 +1944,7 @@ export class SurfaceRadianceCache extends GIModule {
       ),
       bootstrap_patch_capacity: context.bootstrap_patch_capacity,
       total_rays_fired:
-        update_patch_count * context.rays_per_patch +
+        update_patch_count * regular_rays_per_patch +
         bootstrap_patch_count * bootstrap_rays_per_patch,
       active_set_ray_budget: active_patch_count * context.rays_per_patch,
       maximum_ray_count_per_frame: context.maximum_ray_count_per_frame,

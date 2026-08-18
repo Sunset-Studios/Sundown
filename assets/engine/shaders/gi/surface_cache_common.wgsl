@@ -21,6 +21,7 @@ const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.0;
 const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 1.0;
 const SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP: f32 = 2.0;
 const SURFACE_CACHE_EMISSIVE_OVERFLOW_SCALE: f32 = 0.1;
+const SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY: f32 = 0.5;
 const SURFACE_CACHE_PARALLEL_BOOTSTRAP_THRESHOLD: u32 = 64u;
 const SURFACE_CACHE_BACKFACE_HIT: u32 = INVALID_IDX - 1u;
 
@@ -85,6 +86,7 @@ struct SurfaceCacheCounters {
     bootstrap_schedule_offset: atomic<u32>,
     available_update_patch_count: atomic<u32>,
     feedback_miss_count: atomic<u32>,
+    regular_rays_per_patch: atomic<u32>,
 };
 
 struct SurfaceCacheCountersReadOnly {
@@ -98,6 +100,7 @@ struct SurfaceCacheCountersReadOnly {
     bootstrap_schedule_offset: u32,
     available_update_patch_count: u32,
     feedback_miss_count: u32,
+    regular_rays_per_patch: u32,
 };
 
 struct SurfaceCacheHitInfo {
@@ -175,9 +178,9 @@ fn surface_cache_regular_rays_per_patch(params: SurfaceCacheParams) -> u32 {
 
 fn surface_cache_regular_ray_count(
     counters: SurfaceCacheCountersReadOnly,
-    params: SurfaceCacheParams
+    _params: SurfaceCacheParams
 ) -> u32 {
-    return counters.update_patch_count * surface_cache_regular_rays_per_patch(params);
+    return counters.update_patch_count * max(counters.regular_rays_per_patch, 1u);
 }
 
 fn surface_cache_total_ray_count(
@@ -212,7 +215,16 @@ fn surface_cache_regular_schedule_index(
         return scheduled_index;
     }
 
-    let rotated_index = scheduled_index + counters.regular_schedule_offset;
+    let scheduled_patch_count = max(counters.update_patch_count, 1u);
+    let base_step = available_patch_count / scheduled_patch_count;
+    let remainder = available_patch_count % scheduled_patch_count;
+    let remainder_step = u32(floor(
+        f32(scheduled_index) *
+            (f32(remainder) / f32(scheduled_patch_count))
+    ));
+    let distributed_index =
+        scheduled_index * base_step + remainder_step;
+    let rotated_index = distributed_index + counters.regular_schedule_offset;
     return select(
         rotated_index,
         rotated_index - available_patch_count,
@@ -232,7 +244,16 @@ fn surface_cache_bootstrap_schedule_index(
         return scheduled_index;
     }
 
-    let rotated_index = scheduled_index + counters.bootstrap_schedule_offset;
+    let scheduled_patch_count = max(counters.bootstrap_patch_count, 1u);
+    let base_step = available_patch_count / scheduled_patch_count;
+    let remainder = available_patch_count % scheduled_patch_count;
+    let remainder_step = u32(floor(
+        f32(scheduled_index) *
+            (f32(remainder) / f32(scheduled_patch_count))
+    ));
+    let distributed_index =
+        scheduled_index * base_step + remainder_step;
+    let rotated_index = distributed_index + counters.bootstrap_schedule_offset;
     return select(
         rotated_index,
         rotated_index - available_patch_count,
@@ -254,7 +275,7 @@ fn surface_cache_ray_work(
         bootstrap_batch
     );
     let rays_per_patch = select(
-        surface_cache_regular_rays_per_patch(params),
+        max(counters.regular_rays_per_patch, 1u),
         max(counters.bootstrap_rays_per_patch, 1u),
         bootstrap_batch
     );
@@ -766,25 +787,43 @@ fn surface_cache_patch_rng(patch_index: u32, grid_key: vec4<i32>) -> u32 {
     return random_seed(rng);
 }
 
-fn sample_uniform_hemisphere_surface_cache(normal: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
-    let phi = 2.0 * PI * r1;
-    let cos_theta = r2;
+fn sample_mis_hemisphere_surface_cache(
+    normal: vec3<f32>,
+    r1: f32,
+    r2: f32,
+    cosine_probability: f32
+) -> SurfaceCacheRaySample {
+    let cosine_mix = clamp(cosine_probability, 0.0, 0.999);
+    let sample_cosine = r1 < cosine_mix;
+    let remapped_r1 = select(
+        (r1 - cosine_mix) / max(1.0 - cosine_mix, 1e-6),
+        r1 / max(cosine_mix, 1e-6),
+        sample_cosine
+    );
+    let cos_theta = select(r2, sqrt(r2), sample_cosine);
     let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
-    return surface_cache_hemisphere_frame(normal) * vec3<f32>(
+    let phi = 2.0 * PI * remapped_r1;
+    let direction = surface_cache_hemisphere_frame(normal) * vec3<f32>(
         sin_theta * cos(phi),
         sin_theta * sin(phi),
         cos_theta
     );
+    let uniform_pdf = 0.5 / PI;
+    let cosine_pdf = cos_theta / PI;
+    let mixture_pdf = mix(uniform_pdf, cosine_pdf, cosine_mix);
+    return SurfaceCacheRaySample(direction, 1.0 / max(mixture_pdf, 1e-6));
 }
 
 fn generate_ray_sample(
     seed: u32,
     normal: vec3<f32>,
-    sample_index: u32
+    sample_index: u32,
+    cosine_probability: f32
 ) -> SurfaceCacheRaySample {
-    // A Cranley-Patterson rotated R2 sequence uniformly covers the hemisphere.
-    // Unlike history-guided RIS it remains unbiased when lighting changes and
-    // cannot reinforce a noisy lobe already present in this cache entry.
+    // A Cranley-Patterson rotated R2 sequence drives a uniform/cosine mixture.
+    // The uniform component preserves directional SH coverage while the cosine
+    // component concentrates bootstrap work where diffuse irradiance is most
+    // sensitive. The inverse mixture PDF keeps the L1 estimator unbiased.
     var rng = random_seed(seed);
     let rotation_u = rand_float(rng);
     rng = random_seed(rng);
@@ -794,10 +833,12 @@ fn generate_ray_sample(
     let r1 = fract(rotation_u + sequence_value * 0.7548776662466927);
     let r2 = fract(rotation_v + sequence_value * 0.5698402909980532);
 
-    var result: SurfaceCacheRaySample;
-    result.direction = sample_uniform_hemisphere_surface_cache(normal, r1, r2);
-    result.sampling_weight = 2.0 * PI;
-    return result;
+    return sample_mis_hemisphere_surface_cache(
+        normal,
+        r1,
+        r2,
+        cosine_probability
+    );
 }
 
 fn stabilize_surface_cache_emissive_radiance(
