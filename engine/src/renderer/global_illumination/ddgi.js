@@ -1,5 +1,5 @@
 import { GIPipelineComposition } from "./gi_pipeline.js";
-import { ProbeVolumeRadianceCache } from "./radiance_caches.js";
+import { ProbeVolumeRadianceCache } from "./radiance_caches/probe_volume_radiance_cache.js";
 import {
   clone_ddgi_config_value,
   create_ddgi_config,

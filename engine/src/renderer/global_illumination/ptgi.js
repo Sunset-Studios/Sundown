@@ -1,6 +1,7 @@
 import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
 import { GIPipelineComposition } from "./gi_pipeline.js";
-import { PerPixelRadianceCache, SurfaceRadianceCache } from "./radiance_caches.js";
+import { PerPixelRadianceCache } from "./radiance_caches/pixel_radiance_cache.js";
+import { SurfaceRadianceCache } from "./radiance_caches/surface_cache.js";
 
 /** Surface-cache plus per-pixel path-traced GI composition. */
 export class PTGI {

@@ -1,5 +1,5 @@
 import { GIPipelineComposition } from "./gi_pipeline.js";
-import { SurfaceRadianceCache } from "./radiance_caches.js";
+import { SurfaceRadianceCache } from "./radiance_caches/surface_cache.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { EntityFlags } from "../../core/minimal.js";
@@ -49,6 +49,20 @@ export class SCGI {
     max_ray_length: 128.0,
     max_emissive_lights: 32768,
   };
+  frame_context = {
+    config: null,
+    width: 0,
+    height: 0,
+    force_recreate: false,
+    inputs: {},
+  };
+  debug_context = {
+    width: 0,
+    height: 0,
+    debug_view: 0,
+    force_recreate: false,
+    inputs: {},
+  };
 
   constructor(params = {}) {
     this.pipeline = new GIPipelineComposition([
@@ -57,20 +71,7 @@ export class SCGI {
         module: new SurfaceRadianceCache(params.surface_radiance_cache),
       },
     ]);
-    this.frame_context = {
-      config: this.config,
-      width: 0,
-      height: 0,
-      force_recreate: false,
-      inputs: {},
-    };
-    this.debug_context = {
-      width: 0,
-      height: 0,
-      debug_view: 0,
-      force_recreate: false,
-      inputs: {},
-    };
+    this.frame_context.config = this.config;
   }
 
   add_passes(
@@ -120,6 +121,7 @@ export class SCGI {
     inputs.compact_transforms = compact_transforms;
     inputs.index_buffer = index_buffer;
     inputs.dense_lights = dense_lights;
+
     this.pipeline.add_passes(render_graph, frame_context);
 
     const output = this.pipeline.get_module("surface");
@@ -138,15 +140,16 @@ export class SCGI {
     debug_view,
     force_recreate = false
   ) {
-    const debug_context = this.debug_context;
-    debug_context.width = width;
-    debug_context.height = height;
-    debug_context.debug_view = debug_view;
-    debug_context.force_recreate = force_recreate;
-    debug_context.inputs.gbuffer_normal = gbuffer_normal;
-    debug_context.inputs.depth_texture = depth_texture;
-    debug_context.inputs.scene_color = scene_color;
-    this.debug_texture = this.pipeline.add_debug_passes(render_graph, debug_context);
+    this.debug_context.width = width;
+    this.debug_context.height = height;
+    this.debug_context.debug_view = debug_view;
+    this.debug_context.force_recreate = force_recreate;
+    this.debug_context.inputs.gbuffer_normal = gbuffer_normal;
+    this.debug_context.inputs.depth_texture = depth_texture;
+    this.debug_context.inputs.scene_color = scene_color;
+
+    this.debug_texture = this.pipeline.add_debug_passes(render_graph, this.debug_context);
+
     return this.debug_texture;
   }
 
