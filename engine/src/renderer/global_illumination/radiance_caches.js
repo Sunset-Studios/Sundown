@@ -1156,7 +1156,7 @@ export class SurfaceRadianceCache extends GIModule {
     });
     this.params_data = new Float32Array(24);
     this.params_u32_data = new Uint32Array(this.params_data.buffer);
-    this.temporal_params_data = new Float32Array(12);
+    this.temporal_params_data = new Float32Array(6);
     this.atrous_params_data = new Float32Array(8);
     this.counters_reset_data = new Uint32Array(11);
     this.counters_buffer = null;
@@ -1741,52 +1741,20 @@ export class SurfaceRadianceCache extends GIModule {
       1,
       8
     );
-    const recurrent_blur_max_radius =
-      context.config.recurrent_blur_enabled === false
-        ? 0
-        : clamp(Math.floor(context.config.recurrent_blur_max_radius ?? 16), 1, 16);
-    const recurrent_blur_history_frames = Math.max(
-      1,
-      Math.floor(context.config.recurrent_blur_history_frames ?? 16)
-    );
-    const recurrent_blur_min_strength = Math.fround(
-      context.config.recurrent_blur_enabled === false
-        ? 0
-        : clamp(context.config.recurrent_blur_min_strength ?? 0.125, 0.0, 1.0)
-    );
-    const recurrent_blur_max_strength = Math.fround(
-      context.config.recurrent_blur_enabled === false
-        ? 0
-        : clamp(
-            context.config.recurrent_blur_max_strength ?? 1.0,
-            recurrent_blur_min_strength,
-            1.0
-          )
-    );
     const temporal_params_need_upload =
       context.force_recreate ||
       this.temporal_params_data[0] !== temporal_response ||
       this.temporal_params_data[1] !== temporal_max_history_frames ||
       this.temporal_params_data[2] !== temporal_depth_threshold ||
       this.temporal_params_data[3] !== temporal_normal_threshold ||
-      this.temporal_params_data[4] !== spatial_filter_radius ||
-      this.temporal_params_data[5] !== recurrent_blur_max_radius ||
-      this.temporal_params_data[6] !== recurrent_blur_history_frames ||
-      this.temporal_params_data[7] !== recurrent_blur_min_strength ||
-      this.temporal_params_data[8] !== recurrent_blur_max_strength;
+      this.temporal_params_data[4] !== spatial_filter_radius;
     if (temporal_params_need_upload) {
       this.temporal_params_data[0] = temporal_response;
       this.temporal_params_data[1] = temporal_max_history_frames;
       this.temporal_params_data[2] = temporal_depth_threshold;
       this.temporal_params_data[3] = temporal_normal_threshold;
       this.temporal_params_data[4] = spatial_filter_radius;
-      this.temporal_params_data[5] = recurrent_blur_max_radius;
-      this.temporal_params_data[6] = recurrent_blur_history_frames;
-      this.temporal_params_data[7] = recurrent_blur_min_strength;
-      this.temporal_params_data[8] = recurrent_blur_max_strength;
-      this.temporal_params_data[9] = 0;
-      this.temporal_params_data[10] = 0;
-      this.temporal_params_data[11] = 0;
+      this.temporal_params_data[5] = 0;
       this.add_graph_local_pass(render_graph, "surface_cache_temporal_upload_params", (graph) => {
         graph.get_physical_buffer(temporal_params).write_raw(this.temporal_params_data);
       });

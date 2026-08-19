@@ -6,13 +6,7 @@ struct SurfaceCacheTemporalParams {
     depth_threshold: f32,
     normal_threshold: f32,
     spatial_filter_radius: f32,
-    recurrent_blur_max_radius: f32,
-    recurrent_blur_history_frames: f32,
-    recurrent_blur_min_strength: f32,
-    recurrent_blur_max_strength: f32,
     _padding0: f32,
-    _padding1: f32,
-    _padding2: f32,
 };
 
 struct SurfaceCacheHistoryTap {
@@ -33,17 +27,6 @@ struct SurfaceCacheCurrentEstimate {
     luminance_squared_sum: f32,
     valid_tap_count: f32,
 };
-
-const RECURRENT_BLUR_RING_OFFSETS: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
-    vec2<f32>( 0.9238795,  0.3826834),
-    vec2<f32>( 0.3826834,  0.9238795),
-    vec2<f32>(-0.3826834,  0.9238795),
-    vec2<f32>(-0.9238795,  0.3826834),
-    vec2<f32>(-0.9238795, -0.3826834),
-    vec2<f32>(-0.3826834, -0.9238795),
-    vec2<f32>( 0.3826834, -0.9238795),
-    vec2<f32>( 0.9238795, -0.3826834)
-);
 
 @group(1) @binding(0) var<uniform> temporal_params: SurfaceCacheTemporalParams;
 @group(1) @binding(1) var current_diffuse: texture_2d<f32>;
@@ -413,92 +396,6 @@ fn surface_cache_reconstruct_current(
     );
 }
 
-fn surface_cache_reliability(sample_count: f32) -> f32 {
-    // Converged cache taps dominate this path. Avoid a square root whenever
-    // clamp would select either endpoint exactly.
-    if (sample_count >= 32.0) {
-        return 1.0;
-    }
-    if (sample_count <= 0.5) {
-        return 0.125;
-    }
-    return sqrt(sample_count / 32.0);
-}
-
-// Recurrently filter the complete valid history over a sparse, geometry-aware
-// footprint. Low-age history receives the configured maximum blur while mature
-// history retains the minimum, so converged GI still sheds residual noise.
-// Keeping the center age prevents neighboring mature pixels from prematurely
-// weakening the filter on a newly exposed surface.
-fn surface_cache_recurrent_blur_history(
-    previous_pixel: vec2<f32>,
-    resolution: vec2<u32>,
-    current_position: vec3<f32>,
-    current_normal: vec3<f32>,
-    current_linear_depth: f32,
-    view_index: u32,
-    history: vec4<f32>
-) -> vec4<f32> {
-    let blur_history_frames = temporal_params.recurrent_blur_history_frames;
-    let maximum_radius = temporal_params.recurrent_blur_max_radius;
-    let minimum_strength = temporal_params.recurrent_blur_min_strength;
-    let maximum_strength = temporal_params.recurrent_blur_max_strength;
-    if (maximum_radius < 0.5 || maximum_strength <= 0.0) {
-        return history;
-    }
-
-    let history_progress = clamp(
-        (history.w - 1.0) / max(blur_history_frames - 1.0, 1.0),
-        0.0,
-        1.0
-    );
-    let convergence = smoothstep(0.0, 1.0, history_progress);
-    let blur_strength = mix(maximum_strength, minimum_strength, convergence);
-    let tap_radius = max(maximum_radius * blur_strength, 1.0);
-    let previous_center = vec2<i32>(floor(previous_pixel + vec2<f32>(0.5)));
-    // A widened 3x3 kernel collapses onto three scanlines and its corner taps
-    // sit sqrt(2) farther from the center than its axial taps. An octagonal
-    // ring keeps every history sample on the requested radius; the half-step
-    // rotation also prevents the strongest taps from sharing a horizontal row.
-    let center_weight = 0.2;
-    let ring_weight = (1.0 - center_weight) / 8.0;
-    let center_reliability = surface_cache_reliability(history.w);
-    var color_sum = history.xyz * center_weight * center_reliability;
-    var color_weight_sum = center_weight * center_reliability;
-
-    for (var tap_index = 0u; tap_index < 8u; tap_index = tap_index + 1u) {
-        let tap_offset = vec2<i32>(round(
-            RECURRENT_BLUR_RING_OFFSETS[tap_index] * tap_radius
-        ));
-        let tap = surface_cache_history_tap(
-            previous_center + tap_offset,
-            ring_weight,
-            resolution,
-            current_position,
-            current_normal,
-            current_linear_depth,
-            true,
-            view_index
-        );
-        if (tap.weight <= 1e-5) {
-            continue;
-        }
-        let tap_history_frames = tap.value.w / tap.weight;
-        let tap_reliability = surface_cache_reliability(tap_history_frames);
-        color_sum += tap.value.xyz * tap_reliability;
-        color_weight_sum += tap.weight * tap_reliability;
-    }
-
-    if (color_weight_sum <= 1e-5) {
-        return history;
-    }
-    let blurred_history = color_sum / color_weight_sum;
-    return vec4<f32>(
-        mix(history.xyz, blurred_history, blur_strength),
-        history.w
-    );
-}
-
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let resolution = textureDimensions(current_diffuse);
@@ -617,17 +514,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let history_valid = history_weight > 1e-5;
-    if (history_valid) {
-        history = surface_cache_recurrent_blur_history(
-            previous_pixel,
-            resolution,
-            current_position,
-            current_normal,
-            current_linear_depth,
-            view_index,
-            history
-        );
-    }
     // Luminance moments are consumed only by the history-clipping path. True
     // disocclusions skip that arithmetic and are reconstructed by the masked
     // à-trous passes recorded after temporal accumulation.
