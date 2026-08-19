@@ -41,14 +41,14 @@ export class SCGI {
     recurrent_blur_enabled: true,
     recurrent_blur_max_radius: 32,
     recurrent_blur_history_frames: 256,
-    recurrent_blur_min_strength: 0.25,
+    recurrent_blur_min_strength: 0.125,
     recurrent_blur_max_strength: 1.0,
     disocclusion_atrous_enabled: true,
     disocclusion_atrous_pass_count: 4,
     disocclusion_atrous_phi_depth: 0.015,
     disocclusion_atrous_phi_normal: 64.0,
     disocclusion_atrous_luma_sigma: 2.0,
-    disocclusion_atrous_confidence_threshold: 0.85,
+    disocclusion_atrous_confidence_threshold: 0.55,
     disocclusion_atrous_history_frames: 32,
     indirect_boost: 1.0,
     max_ray_length: 128.0,
@@ -56,11 +56,10 @@ export class SCGI {
   };
 
   constructor(params = {}) {
-    this.surface_radiance_cache = new SurfaceRadianceCache(params.surface_radiance_cache);
     this.pipeline = new GIPipelineComposition([
       {
         name: "surface",
-        module: this.surface_radiance_cache,
+        module: new SurfaceRadianceCache(params.surface_radiance_cache),
       },
     ]);
     this.frame_context = {
@@ -77,93 +76,6 @@ export class SCGI {
       force_recreate: false,
       inputs: {},
     };
-    this.light_query = EntityManager.create_query([LightFragment]);
-    this.light_snapshot = new Float32Array(32);
-    this.light_snapshot_length = 0;
-    this.environment_snapshot = new Float32Array(12);
-    this.environment_skybox = null;
-    this.material_revision = -1;
-    this.explicit_invalidation_revision = 1;
-    this.applied_invalidation_revision = 0;
-    this.light_snapshot_write_index = 0;
-    this.radiance_inputs_changed = false;
-    this._capture_light_chunk = this._capture_light_chunk.bind(this);
-  }
-
-  _ensure_light_snapshot_capacity(required_length) {
-    if (required_length <= this.light_snapshot.length) return;
-
-    let capacity = this.light_snapshot.length;
-    while (capacity < required_length) capacity *= 2;
-    const next_snapshot = new Float32Array(capacity);
-    next_snapshot.set(this.light_snapshot);
-    this.light_snapshot = next_snapshot;
-  }
-
-  _append_light_snapshot_value(value) {
-    const snapshot_index = this.light_snapshot_write_index;
-    this._ensure_light_snapshot_capacity(snapshot_index + 1);
-    this.radiance_inputs_changed ||=
-      this.light_snapshot[snapshot_index] !== value;
-    this.light_snapshot[snapshot_index] = value;
-    this.light_snapshot_write_index = snapshot_index + 1;
-  }
-
-  _capture_light_chunk(chunk, flags) {
-    // Compare the compact radiance-producing state directly. The persistent
-    // snapshot avoids allocating or hashing in this once-per-frame hot path.
-    const lights = chunk.get_fragment_view(LightFragment);
-    for (let slot = 0; slot < DEFAULT_CHUNK_CAPACITY; slot++) {
-      if (
-        (flags[slot] & EntityFlags.ALIVE) === 0 ||
-        lights.active[slot] === 0
-      ) {
-        continue;
-      }
-
-      const vector_offset = slot * 4;
-      this._append_light_snapshot_value(lights.type[slot]);
-      this._append_light_snapshot_value(lights.intensity[slot]);
-      this._append_light_snapshot_value(lights.radius[slot]);
-      this._append_light_snapshot_value(lights.attenuation[slot]);
-      this._append_light_snapshot_value(lights.outer_angle[slot]);
-      for (let component = 0; component < 4; component++) {
-        this._append_light_snapshot_value(lights.position[vector_offset + component]);
-      }
-      for (let component = 0; component < 4; component++) {
-        this._append_light_snapshot_value(lights.direction[vector_offset + component]);
-      }
-      for (let component = 0; component < 4; component++) {
-        this._append_light_snapshot_value(lights.color[vector_offset + component]);
-      }
-      this._append_light_snapshot_value(lights.is_primary_sun[slot]);
-    }
-  }
-
-  _radiance_inputs_changed(force_recreate) {
-    let changed = force_recreate ||
-      this.material_revision !== MaterialAllocationTable.radiance_revision ||
-      this.applied_invalidation_revision !== this.explicit_invalidation_revision;
-    this.material_revision = MaterialAllocationTable.radiance_revision;
-    this.applied_invalidation_revision = this.explicit_invalidation_revision;
-
-    this.light_snapshot_write_index = 0;
-    this.radiance_inputs_changed = changed;
-    this.light_query.for_each_chunk(this._capture_light_chunk);
-    changed = this.radiance_inputs_changed ||
-      this.light_snapshot_write_index !== this.light_snapshot_length;
-    this.light_snapshot_length = this.light_snapshot_write_index;
-
-    const environment_data = SharedEnvironmentData.skydome_data_buffer;
-    for (let index = 0; index < environment_data.length; index++) {
-      const value = environment_data[index];
-      changed ||= this.environment_snapshot[index] !== value;
-      this.environment_snapshot[index] = value;
-    }
-    const skybox = SharedEnvironmentData.get_skybox();
-    changed ||= this.environment_skybox !== skybox;
-    this.environment_skybox = skybox;
-    return changed;
   }
 
   add_passes(
@@ -200,7 +112,6 @@ export class SCGI {
     frame_context.width = width;
     frame_context.height = height;
     frame_context.force_recreate = force_recreate;
-    frame_context.force_full_update = this._radiance_inputs_changed(force_recreate);
     inputs.depth_texture = depth_texture;
     inputs.prev_depth_texture = prev_depth_texture;
     inputs.gbuffer_normal = gbuffer_normal;
@@ -254,12 +165,6 @@ export class SCGI {
 
   set_config(new_config) {
     this.config = { ...this.config, ...new_config };
-    this.invalidate();
-  }
-
-  invalidate() {
-    this.explicit_invalidation_revision =
-      (this.explicit_invalidation_revision + 1) >>> 0;
   }
 
   reset() {

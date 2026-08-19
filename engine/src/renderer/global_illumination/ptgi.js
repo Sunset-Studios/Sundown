@@ -31,17 +31,15 @@ export class PTGI {
   };
 
   constructor(params = {}, components = {}) {
-    this.surface_radiance_cache = new SurfaceRadianceCache(params.surface_radiance_cache);
-    this.pixel_radiance_cache = new PerPixelRadianceCache(params.pixel_radiance_cache);
     this.pipeline = new GIPipelineComposition([
       {
         name: "surface",
-        module: this.surface_radiance_cache,
+        module: new SurfaceRadianceCache(params.surface_radiance_cache),
       },
       {
         name: "pixel",
         dependencies: { radiance_cache: "surface" },
-        module: this.pixel_radiance_cache,
+        module: new PerPixelRadianceCache(params.pixel_radiance_cache),
       },
     ]);
   }

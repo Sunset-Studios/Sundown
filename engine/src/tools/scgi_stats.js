@@ -322,15 +322,6 @@ export class SCGIStats extends DevConsoleTool {
         format_number(stats.bootstrap_rays_per_patch)
       );
       metric_pair(
-        "Mature cadence",
-        stats.mature_patch_update_period > 1
-          ? `1 / ${format_number(stats.mature_patch_update_period)} frames`
-          : "Full rate",
-        "Scene wake",
-        stats.force_full_update ? "Full rate" : "Scheduled",
-        stats.force_full_update ? secondary_accent : accent
-      );
-      metric_pair(
         "Frame ray ceiling",
         format_number(stats.maximum_ray_count_per_frame),
         "Uncapped active rays",

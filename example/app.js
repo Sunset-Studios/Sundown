@@ -37,7 +37,6 @@ import { Adam } from "../engine/src/ml/optimizers/adam.js";
 import example_cvar_config from "./config/cvars.js";
 
 function world_label(text, position, config = {}) {
-
   UI3D.panel(
     {
       position,
@@ -3395,7 +3394,7 @@ export class BackroomsScene extends Scene {
     );
     log(
       `[${this.name}] Initialized ${geometry_count} pieces in ` +
-        `${this.geometry_batches.size} material batches.`
+      `${this.geometry_batches.size} material batches.`
     );
   }
 
@@ -4051,7 +4050,7 @@ export class CityScene extends Scene {
 
   init(parent_context) {
     super.init(parent_context);
-    
+
     // ─────────────────────────────────────────────────────────────────────────
     // Camera Controls
     // ─────────────────────────────────────────────────────────────────────────
@@ -4627,9 +4626,9 @@ export class UI3DTestScene extends Scene {
   //await scene_switcher.add_scene(ui_3d_scene);
   //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(bistro_test_scene);
-  await scene_switcher.add_scene(office_test_scene);
+  //await scene_switcher.add_scene(office_test_scene);
   //await scene_switcher.add_scene(living_room_scene);
-  //await scene_switcher.add_scene(backrooms_scene);
+  await scene_switcher.add_scene(backrooms_scene);
   //await scene_switcher.add_scene(city_scene);
   //await scene_switcher.add_scene(scifi_city_scene);
 

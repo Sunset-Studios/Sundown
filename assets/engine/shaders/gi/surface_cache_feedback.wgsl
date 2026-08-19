@@ -128,22 +128,7 @@ fn feedback_surface_descriptor(
         let metadata = surface_cache[result.index].metadata;
         let sample_count = metadata.w;
         var history = surface_cache[result.index].history;
-        if (atomicLoad(&counters.force_full_update) != 0u) {
-            // Mark one maintenance batch as outstanding instead of launching
-            // every invalidated patch immediately. Patches which miss this
-            // frame's hard ray budget remain under-mature and retry next frame.
-            history.x = min(
-                history.x,
-                max(
-                    surface_cache_params.max_history_samples -
-                        f32(surface_cache_regular_rays_per_patch(
-                            surface_cache_params
-                        )),
-                    0.0
-                )
-            );
-            surface_cache[result.index].history = history;
-        }
+
         surface_cache[result.index].metadata = vec4<f32>(
             metadata.x,
             sample_count,

@@ -1141,7 +1141,6 @@ export class SurfaceRadianceCache extends GIModule {
       stages,
       shader_setups: {
         compact_emissive: compute_shader("system_compute/compact_emissive_lights.wgsl"),
-        detect_scene_change: compute_shader("gi/surface_cache_detect_scene_change.wgsl"),
         prepare_dispatch: compute_shader("gi/surface_cache_prepare_dispatch.wgsl"),
         feedback: compute_shader("gi/surface_cache_feedback.wgsl"),
         trace_hit: compute_shader("gi/surface_cache_trace_hit.wgsl"),
@@ -1431,37 +1430,8 @@ export class SurfaceRadianceCache extends GIModule {
       );
       graph.get_physical_buffer(params).write_raw(this.params_data);
       this.counters_reset_data.fill(0);
-      this.counters_reset_data[5] = context.force_full_update ? 1 : 0;
       graph.get_physical_buffer(counters).write_raw(this.counters_reset_data);
     });
-
-    if (context.mature_patch_update_period > 1) {
-      this.add_compute_pass(
-        render_graph,
-        "detect_scene_change",
-        "surface_cache_detect_scene_change",
-        {
-          inputs: [
-            counters,
-            inputs.tlas_bvh2_bounds,
-            inputs.tlas_bvh_info,
-            entity_index_lookup,
-            entity_flags,
-          ],
-          outputs: [counters],
-        },
-        (graph, frame_data) => {
-          const bounds_buffer = graph.get_physical_buffer(inputs.tlas_bvh2_bounds);
-          graph
-            .get_physical_pass(frame_data.current_pass)
-            .dispatch(
-              Math.ceil(Math.floor(bounds_buffer.config.size / 32) / COMPUTE_WORKGROUP_SIZE),
-              1,
-              1
-            );
-        }
-      );
-    }
 
     this.add_compute_pass(
       render_graph,
@@ -2061,7 +2031,6 @@ export class SurfaceRadianceCache extends GIModule {
       history_hysteresis: context.config.history_hysteresis,
       max_history_samples: context.config.max_history_samples,
       mature_patch_update_period: context.mature_patch_update_period,
-      force_full_update: (this.counters_data[5] || 0) !== 0,
       feedback_miss_count: this.counters_data[9] || 0,
       surface_cache_bytes,
       hashmap_bytes,
