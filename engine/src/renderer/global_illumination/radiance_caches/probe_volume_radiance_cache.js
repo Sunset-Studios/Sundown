@@ -57,11 +57,10 @@ function permutation_params(probe_count) {
  * Disable shading and accumulation to record only the tracing portion.
  */
 export class ProbeVolumeRadianceCache extends GIModule {
-  constructor({ stages = {} } = {}) {
+  constructor() {
     super({
       name: "probe-volume-radiance-cache",
       representation: "probe-volume-radiance-cache",
-      stages,
       shader_setups: {
         reset: compute_shader("gi/ddgi_reset.wgsl"),
         scroll_reset: compute_shader("gi/ddgi_probe_scroll_reset.wgsl"),

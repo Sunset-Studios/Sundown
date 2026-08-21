@@ -16,11 +16,10 @@ const compute_shader = (path) => ({ pipeline_shaders: { compute: { path } } });
  * Disable shading and accumulation to record only the tracing portion.
  */
 export class PerPixelRadianceCache extends GIModule {
-  constructor({ stages = {} } = {}) {
+  constructor() {
     super({
       name: "per-pixel-radiance-cache",
       representation: "per-pixel-radiance-cache",
-      stages,
       shader_setups: {
         reset: compute_shader("gi/gi_reset.wgsl"),
         compact_emissive: compute_shader("system_compute/compact_emissive_lights.wgsl"),

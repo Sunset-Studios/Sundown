@@ -28,11 +28,10 @@ const compute_shader = (path) => ({ pipeline_shaders: { compute: { path } } });
  * Disable shading and accumulation to record only the tracing portion.
  */
 export class SurfaceRadianceCache extends GIModule {
-  constructor({ stages = {} } = {}) {
+  constructor() {
     super({
       name: "surface-radiance-cache",
       representation: "surface-radiance-cache",
-      stages,
       shader_setups: {
         compact_emissive: compute_shader("system_compute/compact_emissive_lights.wgsl"),
         prepare_dispatch: compute_shader("gi/surface_cache_prepare_dispatch.wgsl"),
@@ -823,10 +822,10 @@ export class SurfaceRadianceCache extends GIModule {
     );
     const bootstrap_rays_per_patch = bootstrap_patch_count > 0
       ? clamp(
-          this.counters_data[3] || context.rays_per_patch,
-          1,
-          context.bootstrap_rays_per_patch
-        )
+        this.counters_data[3] || context.rays_per_patch,
+        1,
+        context.bootstrap_rays_per_patch
+      )
       : 0;
     const regular_rays_per_patch = update_patch_count > 0
       ? clamp(this.counters_data[10] || 1, 1, context.rays_per_patch)

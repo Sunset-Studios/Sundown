@@ -31,16 +31,16 @@ export class PTGI {
     diffuse_atrous_luma_sigma: 1.0,
   };
 
-  constructor(params = {}, components = {}) {
+  constructor() {
     this.pipeline = new GIPipelineComposition([
       {
         name: "surface",
-        module: new SurfaceRadianceCache(params.surface_radiance_cache),
+        module: new SurfaceRadianceCache(),
       },
       {
         name: "pixel",
         dependencies: { radiance_cache: "surface" },
-        module: new PerPixelRadianceCache(params.pixel_radiance_cache),
+        module: new PerPixelRadianceCache(),
       },
     ]);
   }

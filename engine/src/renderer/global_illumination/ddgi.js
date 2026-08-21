@@ -19,8 +19,8 @@ export class DDGI {
   final_gi_texture_indirect_specular = null;
   debug_texture = null;
 
-  constructor(params = {}, components = {}) {
-    this.radiance_cache = new ProbeVolumeRadianceCache(params.radiance_cache);
+  constructor() {
+    this.radiance_cache = new ProbeVolumeRadianceCache();
     this.pipeline = new GIPipelineComposition([
       {
         name: "probes",

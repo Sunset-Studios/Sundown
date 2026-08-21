@@ -64,11 +64,11 @@ export class SCGI {
     inputs: {},
   };
 
-  constructor(params = {}) {
+  constructor() {
     this.pipeline = new GIPipelineComposition([
       {
         name: "surface",
-        module: new SurfaceRadianceCache(params.surface_radiance_cache),
+        module: new SurfaceRadianceCache(),
       },
     ]);
     this.frame_context.config = this.config;
