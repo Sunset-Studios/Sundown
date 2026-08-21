@@ -42,5 +42,9 @@
     "sharp": "^0.33.5",
     "vite": "^6.3.5",
     "wgsl_reflect": "^1.0.8"
+  },
+  "allowScripts": {
+    "sharp@0.33.5": true,
+    "esbuild@0.25.12": true
   }
 }

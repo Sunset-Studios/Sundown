@@ -15,6 +15,9 @@ export default defineConfig({
     __DEV__: "true",
   },
   server: {
+    watch: {
+      ignored: ["**/tauri/target/**"],
+    },
     // if you’re proxying through Express you may not need this;
     // otherwise Vite itself must serve these headers.
     headers: {
