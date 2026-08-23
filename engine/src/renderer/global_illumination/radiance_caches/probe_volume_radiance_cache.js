@@ -1,9 +1,8 @@
-import { GIModule, GIPipelineStage } from "../gi_pipeline.js";
 import { SharedFrameInfoBuffer, SharedViewBuffer } from "../../../core/shared_data.js";
 import { FragmentGpuBuffer } from "../../../core/ecs/solar/memory.js";
 import { Texture } from "../../texture.js";
 import { Buffer } from "../../buffer.js";
-import { DebugDrawType } from "../../renderer_types.js";
+import { DebugDrawType, RenderPassFlags } from "../../renderer_types.js";
 import { floor_to_multiple, clamp } from "../../../utility/math.js";
 import {
   register_material_buffers,
@@ -17,6 +16,9 @@ const MAX_PROBE_CASCADES = 6;
 const PROBE_RAY_DATA_WORD_COUNT = 13;
 const PROBE_MSME_STATS_WORD_COUNT = 8;
 const PROBE_COUNTERS_NAME = "probe_volume_gi_counters";
+export const PROBE_VOLUME_DIRECT_OUTPUT_NAME = "probe_sh_direct_output";
+export const PROBE_VOLUME_DIFFUSE_OUTPUT_NAME = "probe_sh_diffuse_output";
+export const PROBE_VOLUME_SPECULAR_OUTPUT_NAME = "probe_sh_specular_output";
 
 const compute_shader = (path) => ({ pipeline_shaders: { compute: { path } } });
 
@@ -54,38 +56,36 @@ function permutation_params(probe_count) {
 
 /**
  * Scrolling probe-volume tracing, hit shading, and SH accumulation.
- * Disable shading and accumulation to record only the tracing portion.
  */
-export class ProbeVolumeRadianceCache extends GIModule {
+export class ProbeVolumeRadianceCache {
   constructor() {
-    super({
-      name: "probe-volume-radiance-cache",
-      representation: "probe-volume-radiance-cache",
-      shader_setups: {
-        reset: compute_shader("gi/ddgi_reset.wgsl"),
-        scroll_reset: compute_shader("gi/ddgi_probe_scroll_reset.wgsl"),
-        feedback_clear: compute_shader("gi/ddgi_probe_surface_feedback_clear.wgsl"),
-        feedback: compute_shader("gi/ddgi_probe_surface_feedback.wgsl"),
-        active_mark: compute_shader("gi/ddgi_probe_active_mark.wgsl"),
-        depth_slots_init: compute_shader("gi/ddgi_depth_slots_init.wgsl"),
-        depth_slots_reclaim: compute_shader("gi/ddgi_depth_slots_reclaim.wgsl"),
-        depth_slots_allocate: compute_shader("gi/ddgi_depth_slots_allocate.wgsl"),
-        active_prefix_sum: compute_shader("gi/ddgi_probe_active_prefix_sum.wgsl"),
-        active_block_scan: compute_shader("gi/ddgi_probe_active_block_prefix_scan.wgsl"),
-        compact: compute_shader("gi/ddgi_probe_indices_init.wgsl"),
-        trace_init: compute_shader("gi/ddgi_probe_trace_init.wgsl"),
-        trace_hit: compute_shader("gi/ddgi_probe_trace_hit.wgsl"),
-        classify: compute_shader("gi/ddgi_probe_state_classify.wgsl"),
-        compact_emissive: compute_shader("system_compute/compact_emissive_lights.wgsl"),
-        shade: compute_shader("gi/ddgi_probe_trace_shade.wgsl"),
-        accumulate: compute_shader("gi/ddgi_sh_probe_accumulate.wgsl"),
-        depth_update: compute_shader("gi/ddgi_depth_update.wgsl"),
-        sample: compute_shader("gi/ddgi_sh_probe_sample.wgsl"),
-        resolve: compute_shader("gi/ddgi_diffuse_resolve.wgsl"),
-        atrous: compute_shader("gi/ddgi_atrous_diffuse.wgsl"),
-        debug: compute_shader("gi/ddgi_sh_probe_debug.wgsl"),
-      },
-    });
+    this.shader_setups = {
+      reset: compute_shader("gi/ddgi_reset.wgsl"),
+      scroll_reset: compute_shader("gi/ddgi_probe_scroll_reset.wgsl"),
+      feedback_clear: compute_shader("gi/ddgi_probe_surface_feedback_clear.wgsl"),
+      feedback: compute_shader("gi/ddgi_probe_surface_feedback.wgsl"),
+      active_mark: compute_shader("gi/ddgi_probe_active_mark.wgsl"),
+      depth_slots_init: compute_shader("gi/ddgi_depth_slots_init.wgsl"),
+      depth_slots_reclaim: compute_shader("gi/ddgi_depth_slots_reclaim.wgsl"),
+      depth_slots_allocate: compute_shader("gi/ddgi_depth_slots_allocate.wgsl"),
+      active_prefix_sum: compute_shader("gi/ddgi_probe_active_prefix_sum.wgsl"),
+      active_block_scan: compute_shader("gi/ddgi_probe_active_block_prefix_scan.wgsl"),
+      compact: compute_shader("gi/ddgi_probe_indices_init.wgsl"),
+      trace_init: compute_shader("gi/ddgi_probe_trace_init.wgsl"),
+      trace_hit: compute_shader("gi/ddgi_probe_trace_hit.wgsl"),
+      classify: compute_shader("gi/ddgi_probe_state_classify.wgsl"),
+      compact_emissive: compute_shader("system_compute/compact_emissive_lights.wgsl"),
+      shade: compute_shader("gi/ddgi_probe_trace_shade.wgsl"),
+      accumulate: compute_shader("gi/ddgi_sh_probe_accumulate.wgsl"),
+      depth_update: compute_shader("gi/ddgi_depth_update.wgsl"),
+      sample: compute_shader("gi/ddgi_sh_probe_sample.wgsl"),
+      resolve: compute_shader("gi/ddgi_diffuse_resolve.wgsl"),
+      atrous: compute_shader("gi/ddgi_atrous_diffuse.wgsl"),
+      debug: compute_shader("gi/ddgi_sh_probe_debug.wgsl"),
+    };
+    this.render_graph = null;
+    this.final_diffuse_output_name = PROBE_VOLUME_DIFFUSE_OUTPUT_NAME;
+    this.frame_context = null;
     this.params_data = new Float32Array(32 + 16 * MAX_PROBE_CASCADES);
     this.snapped_origins = null;
     this.scroll_offsets = null;
@@ -93,6 +93,45 @@ export class ProbeVolumeRadianceCache extends GIModule {
     this.counters_buffer = null;
     this.counters_data = null;
     this.depth_slot_signature = null;
+  }
+
+  add_passes(render_graph, context) {
+    this.render_graph = render_graph;
+    this.frame_context = context;
+    this._setup_trace_resources(render_graph, context);
+    this._setup_shading_resources(render_graph, context);
+    this._setup_accumulation_resources(render_graph, context);
+    this._record_trace_passes(render_graph, context);
+    this._record_shading_passes(render_graph, context);
+    this._record_accumulation_passes(render_graph, context);
+    this._record_post_trace_passes(render_graph, context);
+    this._record_accumulation_resolve_passes(render_graph, context);
+  }
+
+  add_debug_passes(render_graph, context) {
+    this.render_graph = render_graph;
+    return this._record_accumulation_debug_passes(render_graph, context);
+  }
+
+  get_resource(name) {
+    return this.render_graph?.get_resource_handle(name) ?? null;
+  }
+
+  add_compute_pass(render_graph, semantic, name, parameters, callback) {
+    const shader_setup = this.shader_setups[semantic];
+    if (!shader_setup) {
+      throw new Error(`Probe-volume radiance cache does not provide a shader for '${semantic}'`);
+    }
+    return render_graph.add_pass(
+      name,
+      RenderPassFlags.Compute,
+      { ...parameters, shader_setup },
+      callback
+    );
+  }
+
+  add_graph_local_pass(render_graph, name, callback) {
+    return render_graph.add_pass(name, RenderPassFlags.GraphLocal, {}, callback);
   }
 
   reset_runtime_state() {
@@ -204,106 +243,103 @@ export class ProbeVolumeRadianceCache extends GIModule {
     });
     context.ping_pong_frame = context.frame_index % 2;
 
-    this.create_buffer(render_graph, "params", {
+    render_graph.create_buffer({
       name: "probe_volume_params",
       size: this.params_data.length,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    this.create_buffer(render_graph, "update_indices", {
+    render_graph.create_buffer({
       name: "probe_volume_update_indices",
       size: probes_per_frame,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    this.create_buffer(render_graph, "surface_flags", {
+    render_graph.create_buffer({
       name: "probe_volume_surface_flags",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    this.create_buffer(render_graph, "active_flags", {
+    render_graph.create_buffer({
       name: "probe_volume_active_flags",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    this.create_buffer(render_graph, "active_prefix_sum", {
+    render_graph.create_buffer({
       name: "probe_volume_active_prefix_sum",
       size: probe_count * PROBE_SCHEDULER_PRIORITY_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    this.create_buffer(render_graph, "active_block_sums", {
+    render_graph.create_buffer({
       name: "probe_volume_active_block_sums",
       size: block_count * PROBE_SCHEDULER_PRIORITY_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    this.create_buffer(render_graph, "active_block_prefixes", {
+    render_graph.create_buffer({
       name: "probe_volume_active_block_prefixes",
       size: block_count * PROBE_SCHEDULER_PRIORITY_COUNT + PROBE_SCHEDULER_PRIORITY_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
     const sparse_depth_force = context.force_recreate || depth_slots_need_reset;
-    this.create_buffer(render_graph, "depth_slot_indices", {
+    render_graph.create_buffer({
       name: "probe_volume_depth_slot_indices",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: sparse_depth_force,
     });
-    this.create_buffer(render_graph, "depth_slot_owners", {
+    render_graph.create_buffer({
       name: "probe_volume_depth_slot_owners",
       size: depth_slot_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: sparse_depth_force,
     });
-    this.create_buffer(render_graph, "depth_slot_last_used", {
+    render_graph.create_buffer({
       name: "probe_volume_depth_slot_last_used",
       size: depth_slot_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: sparse_depth_force,
     });
-    this.create_buffer(render_graph, "depth_slot_free_list", {
+    render_graph.create_buffer({
       name: "probe_volume_depth_slot_free_list",
       size: depth_slot_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: sparse_depth_force,
     });
-    this.create_buffer(render_graph, "depth_slot_allocator_state", {
+    render_graph.create_buffer({
       name: "probe_volume_depth_slot_allocator_state",
       size: 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: sparse_depth_force,
     });
-    this.create_buffer(render_graph, "ray_hits", {
+    render_graph.create_buffer({
       name: "probe_volume_ray_hits",
       size: 4 + probe_total_ray_count * PROBE_RAY_DATA_WORD_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    this.create_buffer(render_graph, "probe_states", {
+    render_graph.create_buffer({
       name: "probe_volume_states",
       size: probe_count * 2,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    this.create_buffer(render_graph, "emissive_lights", {
+    render_graph.create_buffer({
       name: "probe_volume_emissive_lights",
       size: 4 + Math.max(1, Math.floor(config.max_emissive_lights)) * 12,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
 
-    this.import_resource(
-      "entity_index_lookup",
-      render_graph.register_buffer(FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name)
-    );
+    render_graph.register_buffer(FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name);
 
     this._ensure_counters(context.force_recreate);
 
-    this.import_resource("counters", render_graph.register_buffer(PROBE_COUNTERS_NAME));
+    render_graph.register_buffer(PROBE_COUNTERS_NAME);
   }
 
   _setup_shading_resources(render_graph) {
@@ -322,49 +358,49 @@ export class ProbeVolumeRadianceCache extends GIModule {
       depth_slots_need_reset,
       force_recreate,
     } = context;
-    this.create_buffer(render_graph, "history_valid", {
+    render_graph.create_buffer({
       name: "probe_sh_history_valid",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE,
       force: force_recreate,
     });
-    this.create_buffer(render_graph, "depth_moments", {
+    render_graph.create_buffer({
       name: "probe_sh_depth_moments",
       size: depth_slot_count * depth_words_per_slot,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate || depth_slots_need_reset,
     });
-    this.create_buffer(render_graph, "sh_probes", {
+    render_graph.create_buffer({
       name: "probe_sh_coefficients",
       size: probe_count * 6,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
-    this.create_buffer(render_graph, "msme_stats", {
+    render_graph.create_buffer({
       name: "probe_sh_msme_stats",
       size: probe_count * PROBE_MSME_STATS_WORD_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
-    this.create_image(render_graph, "direct_output", {
-      name: "probe_sh_direct_output",
+    render_graph.create_image({
+      name: PROBE_VOLUME_DIRECT_OUTPUT_NAME,
       format: "rgba16float",
       width,
       height,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
-    this.create_image(render_graph, "diffuse_output", {
-      name: "probe_sh_diffuse_output",
+    render_graph.create_image({
+      name: PROBE_VOLUME_DIFFUSE_OUTPUT_NAME,
       format: "rgba16float",
       width,
       height,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
-    this.create_image(render_graph, "specular_output", {
-      name: "probe_sh_specular_output",
+    render_graph.create_image({
+      name: PROBE_VOLUME_SPECULAR_OUTPUT_NAME,
       format: "rgba16float",
       width,
       height,
@@ -378,7 +414,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
     context.diffuse_sample_height = Math.max(1, Math.ceil(height / upscale));
 
     if (upscale > 1) {
-      this.create_image(render_graph, "diffuse_sample_output", {
+      render_graph.create_image({
         name: "probe_sh_diffuse_sample_intermediate",
         format: "rgba16float",
         width: context.diffuse_sample_width,
@@ -387,10 +423,9 @@ export class ProbeVolumeRadianceCache extends GIModule {
         force: force_recreate,
       });
     } else {
-      this.import_resource("diffuse_sample_output", this.get_resource("diffuse_output"));
     }
 
-    this.create_image(render_graph, "atrous_ping", {
+    render_graph.create_image({
       name: "probe_sh_diffuse_atrous_ping",
       format: "rgba16float",
       width,
@@ -398,7 +433,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
-    this.create_image(render_graph, "atrous_pong", {
+    render_graph.create_image({
       name: "probe_sh_diffuse_atrous_pong",
       format: "rgba16float",
       width,
@@ -408,18 +443,12 @@ export class ProbeVolumeRadianceCache extends GIModule {
     });
 
     this.atrous_params_data = new Float32Array([1, 0.04, 64, 1]);
-    this.create_buffer(render_graph, "atrous_params", {
+    render_graph.create_buffer({
       name: "probe_sh_diffuse_atrous_params",
       size: this.atrous_params_data.length,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
-  }
-
-  setup(render_graph, context, branch) {
-    this._setup_trace_resources(render_graph, context, branch);
-    this._setup_shading_resources(render_graph, context, branch);
-    this._setup_accumulation_resources(render_graph, context, branch);
   }
 
   _ensure_counters(force_recreate) {
@@ -441,31 +470,33 @@ export class ProbeVolumeRadianceCache extends GIModule {
     });
   }
 
-  _record_trace_passes(render_graph, context, branch) {
+  _record_trace_passes(render_graph, context) {
     const { config, inputs } = context;
     const accumulator = this;
     const shade = this;
 
-    const params = this.get_resource("params");
-    const counters = this.get_resource("counters");
-    const ray_hits = this.get_resource("ray_hits");
-    const states = this.get_resource("probe_states");
-    const update_indices = this.get_resource("update_indices");
-    const surface_flags = this.get_resource("surface_flags");
-    const active_flags = this.get_resource("active_flags");
-    const active_prefix_sum = this.get_resource("active_prefix_sum");
-    const active_block_sums = this.get_resource("active_block_sums");
-    const active_block_prefixes = this.get_resource("active_block_prefixes");
-    const depth_slot_indices = this.get_resource("depth_slot_indices");
-    const depth_slot_owners = this.get_resource("depth_slot_owners");
-    const depth_slot_last_used = this.get_resource("depth_slot_last_used");
-    const depth_slot_free_list = this.get_resource("depth_slot_free_list");
-    const depth_slot_allocator_state = this.get_resource("depth_slot_allocator_state");
-    const emissive_lights = this.get_resource("emissive_lights");
-    const entity_index_lookup = this.get_resource("entity_index_lookup");
-    const sh_probes = accumulator.get_resource("sh_probes");
-    const depth_moments = accumulator.get_resource("depth_moments");
-    const msme_stats = accumulator.get_resource("msme_stats");
+    const params = this.get_resource("probe_volume_params");
+    const counters = this.get_resource(PROBE_COUNTERS_NAME);
+    const ray_hits = this.get_resource("probe_volume_ray_hits");
+    const states = this.get_resource("probe_volume_states");
+    const update_indices = this.get_resource("probe_volume_update_indices");
+    const surface_flags = this.get_resource("probe_volume_surface_flags");
+    const active_flags = this.get_resource("probe_volume_active_flags");
+    const active_prefix_sum = this.get_resource("probe_volume_active_prefix_sum");
+    const active_block_sums = this.get_resource("probe_volume_active_block_sums");
+    const active_block_prefixes = this.get_resource("probe_volume_active_block_prefixes");
+    const depth_slot_indices = this.get_resource("probe_volume_depth_slot_indices");
+    const depth_slot_owners = this.get_resource("probe_volume_depth_slot_owners");
+    const depth_slot_last_used = this.get_resource("probe_volume_depth_slot_last_used");
+    const depth_slot_free_list = this.get_resource("probe_volume_depth_slot_free_list");
+    const depth_slot_allocator_state = this.get_resource("probe_volume_depth_slot_allocator_state");
+    const emissive_lights = this.get_resource("probe_volume_emissive_lights");
+    const entity_index_lookup = this.get_resource(
+      FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name
+    );
+    const sh_probes = accumulator.get_resource("probe_sh_coefficients");
+    const depth_moments = accumulator.get_resource("probe_sh_depth_moments");
+    const msme_stats = accumulator.get_resource("probe_sh_msme_stats");
     const materials = shade.material_buffers;
     const textures = shade.texture_pools;
 
@@ -807,30 +838,30 @@ export class ProbeVolumeRadianceCache extends GIModule {
     );
   }
 
-  _record_shading_passes(render_graph, context, branch) {
+  _record_shading_passes(render_graph, context) {
     const trace = this;
     const accumulator = this;
     const materials = this.material_buffers;
     const textures = this.texture_pools;
     const lighting = this.scene_lighting_data;
-    const ray_hits = trace.get_resource("ray_hits");
+    const ray_hits = trace.get_resource("probe_volume_ray_hits");
     this.add_compute_pass(
       render_graph,
       "shade",
       "probe_sh_shade_hits",
       {
         inputs: [
-          trace.get_resource("params"),
+          trace.get_resource("probe_volume_params"),
           lighting.scene_lighting_buffer,
           ray_hits,
-          trace.get_resource("update_indices"),
-          trace.get_resource("probe_states"),
+          trace.get_resource("probe_volume_update_indices"),
+          trace.get_resource("probe_volume_states"),
           materials.params_gpu_buffer,
           materials.material_offsets_buffer,
           materials.material_palette_buffer,
-          accumulator.get_resource("sh_probes"),
-          accumulator.get_resource("depth_moments"),
-          trace.get_resource("entity_index_lookup"),
+          accumulator.get_resource("probe_sh_coefficients"),
+          accumulator.get_resource("probe_sh_depth_moments"),
+          trace.get_resource(FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name),
           context.inputs.entity_transforms,
           textures.albedo,
           textures.normal,
@@ -841,7 +872,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
           textures.specular,
           textures.emission,
           lighting.skybox_image,
-          trace.get_resource("depth_slot_indices"),
+          trace.get_resource("probe_volume_depth_slot_indices"),
         ],
         outputs: [ray_hits],
       },
@@ -852,14 +883,14 @@ export class ProbeVolumeRadianceCache extends GIModule {
     );
   }
 
-  _record_accumulation_passes(render_graph, context, branch) {
+  _record_accumulation_passes(render_graph, context) {
     const trace = this;
-    const params = trace.get_resource("params");
-    const states = trace.get_resource("probe_states");
-    const ray_hits = trace.get_resource("ray_hits");
-    const history_valid = this.get_resource("history_valid");
-    const sh_probes = this.get_resource("sh_probes");
-    const msme_stats = this.get_resource("msme_stats");
+    const params = trace.get_resource("probe_volume_params");
+    const states = trace.get_resource("probe_volume_states");
+    const ray_hits = trace.get_resource("probe_volume_ray_hits");
+    const history_valid = this.get_resource("probe_sh_history_valid");
+    const sh_probes = this.get_resource("probe_sh_coefficients");
+    const msme_stats = this.get_resource("probe_sh_msme_stats");
     this.add_compute_pass(
       render_graph,
       "accumulate",
@@ -867,13 +898,13 @@ export class ProbeVolumeRadianceCache extends GIModule {
       {
         inputs: [
           params,
-          trace.get_resource("update_indices"),
+          trace.get_resource("probe_volume_update_indices"),
           ray_hits,
           history_valid,
           sh_probes,
           states,
           msme_stats,
-          trace.get_resource("counters"),
+          trace.get_resource(PROBE_COUNTERS_NAME),
         ],
         outputs: [history_valid, sh_probes, states, msme_stats],
       },
@@ -888,12 +919,12 @@ export class ProbeVolumeRadianceCache extends GIModule {
         inputs: [
           params,
           ray_hits,
-          trace.get_resource("update_indices"),
+          trace.get_resource("probe_volume_update_indices"),
           history_valid,
-          this.get_resource("depth_moments"),
-          trace.get_resource("depth_slot_indices"),
+          this.get_resource("probe_sh_depth_moments"),
+          trace.get_resource("probe_volume_depth_slot_indices"),
         ],
-        outputs: [this.get_resource("depth_moments")],
+        outputs: [this.get_resource("probe_sh_depth_moments")],
       },
       (graph, frame_data) =>
         graph
@@ -907,8 +938,8 @@ export class ProbeVolumeRadianceCache extends GIModule {
   }
 
   _record_post_trace_passes(render_graph, context) {
-    const params = this.get_resource("params");
-    const states = this.get_resource("probe_states");
+    const params = this.get_resource("probe_volume_params");
+    const states = this.get_resource("probe_volume_states");
     this.add_compute_pass(
       render_graph,
       "classify",
@@ -916,10 +947,10 @@ export class ProbeVolumeRadianceCache extends GIModule {
       {
         inputs: [
           params,
-          this.get_resource("update_indices"),
-          this.get_resource("ray_hits"),
+          this.get_resource("probe_volume_update_indices"),
+          this.get_resource("probe_volume_ray_hits"),
           states,
-          this.get_resource("counters"),
+          this.get_resource(PROBE_COUNTERS_NAME),
         ],
         outputs: [states],
       },
@@ -930,27 +961,31 @@ export class ProbeVolumeRadianceCache extends GIModule {
     );
   }
 
-  _record_accumulation_resolve_passes(render_graph, context, branch) {
+  _record_accumulation_resolve_passes(render_graph, context) {
     const trace = this;
     const lighting = this.scene_lighting_data;
     const inputs = context.inputs;
-    const sample_output = this.get_resource("diffuse_sample_output");
+    const sample_output = this.get_resource(
+      context.diffuse_sample_upscale_factor > 1
+        ? "probe_sh_diffuse_sample_intermediate"
+        : "probe_sh_diffuse_output"
+    );
     this.add_compute_pass(
       render_graph,
       "sample",
       `probe_sh_sample_${context.ping_pong_frame}`,
       {
         inputs: [
-          trace.get_resource("params"),
-          this.get_resource("sh_probes"),
-          trace.get_resource("probe_states"),
-          this.get_resource("depth_moments"),
+          trace.get_resource("probe_volume_params"),
+          this.get_resource("probe_sh_coefficients"),
+          trace.get_resource("probe_volume_states"),
+          this.get_resource("probe_sh_depth_moments"),
           inputs.hzb_texture,
           inputs.gbuffer_normal,
           sample_output,
           lighting.scene_lighting_buffer,
           lighting.skybox_image,
-          trace.get_resource("depth_slot_indices"),
+          trace.get_resource("probe_volume_depth_slot_indices"),
         ],
         outputs: [sample_output],
       },
@@ -963,7 +998,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
             1
           )
     );
-    const diffuse_output = this.get_resource("diffuse_output");
+    const diffuse_output = this.get_resource(PROBE_VOLUME_DIFFUSE_OUTPUT_NAME);
     if (context.diffuse_sample_upscale_factor > 1) {
       this.add_compute_pass(
         render_graph,
@@ -982,7 +1017,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
 
     let final_diffuse = diffuse_output;
     let read = diffuse_output;
-    let write = this.get_resource("atrous_ping");
+    let write = this.get_resource("probe_sh_diffuse_atrous_ping");
     const pass_count =
       context.config.diffuse_atrous_enabled === false
         ? 0
@@ -1003,7 +1038,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
             context.config.diffuse_atrous_luma_sigma || 1
           );
           graph
-            .get_physical_buffer(this.get_resource("atrous_params"))
+            .get_physical_buffer(this.get_resource("probe_sh_diffuse_atrous_params"))
             .write_raw(this.atrous_params_data);
         }
       );
@@ -1013,7 +1048,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
         `probe_sh_atrous_${context.ping_pong_frame}_${pass_index}`,
         {
           inputs: [
-            this.get_resource("atrous_params"),
+            this.get_resource("probe_sh_diffuse_atrous_params"),
             read,
             inputs.depth_texture,
             inputs.gbuffer_normal,
@@ -1029,31 +1064,18 @@ export class ProbeVolumeRadianceCache extends GIModule {
       final_diffuse = write;
       read = write;
       write =
-        write === this.get_resource("atrous_ping")
-          ? this.get_resource("atrous_pong")
-          : this.get_resource("atrous_ping");
+        write === this.get_resource("probe_sh_diffuse_atrous_ping")
+          ? this.get_resource("probe_sh_diffuse_atrous_pong")
+          : this.get_resource("probe_sh_diffuse_atrous_ping");
     }
-    this.import_resource("diffuse_output", final_diffuse);
+    this.final_diffuse_output_name = render_graph.get_resource_config(final_diffuse).name;
   }
 
-  record(render_graph, context, branch) {
-    if (this.is_stage_enabled(GIPipelineStage.Trace))
-      this._record_trace_passes(render_graph, context, branch);
-    if (this.is_stage_enabled(GIPipelineStage.Shading))
-      this._record_shading_passes(render_graph, context, branch);
-    if (this.is_stage_enabled(GIPipelineStage.Accumulation))
-      this._record_accumulation_passes(render_graph, context, branch);
-    if (this.is_stage_enabled(GIPipelineStage.Trace))
-      this._record_post_trace_passes(render_graph, context, branch);
-    if (this.is_stage_enabled(GIPipelineStage.Accumulation))
-      this._record_accumulation_resolve_passes(render_graph, context, branch);
-  }
-
-  _record_accumulation_debug_passes(render_graph, context, branch) {
+  _record_accumulation_debug_passes(render_graph, context) {
     if (context.debug_view !== DebugDrawType.GI_Probes) return null;
 
     const trace = this;
-    const output = this.create_image(render_graph, "debug_output", {
+    const output = render_graph.create_image({
       name: "probe_sh_debug_output",
       format: "rgba16float",
       width: context.width,
@@ -1067,10 +1089,10 @@ export class ProbeVolumeRadianceCache extends GIModule {
       "probe_sh_debug",
       {
         inputs: [
-          trace.get_resource("params"),
-          this.get_resource("sh_probes"),
-          trace.get_resource("probe_states"),
-          trace.get_resource("surface_flags"),
+          trace.get_resource("probe_volume_params"),
+          this.get_resource("probe_sh_coefficients"),
+          trace.get_resource("probe_volume_states"),
+          trace.get_resource("probe_volume_surface_flags"),
           context.inputs.scene_color,
           context.inputs.depth_texture,
           output,
@@ -1083,11 +1105,6 @@ export class ProbeVolumeRadianceCache extends GIModule {
           .dispatch(Math.ceil(context.width / 8), Math.ceil(context.height / 8), 1)
     );
     return output;
-  }
-
-  record_debug(render_graph, context, branch) {
-    if (!this.is_stage_enabled(GIPipelineStage.Accumulation)) return null;
-    return this._record_accumulation_debug_passes(render_graph, context, branch);
   }
 
   get_stats(context = this.frame_context) {

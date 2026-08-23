@@ -1,6 +1,9 @@
 import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
-import { GIPipelineComposition } from "./gi_pipeline.js";
-import { PerPixelRadianceCache } from "./radiance_caches/pixel_radiance_cache.js";
+import {
+  PerPixelRadianceCache,
+  PIXEL_RADIANCE_CACHE_DIRECT_OUTPUT_NAME,
+  PIXEL_RADIANCE_CACHE_SPECULAR_OUTPUT_NAME,
+} from "./radiance_caches/pixel_radiance_cache.js";
 import { SurfaceRadianceCache } from "./radiance_caches/surface_cache.js";
 
 /** Surface-cache plus per-pixel path-traced GI composition. */
@@ -32,17 +35,8 @@ export class PTGI {
   };
 
   constructor() {
-    this.pipeline = new GIPipelineComposition([
-      {
-        name: "surface",
-        module: new SurfaceRadianceCache(),
-      },
-      {
-        name: "pixel",
-        dependencies: { radiance_cache: "surface" },
-        module: new PerPixelRadianceCache(),
-      },
-    ]);
+    this.surface_cache = new SurfaceRadianceCache();
+    this.pixel_cache = new PerPixelRadianceCache();
   }
 
   add_passes(
@@ -79,7 +73,7 @@ export class PTGI {
     const total_pixels = gi_width * gi_height;
     const frame_index = SharedFrameInfoBuffer.get_frame_index();
 
-    this.pipeline.add_passes(render_graph, {
+    const frame_context = {
       config: this.config,
       width,
       height,
@@ -108,12 +102,20 @@ export class PTGI {
         index_buffer,
         dense_lights,
       },
-    });
+    };
 
-    const output = this.pipeline.get_module("pixel");
-    this.final_gi_texture_direct = output.get_resource("direct_output");
-    this.final_gi_texture_indirect_diffuse = output.get_resource("diffuse_output");
-    this.final_gi_texture_indirect_specular = output.get_resource("specular_output");
+    this.surface_cache.add_passes(render_graph, frame_context);
+    this.pixel_cache.add_passes(render_graph, frame_context, this.surface_cache);
+
+    this.final_gi_texture_direct = this.pixel_cache.get_resource(
+      PIXEL_RADIANCE_CACHE_DIRECT_OUTPUT_NAME
+    );
+    this.final_gi_texture_indirect_diffuse = this.pixel_cache.get_resource(
+      this.pixel_cache.final_diffuse_output_name
+    );
+    this.final_gi_texture_indirect_specular = this.pixel_cache.get_resource(
+      PIXEL_RADIANCE_CACHE_SPECULAR_OUTPUT_NAME
+    );
   }
 
   add_debug_passes(
@@ -126,7 +128,7 @@ export class PTGI {
     debug_view,
     force_recreate = false
   ) {
-    this.debug_texture = this.pipeline.add_debug_passes(render_graph, {
+    this.debug_texture = this.surface_cache.add_debug_passes(render_graph, {
       width,
       height,
       debug_view,

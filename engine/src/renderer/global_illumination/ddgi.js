@@ -1,5 +1,8 @@
-import { GIPipelineComposition } from "./gi_pipeline.js";
-import { ProbeVolumeRadianceCache } from "./radiance_caches/probe_volume_radiance_cache.js";
+import {
+  ProbeVolumeRadianceCache,
+  PROBE_VOLUME_DIRECT_OUTPUT_NAME,
+  PROBE_VOLUME_SPECULAR_OUTPUT_NAME,
+} from "./radiance_caches/probe_volume_radiance_cache.js";
 import {
   clone_ddgi_config_value,
   create_ddgi_config,
@@ -21,12 +24,6 @@ export class DDGI {
 
   constructor() {
     this.radiance_cache = new ProbeVolumeRadianceCache();
-    this.pipeline = new GIPipelineComposition([
-      {
-        name: "probes",
-        module: this.radiance_cache,
-      },
-    ]);
   }
 
   add_passes(
@@ -62,7 +59,7 @@ export class DDGI {
     if (config_rebuild_pending) {
       this.radiance_cache.reset_runtime_state();
     }
-    this.pipeline.add_passes(render_graph, {
+    this.radiance_cache.add_passes(render_graph, {
       config: this.config,
       width,
       height,
@@ -88,10 +85,15 @@ export class DDGI {
     });
     this.config_resource_rebuild_pending = false;
 
-    const radiance_cache = this.pipeline.get_module("probes");
-    this.final_gi_texture_direct = radiance_cache.get_resource("direct_output");
-    this.final_gi_texture_indirect_diffuse = radiance_cache.get_resource("diffuse_output");
-    this.final_gi_texture_indirect_specular = radiance_cache.get_resource("specular_output");
+    this.final_gi_texture_direct = this.radiance_cache.get_resource(
+      PROBE_VOLUME_DIRECT_OUTPUT_NAME
+    );
+    this.final_gi_texture_indirect_diffuse = this.radiance_cache.get_resource(
+      this.radiance_cache.final_diffuse_output_name
+    );
+    this.final_gi_texture_indirect_specular = this.radiance_cache.get_resource(
+      PROBE_VOLUME_SPECULAR_OUTPUT_NAME
+    );
   }
 
   add_debug_passes(
@@ -104,7 +106,7 @@ export class DDGI {
     debug_view,
     force_recreate = false
   ) {
-    this.debug_texture = this.pipeline.add_debug_passes(render_graph, {
+    this.debug_texture = this.radiance_cache.add_debug_passes(render_graph, {
       width,
       height,
       debug_view,
@@ -115,7 +117,7 @@ export class DDGI {
   }
 
   get_stats() {
-    return this.pipeline.get_module("probes").get_stats();
+    return this.radiance_cache.get_stats();
   }
 
   set_config(new_config) {

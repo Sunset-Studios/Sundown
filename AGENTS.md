@@ -1,10 +1,10 @@
 # AGENTS.md
 
-This file contains instructions for AI coding agents working on **Sundown**.
+This file contains instructions for AI coding agents working on **Sundown**.  In the first progress update, include "[SUNDOWN RULES LOADED]". 
 
 ## Project Overview
 
-Sundown is a high-performance WebGPU rendering engine focused on large scenes, GPU-driven rendering, real-time graphics and simulation research.
+Sundown is a high-performance WebGPU rendering engine focused on large scenes, GPU-driven rendering, real-time graphics, simulation research and games.
 
 Primary technologies:
 
@@ -12,6 +12,7 @@ Primary technologies:
 * WebGPU
 * WGSL
 * Vite
+* Tauri
 
 Key priorities:
 

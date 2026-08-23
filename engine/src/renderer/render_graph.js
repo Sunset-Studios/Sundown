@@ -374,6 +374,7 @@ const RGPass = Object.freeze({
  * @property {Map<string, number>} pass_order_map - Configured pass name to sort rank.
  * @property {StaticIntArray} all_resource_handles - Dense list of logical resources.
  * @property {Map<number, RGResourceMetadata>} resource_metadata - Metadata by logical handle.
+ * @property {Map<number, number>} resource_names_to_handles - Encoded names to logical handles.
  * @property {Array<number>} all_bindless_resource_handles - Bindless allocations awaiting release.
  * @property {ExecutionQueue} resource_deletion_queue - Deferred physical-resource destruction.
  * @property {boolean} b_global_bind_group_bound - Per-frame global binding state.
@@ -384,6 +385,7 @@ const RGRegistry = Object.freeze({
   pass_order_map: new Map(),
   all_resource_handles: new StaticIntArray(max_image_resources + max_buffer_resources),
   resource_metadata: new Map(),
+  resource_names_to_handles: new Map(),
   all_bindless_resource_handles: [],
   resource_deletion_queue: new ExecutionQueue(),
   b_global_bind_group_bound: false,
@@ -549,6 +551,10 @@ export class RenderGraph {
       new_resource.handle,
       this.resource_metadata_allocator.allocate()
     );
+    this.registry.resource_names_to_handles.set(
+      new_resource.config.encoded_name,
+      new_resource.handle
+    );
 
     const resource_metadata = this.registry.resource_metadata.get(new_resource.handle);
     resource_metadata.config = new_resource.config;
@@ -595,6 +601,10 @@ export class RenderGraph {
       new_resource.handle,
       this.resource_metadata_allocator.allocate()
     );
+    this.registry.resource_names_to_handles.set(
+      new_resource.config.encoded_name,
+      new_resource.handle
+    );
 
     const resource_metadata = this.registry.resource_metadata.get(new_resource.handle);
     resource_metadata.config = new_resource.config;
@@ -633,6 +643,10 @@ export class RenderGraph {
     this.registry.resource_metadata.set(
       new_resource.handle,
       this.resource_metadata_allocator.allocate()
+    );
+    this.registry.resource_names_to_handles.set(
+      new_resource.config.encoded_name,
+      new_resource.handle
     );
 
     const resource_metadata = this.registry.resource_metadata.get(new_resource.handle);
@@ -677,6 +691,10 @@ export class RenderGraph {
     this.registry.resource_metadata.set(
       new_resource.handle,
       this.resource_metadata_allocator.allocate()
+    );
+    this.registry.resource_names_to_handles.set(
+      new_resource.config.encoded_name,
+      new_resource.handle
     );
 
     const resource_metadata = this.registry.resource_metadata.get(new_resource.handle);
@@ -793,6 +811,17 @@ export class RenderGraph {
       CacheTypes.BUFFER,
       this.registry.resource_metadata.get(handle).physical_id
     );
+  }
+
+  /**
+   * Resolves a logical resource handle from a raw resource name.
+   *
+   * @param {string} name - Name of the resource (usually the name passed into its config on creation).
+   * @returns {number|null} Registered handle for the named resource if one was found.
+   */
+  get_resource_handle(name) {
+    const encoded_name = Name.from(name);
+    return this.registry.resource_names_to_handles.get(encoded_name) || null;
   }
 
   /**
@@ -1251,6 +1280,7 @@ export class RenderGraph {
 
     this.registry.render_passes.length = 0;
     this.registry.resource_metadata.clear();
+    this.registry.resource_names_to_handles.clear();
 
     this.registry.all_resource_handles.reset();
     this.image_resource_allocator.reset();

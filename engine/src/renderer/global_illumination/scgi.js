@@ -1,5 +1,8 @@
-import { GIPipelineComposition } from "./gi_pipeline.js";
-import { SurfaceRadianceCache } from "./radiance_caches/surface_cache.js";
+import {
+  SurfaceRadianceCache,
+  SURFACE_CACHE_DIRECT_OUTPUT_NAME,
+  SURFACE_CACHE_SPECULAR_OUTPUT_NAME,
+} from "./radiance_caches/surface_cache.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { EntityFlags } from "../../core/minimal.js";
@@ -65,12 +68,7 @@ export class SCGI {
   };
 
   constructor() {
-    this.pipeline = new GIPipelineComposition([
-      {
-        name: "surface",
-        module: new SurfaceRadianceCache(),
-      },
-    ]);
+    this.radiance_cache = new SurfaceRadianceCache();
     this.frame_context.config = this.config;
   }
 
@@ -122,12 +120,17 @@ export class SCGI {
     inputs.index_buffer = index_buffer;
     inputs.dense_lights = dense_lights;
 
-    this.pipeline.add_passes(render_graph, frame_context);
+    this.radiance_cache.add_passes(render_graph, frame_context);
 
-    const output = this.pipeline.get_module("surface");
-    this.final_gi_texture_direct = output.get_resource("direct_output");
-    this.final_gi_texture_indirect_diffuse = output.get_resource("diffuse_output");
-    this.final_gi_texture_indirect_specular = output.get_resource("specular_output");
+    this.final_gi_texture_direct = this.radiance_cache.get_resource(
+      SURFACE_CACHE_DIRECT_OUTPUT_NAME
+    );
+    this.final_gi_texture_indirect_diffuse = this.radiance_cache.get_resource(
+      this.radiance_cache.final_diffuse_output_name
+    );
+    this.final_gi_texture_indirect_specular = this.radiance_cache.get_resource(
+      SURFACE_CACHE_SPECULAR_OUTPUT_NAME
+    );
   }
 
   add_debug_passes(
@@ -148,17 +151,17 @@ export class SCGI {
     this.debug_context.inputs.depth_texture = depth_texture;
     this.debug_context.inputs.scene_color = scene_color;
 
-    this.debug_texture = this.pipeline.add_debug_passes(render_graph, this.debug_context);
+    this.debug_texture = this.radiance_cache.add_debug_passes(render_graph, this.debug_context);
 
     return this.debug_texture;
   }
 
   get_stats() {
-    return this.pipeline.get_module("surface").get_stats();
+    return this.radiance_cache.get_stats();
   }
 
   set_stats_enabled(enabled) {
-    this.pipeline.get_module("surface").set_stats_enabled(enabled);
+    this.radiance_cache.set_stats_enabled(enabled);
   }
 
   set_config(new_config) {
