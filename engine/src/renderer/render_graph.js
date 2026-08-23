@@ -30,7 +30,6 @@
 //    • Reflection-driven bind layouts are cached per pass name
 //
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-import { ConfigDB, ConfigSync } from "../core/config_db.js";
 import ExecutionQueue from "../utility/execution_queue.js";
 import { FrameAllocator } from "../memory/allocator.js";
 import { ResourceCache } from "./resource_cache.js";
@@ -73,9 +72,6 @@ const RG_TYPE_BITS = 8;
 const RG_TYPE_MASK = (1 << RG_TYPE_BITS) - 1;
 const RG_INDEX_BITS = 20;
 const RG_INDEX_MASK = (1 << RG_INDEX_BITS) - 1;
-
-// Experimental scene-specific pass ordering. Declaration order remains authoritative while disabled.
-const custom_graph_sort = false;
 
 /**
  * Packs an allocator index, resource type, and generation into one 32-bit logical handle.
@@ -161,26 +157,6 @@ const RGResourceMetadata = Object.freeze({
   b_is_persistent: true,
   b_is_bindless: false,
   max_frame_lifetime: 2,
-});
-
-/**
- * Conventional G-buffer bundle shared by deferred-rendering strategies.
- *
- * @typedef {Object} RGGBufferData
- * @property {Object|null} albedo - Base-color target.
- * @property {Object|null} smra - Smoothness/metalness/reflectance/ambient-occlusion target.
- * @property {Object|null} position - World-position target.
- * @property {Object|null} normal - World-normal target.
- * @property {Object|null} entity_id - Entity-picking target.
- * @property {Object|null} depth - Depth target.
- */
-const RGGBufferData = Object.freeze({
-  albedo: null,
-  smra: null,
-  position: null,
-  normal: null,
-  entity_id: null,
-  depth: null,
 });
 
 /**
@@ -370,8 +346,8 @@ const RGPass = Object.freeze({
  * created externally and registered so the graph never assumes ownership of their destruction.
  *
  * @typedef {Object} RGRegistry
+ * @property {string} current_scene_id - The Scene ID this render graph is currently associated with.
  * @property {Array<RGPass>} render_passes - Pass records in declaration order.
- * @property {Map<string, number>} pass_order_map - Configured pass name to sort rank.
  * @property {StaticIntArray} all_resource_handles - Dense list of logical resources.
  * @property {Map<number, RGResourceMetadata>} resource_metadata - Metadata by logical handle.
  * @property {Map<number, number>} resource_names_to_handles - Encoded names to logical handles.
@@ -382,7 +358,6 @@ const RGPass = Object.freeze({
 const RGRegistry = Object.freeze({
   current_scene_id: "",
   render_passes: [],
-  pass_order_map: new Map(),
   all_resource_handles: new StaticIntArray(max_image_resources + max_buffer_resources),
   resource_metadata: new Map(),
   resource_names_to_handles: new Map(),
@@ -403,23 +378,6 @@ const PassCache = Object.freeze({
   global_bind_group: null,
   bind_groups: new Map(),
   pipeline_states: new Map(),
-});
-
-const CustomPassOrderReadyFlag = 1 << 0;
-const DefaultPassOrderReadyFlag = 1 << 1;
-
-/**
- * Default and user-edited pass orders loaded asynchronously per scene.
- *
- * @typedef {Object} StoredPassOrder
- * @property {Object<string, Array<string>>} default - Recorded declaration order per scene.
- * @property {Object<string, Array<string>>} custom - User-selected execution order per scene.
- * @property {number} ready_flags - Bitmask indicating which stores have finished loading.
- */
-const StoredPassOrder = Object.freeze({
-  default: [],
-  custom: [],
-  ready_flags: 0,
 });
 
 /**
@@ -450,7 +408,6 @@ export class RenderGraph {
     this.max_bind_groups = max_bind_groups;
     this.pass_cache = deep_clone(PassCache);
     this.registry = deep_clone(RGRegistry);
-    this.stored_pass_order = deep_clone(StoredPassOrder);
     this.non_culled_passes = [];
     this.queued_global_bind_group_writes = [];
     this.queued_pre_commands = [];
@@ -476,10 +433,6 @@ export class RenderGraph {
 
     this._execute_post_render_callbacks = this._execute_post_render_callbacks.bind(this);
     this._execute_pre_render_callbacks = this._execute_pre_render_callbacks.bind(this);
-
-    if (custom_graph_sort) {
-      this._init_pass_order_info();
-    }
   }
 
   // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -835,7 +788,7 @@ export class RenderGraph {
   }
 
   /**
-   * Selects the scene namespace used by configurable pass ordering.
+   * Selects the scene namespace.
    *
    * @param {string|number} scene_id - Scene identifier.
    */
@@ -928,52 +881,6 @@ export class RenderGraph {
       if (!command.persistent) {
         this.queued_post_commands.splice(i, 1);
       }
-    }
-  }
-
-  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
-  // ║                      🧭 EXPERIMENTAL PASS-ORDER BOOTSTRAP                                 ║
-  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
-
-  _init_pass_order_info() {
-    const config_file = read_file("config/renderer.config.json");
-    if (config_file) {
-      const config = deserialize_json(
-        config_file,
-        "Renderer configuration"
-      );
-      if (config.rg?.pass_order?.default) {
-        ConfigDB.set_config_property(
-          "renderer.config",
-          "rg.pass_order.default",
-          config.rg.pass_order.default
-        ).then(() => {
-          this.stored_pass_order.default = config.rg.pass_order.default;
-          this.stored_pass_order.ready_flags |= DefaultPassOrderReadyFlag;
-          if (config.rg?.pass_order?.custom) {
-            ConfigDB.set_config_property(
-              "renderer.config",
-              "rg.pass_order.custom",
-              config.rg.pass_order.custom
-            ).then(() => {
-              this.stored_pass_order.custom = config.rg.pass_order.custom;
-              this.stored_pass_order.ready_flags |= CustomPassOrderReadyFlag;
-            });
-          }
-        });
-      }
-    } else {
-      ConfigDB.get_config_property("renderer.config", "rg.pass_order.default").then(
-        (pass_order) => {
-          this.stored_pass_order.default = pass_order || {};
-          this.stored_pass_order.ready_flags |= DefaultPassOrderReadyFlag;
-        }
-      );
-
-      ConfigDB.get_config_property("renderer.config", "rg.pass_order.custom").then((pass_order) => {
-        this.stored_pass_order.custom = pass_order || {};
-        this.stored_pass_order.ready_flags |= CustomPassOrderReadyFlag;
-      });
     }
   }
 
@@ -1090,32 +997,6 @@ export class RenderGraph {
         this.non_culled_passes.splice(i, 1);
       }
     }
-  }
-
-  _sort_graph_passes() {
-    // Custom ordering is opt-in and scene-local; otherwise declaration order is preserved.
-    const current_pass_order = this.stored_pass_order.custom[this.registry.current_scene_id] || [];
-    if (!custom_graph_sort || !current_pass_order || current_pass_order.length === 0) {
-      return;
-    }
-
-    // Unlisted passes sort after configured passes and retain declaration order as a tiebreaker.
-    this.non_culled_passes.sort((a, b) => {
-      const pass_a = this.registry.render_passes[a];
-      const pass_b = this.registry.render_passes[b];
-
-      const id_a = pass_a.pass_config.name;
-      const id_b = pass_b.pass_config.name;
-
-      const order_a = this.registry.pass_order_map.has(id_a)
-        ? this.registry.pass_order_map.get(id_a)
-        : Number.MAX_SAFE_INTEGER;
-      const order_b = this.registry.pass_order_map.has(id_b)
-        ? this.registry.pass_order_map.get(id_b)
-        : Number.MAX_SAFE_INTEGER;
-
-      return order_a === order_b ? a - b : order_a - order_b;
-    });
   }
 
   _compute_resource_first_and_last_users() {
@@ -1300,116 +1181,6 @@ export class RenderGraph {
    */
   get_resolved_non_culled_passes() {
     return this.non_culled_passes.map((pass) => this.registry.render_passes[pass].physical_id);
-  }
-
-  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
-  // ║                        🧭 SCENE-SPECIFIC PASS ORDERING                                    ║
-  // ║                 Experimental: active only while custom_graph_sort is true                 ║
-  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
-
-  /**
-   * Persists the recorded declaration order for all scenes.
-   *
-   * @returns {Promise<void>} Resolves after the renderer configuration is saved.
-   */
-  async record_default_pass_order() {
-    await ConfigDB.set_config_property(
-      "renderer.config",
-      "rg.pass_order.default",
-      this.stored_pass_order.default
-    );
-    await ConfigSync.save_to_server("renderer.config");
-  }
-
-  /**
-   * Persists custom scene orders and rebuilds the active scene's lookup map.
-   *
-   * @returns {Promise<void>} Resolves after the renderer configuration is saved.
-   */
-  async record_custom_pass_order() {
-    await ConfigDB.set_config_property(
-      "renderer.config",
-      "rg.pass_order.custom",
-      this.stored_pass_order.custom
-    );
-    await ConfigSync.save_to_server("renderer.config");
-    this._update_pass_order_map();
-  }
-
-  /**
-   * @returns {boolean} Whether scene-specific pass sorting is compiled in.
-   */
-  is_custom_graph_sort_enabled() {
-    return custom_graph_sort;
-  }
-
-  /**
-   * @returns {boolean} Whether default pass-order data has finished loading.
-   */
-  is_default_pass_order_ready() {
-    return (this.stored_pass_order.ready_flags & DefaultPassOrderReadyFlag) !== 0;
-  }
-
-  /**
-   * @returns {boolean} Whether custom pass-order data has finished loading.
-   */
-  is_custom_pass_order_ready() {
-    return (this.stored_pass_order.ready_flags & CustomPassOrderReadyFlag) !== 0;
-  }
-
-  /**
-   * Stores a scene's baseline declaration order in memory.
-   *
-   * @param {Array<string>} value - Pass names in declaration order.
-   * @param {string|number|null} scene_id - Scene override; current scene when omitted.
-   */
-  set_default_pass_order(value, scene_id = null) {
-    const scene = scene_id ?? this.registry.current_scene_id;
-    this.stored_pass_order.default[scene] = value;
-  }
-
-  /**
-   * Reads a scene's baseline declaration order.
-   *
-   * @param {string|number|null} scene_id - Scene override; current scene when omitted.
-   * @returns {Array<string>} Stored pass names, or an empty array.
-   */
-  get_default_pass_order(scene_id = null) {
-    const scene = scene_id ?? this.registry.current_scene_id;
-    return this.stored_pass_order.default[scene] || [];
-  }
-
-  /**
-   * Stores a custom scene order and refreshes the active lookup map when applicable.
-   *
-   * @param {Array<string>} value - Pass names in desired execution order.
-   * @param {string|number|null} scene_id - Scene override; current scene when omitted.
-   */
-  set_scene_pass_order(value, scene_id = null) {
-    const scene = scene_id ?? this.registry.current_scene_id;
-    this.stored_pass_order.custom[scene] = value;
-    if (scene === this.registry.current_scene_id) {
-      this._update_pass_order_map();
-    }
-  }
-
-  /**
-   * Reads a scene's custom execution order.
-   *
-   * @param {string|number|null} scene_id - Scene override; current scene when omitted.
-   * @returns {Array<string>} Stored pass names, or an empty array.
-   */
-  get_scene_pass_order(scene_id = null) {
-    const scene = scene_id ?? this.registry.current_scene_id;
-    return this.stored_pass_order.custom[scene] || [];
-  }
-
-  _update_pass_order_map() {
-    this.registry.pass_order_map.clear();
-    const current_pass_order = this.stored_pass_order.custom[this.registry.current_scene_id] || [];
-    for (let i = 0; i < current_pass_order.length; i++) {
-      this.registry.pass_order_map.set(current_pass_order[i], i);
-    }
   }
 
   // ╔════════════════════════════════════════════════════════════════════════════════════════════╗

@@ -37,6 +37,7 @@ export class Scene extends SimulationLayer {
     super.init();
 
     Renderer.get().set_scene_id(this.name);
+
     this.scene_data_loader = new SceneDataLoader(this.name, {
       project: ProjectContext.get_active(),
     });

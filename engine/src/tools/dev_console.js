@@ -2,7 +2,6 @@ import { SimulationLayer } from "../core/simulation_layer.js";
 import { InputProvider } from "../input/input_provider.js";
 import { InputKey } from "../input/input_types.js";
 import { panel, input, label, UIContext } from "../ui/2d/immediate.js";
-import { RenderPassOrganizer } from "./render_pass_organizer.js";
 import { MLStats } from "./ml_stats.js";
 import { CameraInfo } from "./camera_info.js";
 import { BVHDebug } from "./bvh_debug.js";
@@ -81,7 +80,6 @@ export class DevConsole extends SimulationLayer {
   init() {
     super.init();
     // Register stat command handlers.
-    this.register_command("render_pass_organizer", new RenderPassOrganizer());
     this.register_command("ml_stats", new MLStats());
     this.register_command("camera_info", new CameraInfo());
     this.register_command("aabb_debug", new BVHDebug());

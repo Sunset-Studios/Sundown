@@ -42,7 +42,7 @@ export class SCGI {
     temporal_depth_threshold: 0.03,
     temporal_normal_threshold: 0.9,
     disocclusion_atrous_enabled: true,
-    disocclusion_atrous_pass_count: 4,
+    disocclusion_atrous_pass_count: 2,
     disocclusion_atrous_phi_depth: 0.03,
     disocclusion_atrous_phi_normal: 64.0,
     disocclusion_atrous_luma_sigma: 2.0,
