@@ -41,7 +41,7 @@ fn cs() {
     );
     let maximum_ray_count = max(
         min(
-            surface_cache_params.maximum_ray_count_per_frame,
+            u32(surface_cache_params.maximum_ray_count_per_frame),
             patch_capacity * regular_rays_per_patch
         ),
         regular_rays_per_patch
@@ -77,7 +77,10 @@ fn cs() {
             max(bootstrap_ray_budget, 1u)
         );
         bootstrap_rays_per_patch = min(
-            max(surface_cache_params.maximum_bootstrap_rays_per_patch, 1u),
+            max(
+                u32(surface_cache_params.maximum_bootstrap_rays_per_patch),
+                1u
+            ),
             max(
                 bootstrap_ray_budget /
                     bootstrap_patch_count,

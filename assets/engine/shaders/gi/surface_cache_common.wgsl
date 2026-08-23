@@ -35,9 +35,9 @@ struct SurfaceCacheParams {
     history_hysteresis: f32,
     max_history_samples: f32,
     indirect_boost: f32,
-    regular_rays_per_patch: u32,
+    regular_rays_per_patch: f32,
     cache_entry_lifetime: f32,
-    maximum_bootstrap_rays_per_patch: u32,
+    maximum_bootstrap_rays_per_patch: f32,
     bootstrap_ray_budget_fraction: f32,
     cache_pixel_footprint: f32,
     hash_search_count: f32,
@@ -46,8 +46,8 @@ struct SurfaceCacheParams {
     history_footprint_end_samples: f32,
     history_footprint_max_scale: f32,
     bootstrap_patch_capacity: f32,
-    mature_patch_update_period: u32,
-    maximum_ray_count_per_frame: u32,
+    mature_patch_update_period: f32,
+    maximum_ray_count_per_frame: f32,
     native_promotion_start_confidence: f32,
     native_promotion_end_confidence: f32,
 };
@@ -173,7 +173,7 @@ fn surface_cache_full_resolution(params: SurfaceCacheParams) -> vec2<u32> {
 }
 
 fn surface_cache_regular_rays_per_patch(params: SurfaceCacheParams) -> u32 {
-    return max(params.regular_rays_per_patch, 1u);
+    return max(u32(params.regular_rays_per_patch), 1u);
 }
 
 fn surface_cache_regular_ray_count(

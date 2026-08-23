@@ -48,7 +48,6 @@ export class SurfaceRadianceCache extends GIModule {
       },
     });
     this.params_data = new Float32Array(24);
-    this.params_u32_data = new Uint32Array(this.params_data.buffer);
     this.temporal_params_data = new Float32Array(6);
     this.atrous_params_data = new Float32Array(8);
     this.counters_reset_data = new Uint32Array(11);
@@ -299,9 +298,9 @@ export class SurfaceRadianceCache extends GIModule {
       this.params_data[6] = config.history_hysteresis;
       this.params_data[7] = config.max_history_samples;
       this.params_data[8] = config.indirect_boost;
-      this.params_u32_data[9] = context.rays_per_patch;
+      this.params_data[9] = context.rays_per_patch;
       this.params_data[10] = config.cache_entry_lifetime;
-      this.params_u32_data[11] = context.bootstrap_rays_per_patch;
+      this.params_data[11] = context.bootstrap_rays_per_patch;
       this.params_data[12] = clamp(config.bootstrap_ray_budget_fraction ?? 0.5, 0.0, 1.0);
       this.params_data[13] = Math.max(config.cache_pixel_footprint ?? 3, 1);
       this.params_data[14] = clamp(Math.floor(config.hash_search_count ?? 10), 1, 64);
@@ -313,8 +312,8 @@ export class SurfaceRadianceCache extends GIModule {
       );
       this.params_data[18] = Math.max(config.history_footprint_max_scale ?? 1, 1);
       this.params_data[19] = context.bootstrap_enabled ? context.bootstrap_patch_capacity : 0;
-      this.params_u32_data[20] = context.mature_patch_update_period;
-      this.params_u32_data[21] = context.maximum_ray_count_per_frame;
+      this.params_data[20] = context.mature_patch_update_period;
+      this.params_data[21] = context.maximum_ray_count_per_frame;
       this.params_data[22] = clamp(config.native_promotion_start_confidence ?? 0.3, 0.0, 0.99);
       this.params_data[23] = clamp(
         config.native_promotion_end_confidence ?? 0.85,

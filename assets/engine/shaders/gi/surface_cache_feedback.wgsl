@@ -34,7 +34,7 @@ fn surface_cache_patch_is_due(patch_index: u32) -> bool {
     // maintenance updates across frames. Invalidation lowers radiance maturity
     // before this test, so unfinished refresh work remains eligible.
     let update_period = max(
-        surface_cache_params.mature_patch_update_period,
+        u32(surface_cache_params.mature_patch_update_period),
         1u
     );
     return update_period == 1u ||
