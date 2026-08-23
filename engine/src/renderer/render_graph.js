@@ -930,7 +930,6 @@ export class RenderGraph {
    */
   _compile() {
     this._cull_graph_passes();
-    this._sort_graph_passes();
     this._compute_resource_first_and_last_users();
   }
 

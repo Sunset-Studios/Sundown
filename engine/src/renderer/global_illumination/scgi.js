@@ -122,13 +122,13 @@ export class SCGI {
 
     this.radiance_cache.add_passes(render_graph, frame_context);
 
-    this.final_gi_texture_direct = this.radiance_cache.get_resource(
+    this.final_gi_texture_direct = render_graph.get_resource_handle(
       SURFACE_CACHE_DIRECT_OUTPUT_NAME
     );
-    this.final_gi_texture_indirect_diffuse = this.radiance_cache.get_resource(
+    this.final_gi_texture_indirect_diffuse = render_graph.get_resource_handle(
       this.radiance_cache.final_diffuse_output_name
     );
-    this.final_gi_texture_indirect_specular = this.radiance_cache.get_resource(
+    this.final_gi_texture_indirect_specular = render_graph.get_resource_handle(
       SURFACE_CACHE_SPECULAR_OUTPUT_NAME
     );
   }

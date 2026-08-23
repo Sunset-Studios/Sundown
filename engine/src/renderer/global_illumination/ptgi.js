@@ -107,13 +107,13 @@ export class PTGI {
     this.surface_cache.add_passes(render_graph, frame_context);
     this.pixel_cache.add_passes(render_graph, frame_context, this.surface_cache);
 
-    this.final_gi_texture_direct = this.pixel_cache.get_resource(
+    this.final_gi_texture_direct = render_graph.get_resource_handle(
       PIXEL_RADIANCE_CACHE_DIRECT_OUTPUT_NAME
     );
-    this.final_gi_texture_indirect_diffuse = this.pixel_cache.get_resource(
+    this.final_gi_texture_indirect_diffuse = render_graph.get_resource_handle(
       this.pixel_cache.final_diffuse_output_name
     );
-    this.final_gi_texture_indirect_specular = this.pixel_cache.get_resource(
+    this.final_gi_texture_indirect_specular = render_graph.get_resource_handle(
       PIXEL_RADIANCE_CACHE_SPECULAR_OUTPUT_NAME
     );
   }

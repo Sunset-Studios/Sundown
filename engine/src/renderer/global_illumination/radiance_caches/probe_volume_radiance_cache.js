@@ -83,7 +83,6 @@ export class ProbeVolumeRadianceCache {
       atrous: compute_shader("gi/ddgi_atrous_diffuse.wgsl"),
       debug: compute_shader("gi/ddgi_sh_probe_debug.wgsl"),
     };
-    this.render_graph = null;
     this.final_diffuse_output_name = PROBE_VOLUME_DIFFUSE_OUTPUT_NAME;
     this.frame_context = null;
     this.params_data = new Float32Array(32 + 16 * MAX_PROBE_CASCADES);
@@ -96,7 +95,6 @@ export class ProbeVolumeRadianceCache {
   }
 
   add_passes(render_graph, context) {
-    this.render_graph = render_graph;
     this.frame_context = context;
     this._setup_trace_resources(render_graph, context);
     this._setup_shading_resources(render_graph, context);
@@ -109,29 +107,7 @@ export class ProbeVolumeRadianceCache {
   }
 
   add_debug_passes(render_graph, context) {
-    this.render_graph = render_graph;
     return this._record_accumulation_debug_passes(render_graph, context);
-  }
-
-  get_resource(name) {
-    return this.render_graph?.get_resource_handle(name) ?? null;
-  }
-
-  add_compute_pass(render_graph, semantic, name, parameters, callback) {
-    const shader_setup = this.shader_setups[semantic];
-    if (!shader_setup) {
-      throw new Error(`Probe-volume radiance cache does not provide a shader for '${semantic}'`);
-    }
-    return render_graph.add_pass(
-      name,
-      RenderPassFlags.Compute,
-      { ...parameters, shader_setup },
-      callback
-    );
-  }
-
-  add_graph_local_pass(render_graph, name, callback) {
-    return render_graph.add_pass(name, RenderPassFlags.GraphLocal, {}, callback);
   }
 
   reset_runtime_state() {
@@ -472,37 +448,44 @@ export class ProbeVolumeRadianceCache {
 
   _record_trace_passes(render_graph, context) {
     const { config, inputs } = context;
-    const accumulator = this;
     const shade = this;
 
-    const params = this.get_resource("probe_volume_params");
-    const counters = this.get_resource(PROBE_COUNTERS_NAME);
-    const ray_hits = this.get_resource("probe_volume_ray_hits");
-    const states = this.get_resource("probe_volume_states");
-    const update_indices = this.get_resource("probe_volume_update_indices");
-    const surface_flags = this.get_resource("probe_volume_surface_flags");
-    const active_flags = this.get_resource("probe_volume_active_flags");
-    const active_prefix_sum = this.get_resource("probe_volume_active_prefix_sum");
-    const active_block_sums = this.get_resource("probe_volume_active_block_sums");
-    const active_block_prefixes = this.get_resource("probe_volume_active_block_prefixes");
-    const depth_slot_indices = this.get_resource("probe_volume_depth_slot_indices");
-    const depth_slot_owners = this.get_resource("probe_volume_depth_slot_owners");
-    const depth_slot_last_used = this.get_resource("probe_volume_depth_slot_last_used");
-    const depth_slot_free_list = this.get_resource("probe_volume_depth_slot_free_list");
-    const depth_slot_allocator_state = this.get_resource("probe_volume_depth_slot_allocator_state");
-    const emissive_lights = this.get_resource("probe_volume_emissive_lights");
-    const entity_index_lookup = this.get_resource(
+    const params = render_graph.get_resource_handle("probe_volume_params");
+    const counters = render_graph.get_resource_handle(PROBE_COUNTERS_NAME);
+    const ray_hits = render_graph.get_resource_handle("probe_volume_ray_hits");
+    const states = render_graph.get_resource_handle("probe_volume_states");
+    const update_indices = render_graph.get_resource_handle("probe_volume_update_indices");
+    const surface_flags = render_graph.get_resource_handle("probe_volume_surface_flags");
+    const active_flags = render_graph.get_resource_handle("probe_volume_active_flags");
+    const active_prefix_sum = render_graph.get_resource_handle("probe_volume_active_prefix_sum");
+    const active_block_sums = render_graph.get_resource_handle("probe_volume_active_block_sums");
+    const active_block_prefixes = render_graph.get_resource_handle(
+      "probe_volume_active_block_prefixes"
+    );
+    const depth_slot_indices = render_graph.get_resource_handle("probe_volume_depth_slot_indices");
+    const depth_slot_owners = render_graph.get_resource_handle("probe_volume_depth_slot_owners");
+    const depth_slot_last_used = render_graph.get_resource_handle(
+      "probe_volume_depth_slot_last_used"
+    );
+    const depth_slot_free_list = render_graph.get_resource_handle(
+      "probe_volume_depth_slot_free_list"
+    );
+    const depth_slot_allocator_state = render_graph.get_resource_handle(
+      "probe_volume_depth_slot_allocator_state"
+    );
+    const emissive_lights = render_graph.get_resource_handle("probe_volume_emissive_lights");
+    const entity_index_lookup = render_graph.get_resource_handle(
       FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name
     );
-    const sh_probes = accumulator.get_resource("probe_sh_coefficients");
-    const depth_moments = accumulator.get_resource("probe_sh_depth_moments");
-    const msme_stats = accumulator.get_resource("probe_sh_msme_stats");
+    const sh_probes = render_graph.get_resource_handle("probe_sh_coefficients");
+    const depth_moments = render_graph.get_resource_handle("probe_sh_depth_moments");
+    const msme_stats = render_graph.get_resource_handle("probe_sh_msme_stats");
     const materials = shade.material_buffers;
     const textures = shade.texture_pools;
 
     const permutation = permutation_params(context.probe_count);
 
-    this.add_graph_local_pass(render_graph, "probe_volume_upload_params", (graph) => {
+    render_graph.add_pass("probe_volume_upload_params", RenderPassFlags.GraphLocal, {}, (graph) => {
       const primary_origin = this.snapped_origins[0];
 
       this.params_data[0] = context.probe_count;
@@ -546,11 +529,11 @@ export class ProbeVolumeRadianceCache {
       graph.get_physical_buffer(params).write_raw(this.params_data);
     });
 
-    this.add_compute_pass(
-      render_graph,
-      "compact_emissive",
+    render_graph.add_pass(
       "compact_emissive_lights",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.compact_emissive,
         inputs: [
           inputs.tlas_bvh2_bounds,
           inputs.tlas_bvh_info,
@@ -582,22 +565,22 @@ export class ProbeVolumeRadianceCache {
       }
     );
 
-    this.add_compute_pass(
-      render_graph,
-      "reset",
+    render_graph.add_pass(
       "probe_volume_reset",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.reset,
         inputs: [counters, inputs.dense_lights, ray_hits],
         outputs: [counters, ray_hits],
       },
       (graph, frame_data) => graph.get_physical_pass(frame_data.current_pass).dispatch(1, 1, 1)
     );
     if (context.depth_slots_need_reset) {
-      this.add_compute_pass(
-        render_graph,
-        "depth_slots_init",
+      render_graph.add_pass(
         "probe_volume_depth_slots_init",
+        RenderPassFlags.Compute,
         {
+          shader_setup: this.shader_setups.depth_slots_init,
           inputs: [
             depth_slot_indices,
             depth_slot_owners,
@@ -626,11 +609,11 @@ export class ProbeVolumeRadianceCache {
       );
     }
     if (context.cascade_has_scroll) {
-      this.add_compute_pass(
-        render_graph,
-        "scroll_reset",
+      render_graph.add_pass(
         "probe_volume_scroll_reset",
+        RenderPassFlags.Compute,
         {
+          shader_setup: this.shader_setups.scroll_reset,
           inputs: [
             params,
             sh_probes,
@@ -657,11 +640,11 @@ export class ProbeVolumeRadianceCache {
             .dispatch(Math.ceil(context.probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1)
       );
     }
-    this.add_compute_pass(
-      render_graph,
-      "feedback_clear",
+    render_graph.add_pass(
       "probe_volume_feedback_clear",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.feedback_clear,
         inputs: [params, surface_flags],
         outputs: [surface_flags],
       },
@@ -670,11 +653,11 @@ export class ProbeVolumeRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "feedback",
+    render_graph.add_pass(
       "probe_volume_feedback",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.feedback,
         inputs: [params, inputs.hzb_texture, inputs.gbuffer_normal, surface_flags],
         outputs: [surface_flags],
       },
@@ -683,11 +666,11 @@ export class ProbeVolumeRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.width / 8), Math.ceil(context.height / 8), 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "active_mark",
+    render_graph.add_pass(
       "probe_volume_active_mark",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.active_mark,
         inputs: [
           params,
           states,
@@ -703,11 +686,11 @@ export class ProbeVolumeRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "depth_slots_reclaim",
+    render_graph.add_pass(
       "probe_volume_depth_slots_reclaim",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.depth_slots_reclaim,
         inputs: [
           params,
           depth_slot_indices,
@@ -728,11 +711,11 @@ export class ProbeVolumeRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.depth_slot_count / COMPUTE_WORKGROUP_SIZE), 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "active_prefix_sum",
+    render_graph.add_pass(
       "probe_volume_active_prefix_sum",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.active_prefix_sum,
         inputs: [active_flags, active_prefix_sum, active_block_sums],
         outputs: [active_prefix_sum, active_block_sums],
       },
@@ -741,21 +724,21 @@ export class ProbeVolumeRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "active_block_scan",
+    render_graph.add_pass(
       "probe_volume_active_block_prefix_scan",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.active_block_scan,
         inputs: [active_block_sums, active_block_prefixes, counters, params],
         outputs: [active_block_prefixes, counters],
       },
       (graph, frame_data) => graph.get_physical_pass(frame_data.current_pass).dispatch(1, 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "compact",
+    render_graph.add_pass(
       "probe_volume_compact_active_probes",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.compact,
         inputs: [
           params,
           update_indices,
@@ -771,11 +754,11 @@ export class ProbeVolumeRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "depth_slots_allocate",
+    render_graph.add_pass(
       "probe_volume_depth_slots_allocate",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.depth_slots_allocate,
         inputs: [
           params,
           update_indices,
@@ -800,21 +783,21 @@ export class ProbeVolumeRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.probes_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "trace_init",
+    render_graph.add_pass(
       "probe_volume_trace_init",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.trace_init,
         inputs: [params, ray_hits, counters],
         outputs: [ray_hits],
       },
       (graph, frame_data) => graph.get_physical_pass(frame_data.current_pass).dispatch(1, 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "trace_hit",
+    render_graph.add_pass(
       "probe_volume_trace_hits",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.trace_hit,
         inputs: [
           params,
           ray_hits,
@@ -839,29 +822,29 @@ export class ProbeVolumeRadianceCache {
   }
 
   _record_shading_passes(render_graph, context) {
-    const trace = this;
-    const accumulator = this;
     const materials = this.material_buffers;
     const textures = this.texture_pools;
     const lighting = this.scene_lighting_data;
-    const ray_hits = trace.get_resource("probe_volume_ray_hits");
-    this.add_compute_pass(
-      render_graph,
-      "shade",
+    const ray_hits = render_graph.get_resource_handle("probe_volume_ray_hits");
+    render_graph.add_pass(
       "probe_sh_shade_hits",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.shade,
         inputs: [
-          trace.get_resource("probe_volume_params"),
+          render_graph.get_resource_handle("probe_volume_params"),
           lighting.scene_lighting_buffer,
           ray_hits,
-          trace.get_resource("probe_volume_update_indices"),
-          trace.get_resource("probe_volume_states"),
+          render_graph.get_resource_handle("probe_volume_update_indices"),
+          render_graph.get_resource_handle("probe_volume_states"),
           materials.params_gpu_buffer,
           materials.material_offsets_buffer,
           materials.material_palette_buffer,
-          accumulator.get_resource("probe_sh_coefficients"),
-          accumulator.get_resource("probe_sh_depth_moments"),
-          trace.get_resource(FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name),
+          render_graph.get_resource_handle("probe_sh_coefficients"),
+          render_graph.get_resource_handle("probe_sh_depth_moments"),
+          render_graph.get_resource_handle(
+            FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name
+          ),
           context.inputs.entity_transforms,
           textures.albedo,
           textures.normal,
@@ -872,7 +855,7 @@ export class ProbeVolumeRadianceCache {
           textures.specular,
           textures.emission,
           lighting.skybox_image,
-          trace.get_resource("probe_volume_depth_slot_indices"),
+          render_graph.get_resource_handle("probe_volume_depth_slot_indices"),
         ],
         outputs: [ray_hits],
       },
@@ -884,47 +867,46 @@ export class ProbeVolumeRadianceCache {
   }
 
   _record_accumulation_passes(render_graph, context) {
-    const trace = this;
-    const params = trace.get_resource("probe_volume_params");
-    const states = trace.get_resource("probe_volume_states");
-    const ray_hits = trace.get_resource("probe_volume_ray_hits");
-    const history_valid = this.get_resource("probe_sh_history_valid");
-    const sh_probes = this.get_resource("probe_sh_coefficients");
-    const msme_stats = this.get_resource("probe_sh_msme_stats");
-    this.add_compute_pass(
-      render_graph,
-      "accumulate",
+    const params = render_graph.get_resource_handle("probe_volume_params");
+    const states = render_graph.get_resource_handle("probe_volume_states");
+    const ray_hits = render_graph.get_resource_handle("probe_volume_ray_hits");
+    const history_valid = render_graph.get_resource_handle("probe_sh_history_valid");
+    const sh_probes = render_graph.get_resource_handle("probe_sh_coefficients");
+    const msme_stats = render_graph.get_resource_handle("probe_sh_msme_stats");
+    render_graph.add_pass(
       "probe_sh_accumulate",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.accumulate,
         inputs: [
           params,
-          trace.get_resource("probe_volume_update_indices"),
+          render_graph.get_resource_handle("probe_volume_update_indices"),
           ray_hits,
           history_valid,
           sh_probes,
           states,
           msme_stats,
-          trace.get_resource(PROBE_COUNTERS_NAME),
+          render_graph.get_resource_handle(PROBE_COUNTERS_NAME),
         ],
         outputs: [history_valid, sh_probes, states, msme_stats],
       },
       (graph, frame_data) =>
         graph.get_physical_pass(frame_data.current_pass).dispatch(context.probes_per_frame, 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "depth_update",
+    render_graph.add_pass(
       "probe_sh_depth_moments_update",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.depth_update,
         inputs: [
           params,
           ray_hits,
-          trace.get_resource("probe_volume_update_indices"),
+          render_graph.get_resource_handle("probe_volume_update_indices"),
           history_valid,
-          this.get_resource("probe_sh_depth_moments"),
-          trace.get_resource("probe_volume_depth_slot_indices"),
+          render_graph.get_resource_handle("probe_sh_depth_moments"),
+          render_graph.get_resource_handle("probe_volume_depth_slot_indices"),
         ],
-        outputs: [this.get_resource("probe_sh_depth_moments")],
+        outputs: [render_graph.get_resource_handle("probe_sh_depth_moments")],
       },
       (graph, frame_data) =>
         graph
@@ -938,19 +920,19 @@ export class ProbeVolumeRadianceCache {
   }
 
   _record_post_trace_passes(render_graph, context) {
-    const params = this.get_resource("probe_volume_params");
-    const states = this.get_resource("probe_volume_states");
-    this.add_compute_pass(
-      render_graph,
-      "classify",
+    const params = render_graph.get_resource_handle("probe_volume_params");
+    const states = render_graph.get_resource_handle("probe_volume_states");
+    render_graph.add_pass(
       "probe_volume_classify",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.classify,
         inputs: [
           params,
-          this.get_resource("probe_volume_update_indices"),
-          this.get_resource("probe_volume_ray_hits"),
+          render_graph.get_resource_handle("probe_volume_update_indices"),
+          render_graph.get_resource_handle("probe_volume_ray_hits"),
           states,
-          this.get_resource(PROBE_COUNTERS_NAME),
+          render_graph.get_resource_handle(PROBE_COUNTERS_NAME),
         ],
         outputs: [states],
       },
@@ -962,30 +944,29 @@ export class ProbeVolumeRadianceCache {
   }
 
   _record_accumulation_resolve_passes(render_graph, context) {
-    const trace = this;
     const lighting = this.scene_lighting_data;
     const inputs = context.inputs;
-    const sample_output = this.get_resource(
+    const sample_output = render_graph.get_resource_handle(
       context.diffuse_sample_upscale_factor > 1
         ? "probe_sh_diffuse_sample_intermediate"
         : "probe_sh_diffuse_output"
     );
-    this.add_compute_pass(
-      render_graph,
-      "sample",
+    render_graph.add_pass(
       `probe_sh_sample_${context.ping_pong_frame}`,
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.sample,
         inputs: [
-          trace.get_resource("probe_volume_params"),
-          this.get_resource("probe_sh_coefficients"),
-          trace.get_resource("probe_volume_states"),
-          this.get_resource("probe_sh_depth_moments"),
+          render_graph.get_resource_handle("probe_volume_params"),
+          render_graph.get_resource_handle("probe_sh_coefficients"),
+          render_graph.get_resource_handle("probe_volume_states"),
+          render_graph.get_resource_handle("probe_sh_depth_moments"),
           inputs.hzb_texture,
           inputs.gbuffer_normal,
           sample_output,
           lighting.scene_lighting_buffer,
           lighting.skybox_image,
-          trace.get_resource("probe_volume_depth_slot_indices"),
+          render_graph.get_resource_handle("probe_volume_depth_slot_indices"),
         ],
         outputs: [sample_output],
       },
@@ -998,13 +979,13 @@ export class ProbeVolumeRadianceCache {
             1
           )
     );
-    const diffuse_output = this.get_resource(PROBE_VOLUME_DIFFUSE_OUTPUT_NAME);
+    const diffuse_output = render_graph.get_resource_handle(PROBE_VOLUME_DIFFUSE_OUTPUT_NAME);
     if (context.diffuse_sample_upscale_factor > 1) {
-      this.add_compute_pass(
-        render_graph,
-        "resolve",
+      render_graph.add_pass(
         `probe_sh_resolve_${context.ping_pong_frame}`,
+        RenderPassFlags.Compute,
         {
+          shader_setup: this.shader_setups.resolve,
           inputs: [sample_output, inputs.hzb_texture, inputs.gbuffer_normal, diffuse_output],
           outputs: [diffuse_output],
         },
@@ -1017,15 +998,16 @@ export class ProbeVolumeRadianceCache {
 
     let final_diffuse = diffuse_output;
     let read = diffuse_output;
-    let write = this.get_resource("probe_sh_diffuse_atrous_ping");
+    let write = render_graph.get_resource_handle("probe_sh_diffuse_atrous_ping");
     const pass_count =
       context.config.diffuse_atrous_enabled === false
         ? 0
         : Math.max(0, Math.floor(context.config.diffuse_atrous_pass_count || 0));
     for (let pass_index = 0; pass_index < pass_count; pass_index++) {
-      this.add_graph_local_pass(
-        render_graph,
+      render_graph.add_pass(
         `probe_sh_atrous_upload_params_${context.ping_pong_frame}_${pass_index}`,
+        RenderPassFlags.GraphLocal,
+        {},
         (graph) => {
           this.atrous_params_data[0] = Math.pow(2, pass_index);
           this.atrous_params_data[1] = Math.max(
@@ -1038,17 +1020,17 @@ export class ProbeVolumeRadianceCache {
             context.config.diffuse_atrous_luma_sigma || 1
           );
           graph
-            .get_physical_buffer(this.get_resource("probe_sh_diffuse_atrous_params"))
+            .get_physical_buffer(render_graph.get_resource_handle("probe_sh_diffuse_atrous_params"))
             .write_raw(this.atrous_params_data);
         }
       );
-      this.add_compute_pass(
-        render_graph,
-        "atrous",
+      render_graph.add_pass(
         `probe_sh_atrous_${context.ping_pong_frame}_${pass_index}`,
+        RenderPassFlags.Compute,
         {
+          shader_setup: this.shader_setups.atrous,
           inputs: [
-            this.get_resource("probe_sh_diffuse_atrous_params"),
+            render_graph.get_resource_handle("probe_sh_diffuse_atrous_params"),
             read,
             inputs.depth_texture,
             inputs.gbuffer_normal,
@@ -1064,9 +1046,9 @@ export class ProbeVolumeRadianceCache {
       final_diffuse = write;
       read = write;
       write =
-        write === this.get_resource("probe_sh_diffuse_atrous_ping")
-          ? this.get_resource("probe_sh_diffuse_atrous_pong")
-          : this.get_resource("probe_sh_diffuse_atrous_ping");
+        write === render_graph.get_resource_handle("probe_sh_diffuse_atrous_ping")
+          ? render_graph.get_resource_handle("probe_sh_diffuse_atrous_pong")
+          : render_graph.get_resource_handle("probe_sh_diffuse_atrous_ping");
     }
     this.final_diffuse_output_name = render_graph.get_resource_config(final_diffuse).name;
   }
@@ -1074,7 +1056,6 @@ export class ProbeVolumeRadianceCache {
   _record_accumulation_debug_passes(render_graph, context) {
     if (context.debug_view !== DebugDrawType.GI_Probes) return null;
 
-    const trace = this;
     const output = render_graph.create_image({
       name: "probe_sh_debug_output",
       format: "rgba16float",
@@ -1083,16 +1064,16 @@ export class ProbeVolumeRadianceCache {
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: context.force_recreate,
     });
-    this.add_compute_pass(
-      render_graph,
-      "debug",
+    render_graph.add_pass(
       "probe_sh_debug",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.debug,
         inputs: [
-          trace.get_resource("probe_volume_params"),
-          this.get_resource("probe_sh_coefficients"),
-          trace.get_resource("probe_volume_states"),
-          trace.get_resource("probe_volume_surface_flags"),
+          render_graph.get_resource_handle("probe_volume_params"),
+          render_graph.get_resource_handle("probe_sh_coefficients"),
+          render_graph.get_resource_handle("probe_volume_states"),
+          render_graph.get_resource_handle("probe_volume_surface_flags"),
           context.inputs.scene_color,
           context.inputs.depth_texture,
           output,

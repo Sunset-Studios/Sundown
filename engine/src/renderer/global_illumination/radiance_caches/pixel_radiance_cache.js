@@ -32,7 +32,6 @@ export class PerPixelRadianceCache {
       resolve: compute_shader("gi/pixel_upscale_final.wgsl"),
       atrous: compute_shader("gi/ddgi_atrous_diffuse.wgsl"),
     };
-    this.render_graph = null;
     this.final_diffuse_output_name = PIXEL_RADIANCE_CACHE_DIFFUSE_OUTPUT_NAME;
     this.frame_context = null;
     this.params_data = new Float32Array(12);
@@ -43,7 +42,6 @@ export class PerPixelRadianceCache {
       throw new Error("Per-pixel radiance cache requires a surface radiance cache");
     }
 
-    this.render_graph = render_graph;
     this.frame_context = context;
     this._setup_trace_resources(render_graph, context);
     this._setup_shading_resources(render_graph, context);
@@ -51,27 +49,6 @@ export class PerPixelRadianceCache {
     this._record_trace_passes(render_graph, context);
     this._record_shading_passes(render_graph, context, surface_cache);
     this._record_accumulation_passes(render_graph, context);
-  }
-
-  get_resource(name) {
-    return this.render_graph?.get_resource_handle(name) ?? null;
-  }
-
-  add_compute_pass(render_graph, semantic, name, parameters, callback) {
-    const shader_setup = this.shader_setups[semantic];
-    if (!shader_setup) {
-      throw new Error(`Per-pixel radiance cache does not provide a shader for '${semantic}'`);
-    }
-    return render_graph.add_pass(
-      name,
-      RenderPassFlags.Compute,
-      { ...parameters, shader_setup },
-      callback
-    );
-  }
-
-  add_graph_local_pass(render_graph, name, callback) {
-    return render_graph.add_pass(name, RenderPassFlags.GraphLocal, {}, callback);
   }
 
   _setup_trace_resources(render_graph, context) {
@@ -249,18 +226,18 @@ export class PerPixelRadianceCache {
 
   _record_trace_passes(render_graph, context) {
     const inputs = context.inputs;
-    const params = this.get_resource("pixel_trace_params");
-    const counters = this.get_resource("pixel_trace_counters");
-    const emissive_lights = this.get_resource("pixel_trace_emissive_lights");
-    const entity_index_lookup = this.get_resource(
+    const params = render_graph.get_resource_handle("pixel_trace_params");
+    const counters = render_graph.get_resource_handle("pixel_trace_counters");
+    const emissive_lights = render_graph.get_resource_handle("pixel_trace_emissive_lights");
+    const entity_index_lookup = render_graph.get_resource_handle(
       FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name
     );
-    const path_state = this.get_resource("gi_pixel_path_state");
-    const ray_queue = this.get_resource("gi_pixel_ray_queue");
+    const path_state = render_graph.get_resource_handle("gi_pixel_path_state");
+    const ray_queue = render_graph.get_resource_handle("gi_pixel_ray_queue");
     const materials = this.material_buffers;
     const textures = this.texture_pools;
 
-    this.add_graph_local_pass(render_graph, "pixel_trace_upload_params", (graph) => {
+    render_graph.add_pass("pixel_trace_upload_params", RenderPassFlags.GraphLocal, {}, (graph) => {
       this.params_data[0] = context.config.screen_ray_count;
       this.params_data[1] = context.total_pixels;
       this.params_data[2] = context.frame_index;
@@ -276,11 +253,11 @@ export class PerPixelRadianceCache {
       graph.get_physical_buffer(params).write_raw(this.params_data);
     });
 
-    this.add_compute_pass(
-      render_graph,
-      "compact_emissive",
+    render_graph.add_pass(
       "pixel_trace_compact_emissive_lights",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.compact_emissive,
         inputs: [
           inputs.tlas_bvh2_bounds,
           inputs.tlas_bvh_info,
@@ -305,19 +282,22 @@ export class PerPixelRadianceCache {
           .dispatch(Math.ceil(Math.floor(bounds.config.size / 32) / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
-    this.add_compute_pass(
-      render_graph,
-      "reset",
+    render_graph.add_pass(
       "pixel_trace_reset_counters",
-      { inputs: [counters, inputs.dense_lights], outputs: [counters] },
+      RenderPassFlags.Compute,
+      {
+        shader_setup: this.shader_setups.reset,
+        inputs: [counters, inputs.dense_lights],
+        outputs: [counters],
+      },
       (graph, frame_data) => graph.get_physical_pass(frame_data.current_pass).dispatch(1, 1, 1)
     );
 
-    this.add_compute_pass(
-      render_graph,
-      "trace_init",
+    render_graph.add_pass(
       `pixel_trace_init_${context.ping_pong_frame}`,
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.trace_init,
         inputs: [
           params,
           counters,
@@ -330,7 +310,7 @@ export class PerPixelRadianceCache {
           inputs.gbuffer_albedo,
           inputs.gbuffer_smra,
           inputs.gbuffer_motion_emissive,
-          this.get_resource(Texture.default_blue_noise().config.name),
+          render_graph.get_resource_handle(Texture.default_blue_noise().config.name),
         ],
         outputs: [path_state, ray_queue],
       },
@@ -339,11 +319,11 @@ export class PerPixelRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.rays_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "trace_hit",
+    render_graph.add_pass(
       "pixel_trace_hits",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.trace_hit,
         inputs: [
           params,
           counters,
@@ -367,25 +347,26 @@ export class PerPixelRadianceCache {
   }
 
   _record_shading_passes(render_graph, context, surface) {
-    const trace = this;
     const materials = this.material_buffers;
     const textures = this.texture_pools;
     const lighting = this.scene_lighting_data;
-    const path_state = trace.get_resource("gi_pixel_path_state");
-    this.add_compute_pass(
-      render_graph,
-      "shade",
+    const path_state = render_graph.get_resource_handle("gi_pixel_path_state");
+    render_graph.add_pass(
       "pixel_rgb_shade_hits",
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.shade,
         inputs: [
-          trace.get_resource("pixel_trace_params"),
+          render_graph.get_resource_handle("pixel_trace_params"),
           lighting.scene_lighting_buffer,
           path_state,
           materials.params_gpu_buffer,
           materials.material_offsets_buffer,
           materials.material_palette_buffer,
-          surface.get_resource("surface_cache_elements"),
-          this.get_resource(FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name),
+          render_graph.get_resource_handle("surface_cache_elements"),
+          render_graph.get_resource_handle(
+            FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name
+          ),
           textures.albedo,
           textures.normal,
           textures.roughness,
@@ -395,9 +376,9 @@ export class PerPixelRadianceCache {
           textures.specular,
           textures.emission,
           lighting.skybox_image,
-          surface.get_resource("surface_cache_params"),
-          surface.get_resource("surface_cache_sh"),
-          surface.get_resource("surface_cache_hashmap_entries"),
+          render_graph.get_resource_handle("surface_cache_params"),
+          render_graph.get_resource_handle("surface_cache_sh"),
+          render_graph.get_resource_handle("surface_cache_hashmap_entries"),
         ],
         outputs: [path_state],
       },
@@ -409,30 +390,29 @@ export class PerPixelRadianceCache {
   }
 
   _record_accumulation_passes(render_graph, context) {
-    const trace = this;
     const inputs = context.inputs;
-    const params = trace.get_resource("pixel_trace_params");
-    const path_state = trace.get_resource("gi_pixel_path_state");
+    const params = render_graph.get_resource_handle("pixel_trace_params");
+    const path_state = render_graph.get_resource_handle("gi_pixel_path_state");
     const frame = context.ping_pong_frame;
-    const temporal_prev = this.get_resource(`gi_temporal_reservoir_${frame}`);
-    const temporal_curr = this.get_resource(`gi_temporal_reservoir_${1 - frame}`);
-    const spatial_curr = this.get_resource(`gi_spatial_reservoir_${1 - frame}`);
-    const spatial_stage = this.get_resource("gi_spatial_reservoir_stage");
+    const temporal_prev = render_graph.get_resource_handle(`gi_temporal_reservoir_${frame}`);
+    const temporal_curr = render_graph.get_resource_handle(`gi_temporal_reservoir_${1 - frame}`);
+    const spatial_curr = render_graph.get_resource_handle(`gi_spatial_reservoir_${1 - frame}`);
+    const spatial_stage = render_graph.get_resource_handle("gi_spatial_reservoir_stage");
     const previous = {
-      direct: this.get_resource(`gi_low_radiance_direct_${frame}`),
-      diffuse: this.get_resource(`gi_low_radiance_indirect_diffuse_${frame}`),
-      specular: this.get_resource(`gi_low_radiance_indirect_specular_${frame}`),
+      direct: render_graph.get_resource_handle(`gi_low_radiance_direct_${frame}`),
+      diffuse: render_graph.get_resource_handle(`gi_low_radiance_indirect_diffuse_${frame}`),
+      specular: render_graph.get_resource_handle(`gi_low_radiance_indirect_specular_${frame}`),
     };
     const current = {
-      direct: this.get_resource(`gi_low_radiance_direct_${1 - frame}`),
-      diffuse: this.get_resource(`gi_low_radiance_indirect_diffuse_${1 - frame}`),
-      specular: this.get_resource(`gi_low_radiance_indirect_specular_${1 - frame}`),
+      direct: render_graph.get_resource_handle(`gi_low_radiance_direct_${1 - frame}`),
+      diffuse: render_graph.get_resource_handle(`gi_low_radiance_indirect_diffuse_${1 - frame}`),
+      specular: render_graph.get_resource_handle(`gi_low_radiance_indirect_specular_${1 - frame}`),
     };
-    this.add_compute_pass(
-      render_graph,
-      "temporal",
+    render_graph.add_pass(
       `pixel_rgb_temporal_reservoir_${frame}`,
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.temporal,
         inputs: [
           params,
           path_state,
@@ -451,11 +431,11 @@ export class PerPixelRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.gi_width / 16), Math.ceil(context.gi_height / 16), 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "spatial_wide",
+    render_graph.add_pass(
       `pixel_rgb_spatial_reservoir_wide_${frame}`,
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.spatial_wide,
         inputs: [
           params,
           temporal_curr,
@@ -471,11 +451,11 @@ export class PerPixelRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.gi_width / 16), Math.ceil(context.gi_height / 16), 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "spatial_narrow",
+    render_graph.add_pass(
       `pixel_rgb_spatial_reservoir_narrow_${frame}`,
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.spatial_narrow,
         inputs: [
           params,
           spatial_stage,
@@ -491,11 +471,11 @@ export class PerPixelRadianceCache {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.gi_width / 16), Math.ceil(context.gi_height / 16), 1)
     );
-    this.add_compute_pass(
-      render_graph,
-      "accumulate",
+    render_graph.add_pass(
       `pixel_rgb_accumulate_${frame}`,
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.accumulate,
         inputs: [
           params,
           spatial_curr,
@@ -519,14 +499,18 @@ export class PerPixelRadianceCache {
           .dispatch(Math.ceil(context.gi_width / 8), Math.ceil(context.gi_height / 8), 1)
     );
 
-    const direct_output = this.get_resource(PIXEL_RADIANCE_CACHE_DIRECT_OUTPUT_NAME);
-    const diffuse_output = this.get_resource(PIXEL_RADIANCE_CACHE_DIFFUSE_OUTPUT_NAME);
-    const specular_output = this.get_resource(PIXEL_RADIANCE_CACHE_SPECULAR_OUTPUT_NAME);
-    this.add_compute_pass(
-      render_graph,
-      "resolve",
+    const direct_output = render_graph.get_resource_handle(PIXEL_RADIANCE_CACHE_DIRECT_OUTPUT_NAME);
+    const diffuse_output = render_graph.get_resource_handle(
+      PIXEL_RADIANCE_CACHE_DIFFUSE_OUTPUT_NAME
+    );
+    const specular_output = render_graph.get_resource_handle(
+      PIXEL_RADIANCE_CACHE_SPECULAR_OUTPUT_NAME
+    );
+    render_graph.add_pass(
       `pixel_rgb_resolve_${frame}`,
+      RenderPassFlags.Compute,
       {
+        shader_setup: this.shader_setups.resolve,
         inputs: [
           params,
           current.direct,
@@ -549,15 +533,16 @@ export class PerPixelRadianceCache {
 
     let final_diffuse = diffuse_output;
     let read = diffuse_output;
-    let write = this.get_resource("gi_diffuse_atrous_ping");
+    let write = render_graph.get_resource_handle("gi_diffuse_atrous_ping");
     const pass_count =
       context.config.diffuse_atrous_enabled === false
         ? 0
         : Math.max(0, Math.floor(context.config.diffuse_atrous_pass_count || 0));
     for (let pass_index = 0; pass_index < pass_count; pass_index++) {
-      this.add_graph_local_pass(
-        render_graph,
+      render_graph.add_pass(
         `pixel_rgb_atrous_upload_params_${frame}_${pass_index}`,
+        RenderPassFlags.GraphLocal,
+        {},
         (graph) => {
           this.atrous_params_data[0] = Math.pow(2, pass_index);
           this.atrous_params_data[1] = Math.max(
@@ -570,17 +555,17 @@ export class PerPixelRadianceCache {
             context.config.diffuse_atrous_luma_sigma || 1
           );
           graph
-            .get_physical_buffer(this.get_resource("gi_diffuse_atrous_params"))
+            .get_physical_buffer(render_graph.get_resource_handle("gi_diffuse_atrous_params"))
             .write_raw(this.atrous_params_data);
         }
       );
-      this.add_compute_pass(
-        render_graph,
-        "atrous",
+      render_graph.add_pass(
         `pixel_rgb_atrous_${frame}_${pass_index}`,
+        RenderPassFlags.Compute,
         {
+          shader_setup: this.shader_setups.atrous,
           inputs: [
-            this.get_resource("gi_diffuse_atrous_params"),
+            render_graph.get_resource_handle("gi_diffuse_atrous_params"),
             read,
             inputs.depth_texture,
             inputs.gbuffer_normal,
@@ -596,9 +581,9 @@ export class PerPixelRadianceCache {
       final_diffuse = write;
       read = write;
       write =
-        write === this.get_resource("gi_diffuse_atrous_ping")
-          ? this.get_resource("gi_diffuse_atrous_pong")
-          : this.get_resource("gi_diffuse_atrous_ping");
+        write === render_graph.get_resource_handle("gi_diffuse_atrous_ping")
+          ? render_graph.get_resource_handle("gi_diffuse_atrous_pong")
+          : render_graph.get_resource_handle("gi_diffuse_atrous_ping");
     }
     this.final_diffuse_output_name = render_graph.get_resource_config(final_diffuse).name;
   }

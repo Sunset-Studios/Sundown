@@ -85,13 +85,13 @@ export class DDGI {
     });
     this.config_resource_rebuild_pending = false;
 
-    this.final_gi_texture_direct = this.radiance_cache.get_resource(
+    this.final_gi_texture_direct = render_graph.get_resource_handle(
       PROBE_VOLUME_DIRECT_OUTPUT_NAME
     );
-    this.final_gi_texture_indirect_diffuse = this.radiance_cache.get_resource(
+    this.final_gi_texture_indirect_diffuse = render_graph.get_resource_handle(
       this.radiance_cache.final_diffuse_output_name
     );
-    this.final_gi_texture_indirect_specular = this.radiance_cache.get_resource(
+    this.final_gi_texture_indirect_specular = render_graph.get_resource_handle(
       PROBE_VOLUME_SPECULAR_OUTPUT_NAME
     );
   }
