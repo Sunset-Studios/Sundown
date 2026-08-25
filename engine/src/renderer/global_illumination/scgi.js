@@ -36,7 +36,6 @@ export class SCGI {
     max_history_samples: 256,
     mature_patch_update_period: 4,
     maximum_ray_count_per_frame: 131072,
-    screen_reconstruction_enabled: true,
     temporal_response: 0.001,
     temporal_max_history_frames: 64,
     temporal_depth_threshold: 0.03,
@@ -100,27 +99,25 @@ export class SCGI {
       return;
     }
 
-    const frame_context = this.frame_context;
-    const inputs = frame_context.inputs;
-    frame_context.config = this.config;
-    frame_context.width = width;
-    frame_context.height = height;
-    frame_context.force_recreate = force_recreate;
-    inputs.depth_texture = depth_texture;
-    inputs.prev_depth_texture = prev_depth_texture;
-    inputs.gbuffer_normal = gbuffer_normal;
-    inputs.gbuffer_normal_prev = gbuffer_normal_prev;
-    inputs.gbuffer_motion_emissive = gbuffer_motion_emissive;
-    inputs.tlas_bvh2_bounds = tlas_bvh2_bounds;
-    inputs.tlas_bvh_info = tlas_bvh_info;
-    inputs.blas_bvh2_nodes = blas_bvh2_nodes;
-    inputs.blas_directory = blas_directory;
-    inputs.entity_transforms = entity_transforms;
-    inputs.compact_transforms = compact_transforms;
-    inputs.index_buffer = index_buffer;
-    inputs.dense_lights = dense_lights;
+    this.frame_context.config = this.config;
+    this.frame_context.width = width;
+    this.frame_context.height = height;
+    this.frame_context.force_recreate = force_recreate;
+    this.frame_context.inputs.depth_texture = depth_texture;
+    this.frame_context.inputs.prev_depth_texture = prev_depth_texture;
+    this.frame_context.inputs.gbuffer_normal = gbuffer_normal;
+    this.frame_context.inputs.gbuffer_normal_prev = gbuffer_normal_prev;
+    this.frame_context.inputs.gbuffer_motion_emissive = gbuffer_motion_emissive;
+    this.frame_context.inputs.tlas_bvh2_bounds = tlas_bvh2_bounds;
+    this.frame_context.inputs.tlas_bvh_info = tlas_bvh_info;
+    this.frame_context.inputs.blas_bvh2_nodes = blas_bvh2_nodes;
+    this.frame_context.inputs.blas_directory = blas_directory;
+    this.frame_context.inputs.entity_transforms = entity_transforms;
+    this.frame_context.inputs.compact_transforms = compact_transforms;
+    this.frame_context.inputs.index_buffer = index_buffer;
+    this.frame_context.inputs.dense_lights = dense_lights;
 
-    this.radiance_cache.add_passes(render_graph, frame_context);
+    this.radiance_cache.add_passes(render_graph, this.frame_context);
 
     this.final_gi_texture_direct = render_graph.get_resource_handle(
       SURFACE_CACHE_DIRECT_OUTPUT_NAME

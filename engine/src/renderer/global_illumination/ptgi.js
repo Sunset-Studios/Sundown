@@ -26,7 +26,6 @@ export class PTGI {
     indirect_boost: 1.0,
     max_ray_length: 128.0,
     max_emissive_lights: 32768,
-    screen_reconstruction_enabled: false,
     diffuse_atrous_enabled: false,
     diffuse_atrous_pass_count: 3,
     diffuse_atrous_phi_depth: 0.04,
