@@ -21,6 +21,7 @@ import { ComputeTaskQueue } from "../task_queues/compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../task_queues/compute_raster_task_queue.js";
 import { CullingPipeline } from "../pipelines/culling_pipeline.js";
 import { DeferredDebugPipeline } from "../pipelines/deferred_debug_pipeline.js";
+import { DeferredLightingPipeline } from "../pipelines/deferred_lighting_pipeline.js";
 import { EnvironmentPipeline } from "../pipelines/environment_pipeline.js";
 import { GBufferTargetsPipeline } from "../pipelines/gbuffer_targets_pipeline.js";
 import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipeline.js";
@@ -129,36 +130,6 @@ const compact_lights_shader_setup = {
   },
 };
 
-const deferred_lighting_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "deferred_lighting.wgsl",
-      defines: {
-        GI_ENABLED: false,
-        SHADOWS_ENABLED: false,
-        AO_ENABLED: false,
-      },
-    },
-    fragment: {
-      path: "deferred_lighting.wgsl",
-      defines: {
-        GI_ENABLED: false,
-        SHADOWS_ENABLED: false,
-        AO_ENABLED: false,
-      },
-    },
-  },
-};
-const post_lighting_image_config = {
-  name: "post_lighting",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-
 const fullscreen_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "fullscreen.wgsl" },
@@ -179,7 +150,6 @@ const clear_g_buffer_pass_name = "clear_g_buffer";
 const skydome_pass_name = "skydome_pass";
 const transparency_composite_pass_name = "transparency_composite";
 const reset_g_buffer_targets_pass_name = "reset_g_buffer_targets";
-const lighting_pass_name = "lighting_pass";
 const fullscreen_present_pass_name = "fullscreen_present_pass";
 
 // Debug shader setups for AS-VSM debug views
@@ -199,12 +169,12 @@ export class DeferredShadingStrategy {
   taa = null;
   as_vsm = null;
   debug_pipeline = null;
+  deferred_lighting_pipeline = null;
   gbuffer_targets_pipeline = null;
   environment_pipeline = null;
   scene_voxelizer = null;
   scene_voxelizer_outputs = null;
   scene_voxel_grid_origin = new Float32Array(3);
-  previous_gi_lighting_enabled = null;
 
   get_scene_data_handlers() {
     this.svlm ??= new SparseVolumetricLightmapper();
@@ -213,6 +183,7 @@ export class DeferredShadingStrategy {
 
   setup(render_graph) {
     this.debug_pipeline ??= new DeferredDebugPipeline();
+    this.deferred_lighting_pipeline ??= new DeferredLightingPipeline();
     this.culling_pipeline ??= new CullingPipeline();
     this.environment_pipeline ??= new EnvironmentPipeline();
     this.gbuffer_targets_pipeline ??= new GBufferTargetsPipeline();
@@ -911,134 +882,76 @@ export class DeferredShadingStrategy {
       const gi_specular_texture = reflections_enabled
         ? this.reflections.reflection_texture
         : this.gi.final_gi_texture_indirect_specular;
-      const gi_lighting_enabled =
-        gi_enabled &&
-        this.gi.final_gi_texture_direct != null &&
-        this.gi.final_gi_texture_indirect_diffuse != null &&
-        gi_specular_texture != null;
-
-      if (
-        this.previous_gi_lighting_enabled != null &&
-        this.previous_gi_lighting_enabled !== gi_lighting_enabled
-      ) {
-        render_graph.recreate_pipeline_states();
-      }
-      this.previous_gi_lighting_enabled = gi_lighting_enabled;
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 PASS: Deferred Lighting                                                 │
       // │    Combine G-Buffer data with lights to produce final shaded results      │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        deferred_lighting_shader_setup.force_recreate = this.force_recreate;
-
-        post_lighting_image_config.width = image_extent.width;
-        post_lighting_image_config.height = image_extent.height;
-        post_lighting_image_config.force = this.force_recreate;
-        post_lighting_image_desc = render_graph.create_image(post_lighting_image_config);
-
-        const lighting_inputs = [
-          skybox_image,
-          main_albedo_image,
-          main_smra_image,
-          main_normal_image,
-          main_motion_emissive_image,
-          main_depth_image,
-          dense_lights,
-        ];
-
-        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GI_ENABLED =
-          gi_lighting_enabled;
-        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GI_ENABLED =
-          gi_lighting_enabled;
-
-        if (gi_lighting_enabled) {
-          lighting_inputs.push(
-            this.gi.final_gi_texture_direct,
-            this.gi.final_gi_texture_indirect_diffuse,
-            gi_specular_texture
-          );
-        }
-
-        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.SHADOWS_ENABLED =
-          shadows_enabled;
-        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.SHADOWS_ENABLED =
-          shadows_enabled;
-
-        if (shadows_enabled) {
-          lighting_inputs.push(
-            this.as_vsm.shadow_atlas_buf,
-            this.as_vsm.page_table,
-            this.as_vsm.page_offset,
-            this.as_vsm.settings_buf
-          );
-        }
-
-        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.AO_ENABLED = ao_enabled;
-        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.AO_ENABLED = ao_enabled;
-
-        if (ao_enabled) {
-          lighting_inputs.push(this.ao.ao_texture, this.ao.bent_normal_texture);
-        }
-
-        render_graph.add_pass(
-          lighting_pass_name,
-          RenderPassFlags.Graphics,
-          {
-            inputs: lighting_inputs,
-            outputs: [post_lighting_image_desc],
-            shader_setup: deferred_lighting_shader_setup,
-            // Some implementations alternate history targets; buffer bindings while reusing one pipeline layout.
-            bind_group_cache_key: `${lighting_pass_name}_${current_buffered_frame}`,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            draw_quad(pass);
-          }
-        );
-      }
+      post_lighting_image_desc = this.deferred_lighting_pipeline.add_pass(render_graph, {
+        image_extent,
+        current_buffered_frame,
+        force_recreate: this.force_recreate,
+        skybox_image,
+        main_albedo_image,
+        main_smra_image,
+        main_normal_image,
+        main_motion_emissive_image,
+        main_depth_image,
+        dense_lights,
+        gi_enabled,
+        gi_direct_texture: this.gi.final_gi_texture_direct,
+        gi_diffuse_texture: this.gi.final_gi_texture_indirect_diffuse,
+        gi_specular_texture,
+        shadows_enabled,
+        shadow_atlas: this.as_vsm.shadow_atlas_buf,
+        shadow_page_table: this.as_vsm.page_table,
+        shadow_page_offset: this.as_vsm.page_offset,
+        shadow_settings: this.as_vsm.settings_buf,
+        ao_enabled,
+        ao_texture: this.ao.ao_texture,
+        bent_normal_texture: this.ao.bent_normal_texture,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🔍 PASS: GI Debug Visualizations                                          │
       // │    - Surface Cache: Shows spatial hash cached radiance                      │
       // │    (displayed via debug overlay, doesn't affect main rendering pipeline)  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (
-        gi_lighting_enabled &&
-        (debug_view === DebugDrawType.GI_SurfaceCache || debug_view === DebugDrawType.GI_Probes)
-      ) {
-        this.gi.add_debug_passes(
-          render_graph,
-          image_extent.width,
-          image_extent.height,
-          main_normal_image,
-          main_depth_image,
-          post_lighting_image_desc,
-          debug_view,
-          this.force_recreate
-        );
-      }
-
-      if (__DEV__ && debug_view === DebugDrawType.SVLM_Probes) {
-        // Probe debug is generated after lighting so it can composite analytic
-        // probe spheres over the final scene color without touching GI shading.
-        this.svlm.add_probe_debug_passes(
-          render_graph,
-          image_extent.width,
-          image_extent.height,
-          main_depth_image,
-          post_lighting_image_desc,
-          this.force_recreate
-        );
-      }
-
-      if (scene_voxelizer_enabled && debug_view === DebugDrawType.SceneVoxelization) {
-        scene_voxelizer_debug_image = this.scene_voxelizer.add_debug_passes(render_graph, {
-          width: image_extent.width,
-          height: image_extent.height,
-          scene_color: post_lighting_image_desc,
-          force_recreate: this.force_recreate,
-        });
+      if (__DEV__) {
+        if (debug_view === DebugDrawType.GI_SurfaceCache || debug_view === DebugDrawType.GI_Probes) {
+          this.gi.add_debug_passes(
+            render_graph,
+            image_extent.width,
+            image_extent.height,
+            main_normal_image,
+            main_depth_image,
+            post_lighting_image_desc,
+            debug_view,
+            this.force_recreate
+          );
+        }
+  
+        if (debug_view === DebugDrawType.SVLM_Probes) {
+          // Probe debug is generated after lighting so it can composite analytic
+          // probe spheres over the final scene color without touching GI shading.
+          this.svlm.add_probe_debug_passes(
+            render_graph,
+            image_extent.width,
+            image_extent.height,
+            main_depth_image,
+            post_lighting_image_desc,
+            this.force_recreate
+          );
+        }
+  
+        if (debug_view === DebugDrawType.SceneVoxelization) {
+          scene_voxelizer_debug_image = this.scene_voxelizer.add_debug_passes(render_graph, {
+            width: image_extent.width,
+            height: image_extent.height,
+            scene_color: post_lighting_image_desc,
+            force_recreate: this.force_recreate,
+          });
+        }
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -1147,7 +1060,7 @@ export class DeferredShadingStrategy {
       const post_processed_image = PostProcessStack.compile_passes(
         0,
         render_graph,
-        post_lighting_image_config,
+        this.deferred_lighting_pipeline.output_image_config,
         curr_post_bloom,
         main_depth_image,
         main_normal_image
@@ -1316,13 +1229,5 @@ export class DeferredShadingStrategy {
       image_extent,
       this.force_recreate
     );
-  }
-
-  _get_texture_pool(render_graph, pool_key) {
-    const fallback_texture = TextureArrayPools.get_fallback_view();
-    const texture =
-      ResourceCache.get().fetch(CacheTypes.IMAGE, Name.from(`texture_pool_${pool_key}`)) ||
-      fallback_texture;
-    return render_graph.register_image(texture.config.name);
   }
 }

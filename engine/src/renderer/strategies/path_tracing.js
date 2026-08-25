@@ -728,12 +728,4 @@ export class PathTracingStrategy {
     this.culling_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
     this.visibility_buffer_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
   }
-
-  _get_texture_pool(render_graph, pool_key) {
-    const fallback_texture = TextureArrayPools.get_fallback_view();
-    const texture =
-      ResourceCache.get().fetch(CacheTypes.IMAGE, Name.from(`texture_pool_${pool_key}`)) ||
-      fallback_texture;
-    return render_graph.register_image(texture.config.name);
-  };
 }
