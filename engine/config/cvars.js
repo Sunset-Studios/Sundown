@@ -70,7 +70,6 @@ export const engine_cvar_config = Object.freeze({
       default_value: GIStrategyType.SCGI,
       values: {
         ddgi: GIStrategyType.DDGI,
-        ptgi: GIStrategyType.PTGI,
         scgi: GIStrategyType.SCGI,
         svlm: GIStrategyType.SVLM,
       },

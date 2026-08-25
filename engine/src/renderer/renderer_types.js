@@ -121,10 +121,9 @@ export const RenderStrategyType = Object.freeze({
  * @enum {number}
  */
 export const GIStrategyType = Object.freeze({
-  PTGI: 0,
-  DDGI: 1,
-  SVLM: 2,
-  SCGI: 3,
+  DDGI: 0,
+  SVLM: 1,
+  SCGI: 2,
 });
 
 /**

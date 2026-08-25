@@ -34,7 +34,7 @@ Some of the current (code) features include:
 * ⚡ Per-mesh triangle BLAS BVH for software ray tracing
 * ⚡ Pseudo-bindless texture pools and material tables 
 * ⚡ Software (Compute) reference path tracer with multi-bounce support
-* ⚡ 2 out of the box GI solutions: Path Traced Global Illumination (PTGI) using ReSTIR GI and DDGI
+* ⚡ 2 out of the box GI solutions: SCGI (Surface Cache GI) and DDGI (Probe-based Dynammic Diffuse GI)
 * ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs, running frames and more.
 
 Sundown also includes a simple but capable ML framework for running real-time AI experiments:

@@ -52,7 +52,6 @@ import {
 import { draw_quad } from "../draw_helpers.js";
 
 // Specialized renderer components
-import { PTGI } from "../global_illumination/ptgi.js";
 import { SCGI } from "../global_illumination/scgi.js";
 import { DDGI } from "../global_illumination/ddgi.js";
 import { SVLMBakedGI } from "../global_illumination/svlm_baked_gi.js";
@@ -232,10 +231,6 @@ export class DeferredShadingStrategy {
       case GIStrategyType.SCGI:
         this.gi = new SCGI();
         break;
-      case GIStrategyType.PTGI:
-      default:
-        this.gi = new PTGI();
-        break;
     }
     this.ao =
       Renderer.get().get_ao_strategy_type() === AOStrategyType.RTAO ? new RTAO() : new VBAO();
@@ -310,9 +305,8 @@ export class DeferredShadingStrategy {
       const shadows_enabled = renderer.is_shadows_enabled();
       const gi_enabled = renderer.is_gi_enabled();
       const gi_strategy_type = renderer.get_gi_strategy_type();
-      const gi_has_builtin_specular = gi_strategy_type === GIStrategyType.PTGI;
       const ao_enabled = renderer.is_ao_enabled();
-      const reflections_enabled = renderer.is_reflection_enabled() && !gi_has_builtin_specular;
+      const reflections_enabled = renderer.is_reflection_enabled();
       const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
       const taa_enabled = renderer.is_taa_enabled();
       const scene_voxelizer_enabled = renderer.is_scene_voxelizer_enabled();

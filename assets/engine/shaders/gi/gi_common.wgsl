@@ -107,7 +107,7 @@ struct AOPixelPathState {
 // ─────────────────────────────────────────────────────────────────────────────
 // GI resolution helpers
 // 
-// We run PTGI at a reduced internal resolution (gi_resolution_*), while
+// We run GI at a reduced internal resolution (gi_resolution_*), while
 // sampling geometry from the full-resolution GBuffer (full_resolution_*).
 // This helper maps a GI pixel coordinate to a representative full-res pixel
 // coordinate inside its upscale_factor×upscale_factor footprint.

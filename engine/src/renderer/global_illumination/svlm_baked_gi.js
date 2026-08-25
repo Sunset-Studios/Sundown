@@ -45,7 +45,7 @@ const black_image_config = {
 /**
  * Runtime GI strategy for the GPU-resident SVLM bake artifact.
  *
- * Unlike DDGI/PTGI, this performs no tracing, temporal accumulation, or cache
+ * Unlike DDGI/SCGI, this performs no runtime tracing, temporal accumulation, or cache
  * maintenance. A reduced-resolution compute pass traverses the baked hierarchy
  * and uses DDGI-compatible trilinear SH interpolation, followed by DDGI's
  * depth/normal-aware full-resolution resolve.
