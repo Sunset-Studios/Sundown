@@ -101,7 +101,7 @@ export class ComputeRasterTaskQueue {
             inputs: [task.points, task.connections, ...pipeline_outputs, ...task.inputs],
             outputs: pipeline_outputs,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(task.dispatch_x, task.dispatch_y, task.dispatch_z);
           }

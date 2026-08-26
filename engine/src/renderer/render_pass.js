@@ -112,14 +112,6 @@ export class RenderPass {
     this.pass.setPipeline(pipeline.pipeline);
   }
 
-  set_attachments(attachments) {
-    this.config.attachments = attachments;
-  }
-
-  set_depth_stencil_attachment(attachment) {
-    this.config.depth_stencil_attachment = attachment;
-  }
-
   set_viewport(viewport) {
     this.config.viewport = viewport;
   }

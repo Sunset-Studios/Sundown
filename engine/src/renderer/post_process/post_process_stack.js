@@ -169,7 +169,7 @@ export class PostProcessStack {
                 pass.rg_config.name,
                 RenderPassFlags.Graphics,
                 pass.rg_config,
-                (graph, frame_data, encoder) => {
+                (graph, frame_data) => {
                     const physical_pass = graph.get_physical_pass(frame_data.current_pass);
                     draw_quad(physical_pass);
                 }
@@ -190,4 +190,4 @@ export class PostProcessStack {
         this.view_pass_order.clear();
         this.pass_allocator.reset();
     }
-} 
+}

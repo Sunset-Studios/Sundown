@@ -88,7 +88,7 @@ export class HistoryPipeline {
           input_views: [mip_level, mip_level + 1],
           shader_setup: history_lighting_mip_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           const prev_lighting = graph.get_physical_image(prev_lighting_image);
           const params = graph.get_physical_buffer(lighting_mip_params);

@@ -387,7 +387,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       this.active_shadow_indices.length = 0;
       this.active_light_indices.length = 0;
 
-      this.lights_query.for_each_chunk((chunk, flags, counts, archetype) => {
+      this.lights_query.for_each_chunk((chunk, flags) => {
         const lights = chunk.get_fragment_view(LightFragment);
         for (let i = 0; i < DEFAULT_CHUNK_CAPACITY; ++i) {
           const flag = flags[i];
@@ -422,7 +422,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         light_idx_buf_config.raw_data = new Uint32Array([0x00000000]);
       }
     } else {
-      this.lights_query.for_each_chunk((chunk, flags, counts, archetype) => {
+      this.lights_query.for_each_chunk((chunk, flags) => {
         const lights = chunk.get_fragment_view(LightFragment);
         for (let i = 0; i < DEFAULT_CHUNK_CAPACITY; ++i) {
           const flag = flags[i];
@@ -457,7 +457,6 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     // Allocate one bitmask per light so tiles are tracked independently per-light
     this.bitmask_u32_stride = Math.ceil(this.total_virtual_tiles / 32); // words tper light (includes all LODs)
-    this.bitmask_u32_lod_stride = this.bitmask_u32_stride / this.max_lods;
     this.bitmask_u32_count = this.bitmask_u32_stride * adjusted_light_count;
 
     bitmask_buf_config.size = this.bitmask_u32_count;
@@ -562,7 +561,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       "as_vsm_init",
       RenderPassFlags.GraphLocal,
       {},
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         // Clear settings buffer
         const settings = graph.get_physical_buffer(this.settings_buf);
         settings.write_raw(
@@ -604,7 +603,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         outputs: [this.bitmask_buf, this.page_table],
         shader_setup: feedback_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const depth_img = graph.get_physical_image(depth_texture);
         const w = depth_img.config.width;
@@ -621,7 +620,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         outputs: [this.dirty_tile_dispatch_args],
         shader_setup: reset_dirty_tile_dispatch_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(Math.ceil(slice_count / 256), 1, 1);
       }
@@ -646,7 +645,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         outputs: [this.page_table, this.eviction_counter_buf],
         shader_setup: evict_unused_tiles_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const pt_image = graph.get_physical_image(this.page_table);
         const x_groups = Math.ceil(pt_image.config.width / 8);
@@ -678,7 +677,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         outputs: [this.page_table, this.page_offset, this.eviction_counter_buf],
         shader_setup: page_table_update_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(Math.ceil(this.bitmask_u32_count / 256), 1, 1);
       }
@@ -703,7 +702,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           outputs: [this.page_table, this.page_offset],
           shader_setup: dirty_visible_light_tiles_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           const pt_image = graph.get_physical_image(this.page_table);
           const x_groups = Math.ceil(pt_image.config.width / 8);
@@ -775,7 +774,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         outputs: [this.dirty_tile_list, this.dirty_tile_dispatch_args],
         shader_setup: compact_dirty_tiles_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const pt_image = graph.get_physical_image(this.page_table);
         pass.dispatch(
@@ -827,7 +826,7 @@ export class AdaptiveSparseVirtualShadowMaps {
             outputs: [this.dummy_depth_image],
             shader_setup: render_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             const dirty_meshlet_draw_args_phys = graph.get_physical_buffer(dirty_meshlet_draw_args);
             if (dirty_meshlet_draw_args_phys) {
@@ -853,7 +852,7 @@ export class AdaptiveSparseVirtualShadowMaps {
             outputs: [this.shadow_atlas_buf],
             shader_setup: resolve_depth_to_atlas_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             const dispatch_args = graph.get_physical_buffer(this.dirty_tile_dispatch_args);
             const shadow_idx = this.active_shadow_indices[light_idx];
@@ -880,7 +879,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         outputs: [this.page_table],
         shader_setup: clear_tile_flags_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const pt_image = graph.get_physical_image(this.page_table);
         const dispatch_x = Math.ceil(pt_image.config.width / 16);
@@ -896,7 +895,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       "as_vsm_post_update",
       RenderPassFlags.GraphLocal,
       {},
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         // Clear bitmask buffer – zero all words for every light
         const bitmask = graph.get_physical_buffer(this.bitmask_buf);
         const bitmask_raw = new Uint32Array(this.bitmask_u32_count);
@@ -955,7 +954,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           outputs: [this.debug_shadow_atlas_image],
           shader_setup: debug_shadow_atlas_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           draw_quad(pass);
         }
@@ -974,7 +973,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           outputs: [this.debug_page_table_image],
           shader_setup: debug_page_table_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           // make sure we cover the full image before drawing the quad
           pass.pass.setViewport(0, 0, page_table_config.width, page_table_config.height, 0, 1);
@@ -1003,7 +1002,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           outputs: [this.debug_tile_overlay_image],
           shader_setup: debug_tile_overlay_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           draw_quad(pass);
         }
@@ -1025,7 +1024,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           outputs: [this.debug_tile_render_output_image],
           shader_setup: debug_tile_render_output_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           draw_quad(pass);
         }
@@ -1052,7 +1051,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           outputs: [this.debug_dirty_tiles_image],
           shader_setup: debug_dirty_tiles_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           draw_quad(pass);
         }
@@ -1078,7 +1077,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           b_skip_pass_pipeline_setup: true,
           b_skip_pass_bind_group_setup: true,
         },
-        (graph, frame_data, encoder) => { }
+        (graph, frame_data) => { }
       );
 
       const debug_view_index = this.active_view_indices[0];
@@ -1115,7 +1114,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           outputs: [this.debug_dirty_shadow_meshlets_image],
           shader_setup: debug_dirty_shadow_meshlets_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch(Math.ceil(image_extent.width / 8), Math.ceil(image_extent.height / 8), 1);
         }
@@ -1158,7 +1157,7 @@ export class AdaptiveSparseVirtualShadowMaps {
             outputs: [this.debug_dirty_shadow_meshlets_image],
             shader_setup: debug_dirty_shadow_meshlets_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
             graph
               .get_physical_buffer(this.#debug_dirty_shadow_meshlet_params[clipmap_index])
               .write(new Uint32Array([clipmap_index, 0, 0, 0]));

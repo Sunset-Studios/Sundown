@@ -39,7 +39,7 @@ export class FrustumCuller extends InstanceCuller {
           ],
           outputs: [indirect_buf, visible_buf],
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           const draw_cull_data_buf = graph.get_physical_buffer(draw_cull_data);
 

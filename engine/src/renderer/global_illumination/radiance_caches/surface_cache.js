@@ -1,6 +1,5 @@
 import { SharedFrameInfoBuffer } from "../../../core/shared_data.js";
 import { FragmentGpuBuffer } from "../../../core/ecs/solar/memory.js";
-import { Texture } from "../../texture.js";
 import { Buffer } from "../../buffer.js";
 import { DebugDrawType, RenderPassFlags } from "../../renderer_types.js";
 import { floor_to_multiple, clamp } from "../../../utility/math.js";
@@ -14,7 +13,6 @@ export const SURFACE_CACHE_DIRECT_OUTPUT_NAME = "surface_cache_black_output";
 export const SURFACE_CACHE_DIFFUSE_OUTPUT_NAME = "surface_cache_diffuse_output";
 export const SURFACE_CACHE_SPECULAR_OUTPUT_NAME = "surface_cache_black_output";
 
-const COMPUTE_WORKGROUP_SIZE = 128;
 const SURFACE_CACHE_COUNTERS_NAME = "surface_cache_counters";
 const SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT = 9;
 const SURFACE_CACHE_TRACE_DISPATCH_OFFSET = 0;

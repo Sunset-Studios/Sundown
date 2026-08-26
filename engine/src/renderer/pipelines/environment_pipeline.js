@@ -53,7 +53,7 @@ export class EnvironmentPipeline {
         outputs: [skybox_image],
         shader_setup: skybox_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         draw_cube(pass);
       }

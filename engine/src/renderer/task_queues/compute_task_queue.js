@@ -97,7 +97,7 @@ export class ComputeTaskQueue {
             inputs: task.inputs,
             outputs: task.outputs,
           },
-          (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(task.dispatch_x, task.dispatch_y, task.dispatch_z);
           }
@@ -137,7 +137,7 @@ export class ComputeTaskQueue {
             inputs: task.inputs,
             outputs: task.outputs,
           },
-          (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(task.dispatch_x, task.dispatch_y, task.dispatch_z);
           }

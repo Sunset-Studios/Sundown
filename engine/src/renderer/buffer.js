@@ -146,18 +146,6 @@ export class Buffer {
     }
   }
 
-  write_large(data, offset = 0) {
-    this.buffer.mapAsync(GPUMapMode.WRITE).then(() => {
-      const buffer_data = new Float32Array(this.buffer.getMappedRange());
-      buffer_data.set(data, offset);
-      this.buffer.unmap();
-    });
-
-    if (this.config.dispatch) {
-      global_dispatcher.dispatch(this.config.name, this);
-    }
-  }
-
   resize(required_element_count, preserve_contents = true) {
     const required_size = Math.max(4, required_element_count * 4);
     if (this.buffer && this.config.size >= required_size) {
@@ -228,39 +216,8 @@ export class Buffer {
     }
   }
 
-  write_raw_cpu(data, offset = 0, size = null, data_offset = 0) {
-    const renderer = Renderer.get();
-    for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
-      renderer.device.queue.writeBuffer(
-        this.cpu_buffers[i],
-        offset,
-        data,
-        data_offset,
-        size ?? data.length
-      );
-      if (this.config.dispatch) {
-        global_dispatcher.dispatch(this.config.name, this);
-      }
-    }
-  }
-
   async read(data, data_length, offset = 0, data_offset = 0, data_type = Float32Array) {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-    const source_buffer = this.cpu_buffers ? this.cpu_buffers[buffered_frame] : this.buffer;
-    if (!source_buffer || source_buffer.mapState !== unmapped_state) {
-      return;
-    }
-    await source_buffer.mapAsync(GPUMapMode.READ);
-    if (source_buffer) {
-      const mapped_range = source_buffer.getMappedRange(offset, data_length);
-      const view = new data_type(mapped_range);
-      data.set(view, data_offset);
-      source_buffer.unmap();
-    }
-  }
-
-  async read_previous(data, data_length, offset = 0, data_offset = 0, data_type = Float32Array) {
-    const buffered_frame = (Renderer.get().get_frame_number() + MAX_BUFFERED_FRAMES - 1) % MAX_BUFFERED_FRAMES;
     const source_buffer = this.cpu_buffers ? this.cpu_buffers[buffered_frame] : this.buffer;
     if (!source_buffer || source_buffer.mapState !== unmapped_state) {
       return;
@@ -304,10 +261,6 @@ export class Buffer {
       buffer_offset,
       size ?? this.config.size
     );
-  }
-
-  bind_vertex(encoder, slot = 0) {
-    encoder.setVertexBuffer(slot, this.buffer);
   }
 
   _post_render_command(graph, frame_data, encoder) {

@@ -78,7 +78,7 @@ export class InstanceCuller {
       `${this.name}_init_views`,
       RenderPassFlags.GraphLocal,
       {},
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         for (let i = 0; i < this.registered_views.length; ++i) {
           const view_index = this.registered_views.get(i);
           const clipmap_index = this.registered_clipmaps.get(i);
@@ -109,7 +109,7 @@ export class InstanceCuller {
           inputs: [visible_buf],
           outputs: [visible_buf],
         },
-        (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch((adjusted_draw_count + 255) / 256, 1, 1);
         }
@@ -134,7 +134,7 @@ export class InstanceCuller {
           inputs: [indirect_draw_buf],
           outputs: [indirect_draw_buf],
         },
-        (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch((adjusted_draw_count + 255) / 256, 1, 1);
         }
@@ -166,11 +166,6 @@ export class InstanceCuller {
   // Returns the visibility buffer for a given view and clipmap
   get_visibility_buffer(view_index, clipmap_index) {
     return this.visible_buffers.get(view_index, clipmap_index);
-  }
-
-  // Returns the visibility buffers
-  get_visibility_buffers() {
-    return this.visible_buffers;
   }
 
   // Returns the indirect draw buffer for a given view and clipmap

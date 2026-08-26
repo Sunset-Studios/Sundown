@@ -80,7 +80,7 @@ export class DebugOverlay {
       `debug_overlay_setup_${this.debug_type}`,
       RenderPassFlags.GraphLocal,
       { },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const base_output_image_obj = graph.get_physical_image(base_output_image);
         base_output_image_obj.config.load_op = "load";
       }
@@ -118,7 +118,7 @@ export class DebugOverlay {
         input_views: [this.texture_level],
         shader_setup: overlay_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.set_viewport(this.viewport);
         draw_quad(pass);
@@ -129,7 +129,7 @@ export class DebugOverlay {
       `debug_overlay_cleanup_${this.debug_type}`,
       RenderPassFlags.GraphLocal,
       { },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const base_output_image_obj = graph.get_physical_image(base_output_image);
         base_output_image_obj.config.load_op = "clear";
       }

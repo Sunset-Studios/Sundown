@@ -120,7 +120,7 @@ export class SSR {
         outputs: [ssr_raycast_texture],
         shader_setup: ssr_raycast_shader_setup,
       },
-      (g, fd, encoder) => {
+      (g, fd) => {
         const pass = g.get_physical_pass(fd.current_pass);
         pass.dispatch(Math.ceil(trace_width / 8), Math.ceil(trace_height / 8), 1);
       }
@@ -142,7 +142,7 @@ export class SSR {
         outputs: [ssr_resolve_texture],
         shader_setup: ssr_resolve_shader_setup,
       },
-      (g, fd, encoder) => {
+      (g, fd) => {
         const pass = g.get_physical_pass(fd.current_pass);
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
@@ -162,7 +162,7 @@ export class SSR {
         outputs: [ssr_temporal_texture],
         shader_setup: ssr_temporal_shader_setup,
       },
-      (g, fd, encoder) => {
+      (g, fd) => {
         const pass = g.get_physical_pass(fd.current_pass);
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
@@ -180,7 +180,7 @@ export class SSR {
         outputs: [this.reflection_texture],
         shader_setup: ssr_blur_shader_setup,
       },
-      (g, fd, encoder) => {
+      (g, fd) => {
         const pass = g.get_physical_pass(fd.current_pass);
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }

@@ -262,7 +262,7 @@ export class PathTracer extends RayTracer {
         `path_trace_params_${sample_idx}`,
         RenderPassFlags.GraphLocal,
         {},
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const params_buffer = graph.get_physical_buffer(pt_params);
           this.params[0] = num_bounce_passes;
           this.params[1] = view_moved ? 1 : 0;
@@ -304,7 +304,7 @@ export class PathTracer extends RayTracer {
           outputs: [path_state],
           shader_setup: path_tracer_init_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           const pixel_count = view_moved ? num_rays : active_pixel_count;
           pass.dispatch(Math.ceil(pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
@@ -330,7 +330,7 @@ export class PathTracer extends RayTracer {
             outputs: [path_state],
             shader_setup: path_tracer_gbuffer_shade_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
           }
@@ -363,7 +363,7 @@ export class PathTracer extends RayTracer {
             outputs: [path_state],
             shader_setup: path_tracer_hit_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
           }
@@ -401,7 +401,7 @@ export class PathTracer extends RayTracer {
             outputs: [path_state],
             shader_setup: path_tracer_shade_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
           }
@@ -423,7 +423,7 @@ export class PathTracer extends RayTracer {
         outputs: [this.output_texture],
         shader_setup: path_tracer_output_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }

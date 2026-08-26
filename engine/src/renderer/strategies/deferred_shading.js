@@ -36,7 +36,6 @@ import {
   GIStrategyType,
   AOStrategyType,
   ReflectionStrategyType,
-  CacheTypes,
 } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
@@ -65,8 +64,6 @@ import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import { SSR } from "../reflections/ssr.js";
 import { Bloom } from "../post_process/bloom.js";
 import { TemporalAntiAliasing } from "../post_process/taa.js";
-import { ResourceCache } from "../resource_cache.js";
-import { TextureArrayPools } from "../texture_pool.js";
 import {
   DEFAULT_LIGHT_CLIP_EXTENT,
   MAX_CLIPMAP_LEVELS,
@@ -74,7 +71,6 @@ import {
   ATLAS_SIZE,
   TILE_SIZE,
 } from "../shadows/shadow_utils.js";
-import { Name } from "../../utility/names.js";
 
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
@@ -704,7 +700,7 @@ export class DeferredShadingStrategy {
           outputs: [main_albedo_image],
           shader_setup: transparency_composite_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           draw_quad(pass);
         }
@@ -1056,7 +1052,7 @@ export class DeferredShadingStrategy {
             outputs: [rg_output_image],
             shader_setup: fullscreen_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             draw_quad(pass);
           }
@@ -1096,7 +1092,7 @@ export class DeferredShadingStrategy {
             outputs: [entity_flags],
             shader_setup: clear_dirty_flags_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(Math.ceil(EntityManager.get_max_rows() / 128), 1, 1);
           }

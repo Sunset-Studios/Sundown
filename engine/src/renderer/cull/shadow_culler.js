@@ -150,7 +150,7 @@ export class ShadowCuller extends InstanceCuller {
       `${this.name}_init_views`,
       RenderPassFlags.GraphLocal,
       {},
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         for (let i = 0; i < this.registered_views.length; ++i) {
           const view_index = this.registered_views.get(i);
           const clipmap_index = this.registered_clipmaps.get(i);
@@ -211,7 +211,7 @@ export class ShadowCuller extends InstanceCuller {
             ],
             outputs: [this.additional_data.page_table, this.additional_data.page_offset],
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(Math.ceil(draw_count / 256), 1, 1);
           }
@@ -231,7 +231,7 @@ export class ShadowCuller extends InstanceCuller {
         ],
         outputs: [this.additional_data.dirty_slices],
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const pt_image = graph.get_physical_image(this.additional_data.page_table);
         const x_groups = Math.ceil(pt_image.config.width / 8);
@@ -261,7 +261,7 @@ export class ShadowCuller extends InstanceCuller {
         `init_shadow_meshlet_draw_args_view_${view_index}_clipmap_${clipmap_index}`,
         RenderPassFlags.GraphLocal,
         {},
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const shadow_meshlet_draw_args_phys = graph.get_physical_buffer(shadow_meshlet_draw_args);
           if (shadow_meshlet_draw_args_phys) {
             shadow_meshlet_draw_args_phys.write(meshlet_draw_args_reset_data);
@@ -296,7 +296,7 @@ export class ShadowCuller extends InstanceCuller {
           ],
           outputs: [shadow_meshlet_list, shadow_meshlet_draw_args],
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch(Math.ceil(meshlet_count / 128), 1, 1);
         }
@@ -322,20 +322,12 @@ export class ShadowCuller extends InstanceCuller {
           ],
           outputs: [dirty_shadow_meshlet_list, dirty_shadow_meshlet_draw_args],
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch(Math.ceil(meshlet_count / 128), 1, 1);
         }
       );
     }
-  }
-
-  get_shadow_meshlet_list(view_index, clipmap_index) {
-    return this.shadow_meshlet_lists.get(view_index, clipmap_index);
-  }
-
-  get_shadow_meshlet_draw_args(view_index, clipmap_index) {
-    return this.shadow_meshlet_draw_args.get(view_index, clipmap_index);
   }
 
   get_dirty_shadow_meshlet_list(view_index, clipmap_index) {

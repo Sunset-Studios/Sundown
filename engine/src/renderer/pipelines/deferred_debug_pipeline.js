@@ -132,7 +132,7 @@ export class DeferredDebugPipeline {
           outputs: [debug_line_data_buf],
           shader_setup: debug_emit_entity_bounds_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch(Math.ceil(BVH.bvh_size / 128), 1, 1);
         }
@@ -157,7 +157,7 @@ export class DeferredDebugPipeline {
         "debug_init_closest_distances",
         RenderPassFlags.GraphLocal,
         {},
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const distances_buf = graph.get_physical_buffer(closest_distances_per_mesh_buf);
           const infinity_array = new Float32Array(mesh_count);
           infinity_array.fill(Number.MAX_VALUE);
@@ -181,7 +181,7 @@ export class DeferredDebugPipeline {
           outputs: [closest_entities_per_mesh_buf, closest_distances_per_mesh_buf],
           shader_setup: debug_find_closest_mesh_instances_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch(Math.ceil(draw_count / 64), 1, 1);
         }
@@ -201,7 +201,7 @@ export class DeferredDebugPipeline {
           outputs: [debug_line_data_buf],
           shader_setup: debug_emit_blas_nodes_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           const x_dispatch = Math.ceil(max_nodes_debug / 128);
           const y_dispatch = Math.ceil(mesh_count / 2);
@@ -217,7 +217,7 @@ export class DeferredDebugPipeline {
           outputs: [debug_line_data_buf],
           shader_setup: debug_emit_bvh2_nodes_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch(Math.ceil(max_nodes_debug / 64), 1, 1);
         }
@@ -238,7 +238,7 @@ export class DeferredDebugPipeline {
         ],
         shader_setup: line_draw_shader_setup,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         draw_quad(pass, max_lines / 12);
       }

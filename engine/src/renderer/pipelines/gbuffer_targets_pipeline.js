@@ -216,7 +216,7 @@ export class GBufferTargetsPipeline {
       pass_name,
       RenderPassFlags.GraphLocal,
       {},
-      (graph, frame_data, encoder) => {
+      (graph) => {
         const images = [
           graph.get_physical_image(targets.main_albedo_image),
           graph.get_physical_image(targets.main_smra_image),

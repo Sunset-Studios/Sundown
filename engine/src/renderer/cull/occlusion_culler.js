@@ -42,7 +42,7 @@ export class OcclusionCuller extends InstanceCuller {
           ],
           outputs: [visible_buf, indirect_buf],
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch((draw_count + 255) / 256, 1, 1);
         }

@@ -135,10 +135,6 @@ export class PipelineState {
         return this.ready && this.pipeline !== null;
     }
 
-    when_ready() {
-        return this.compile_promise ?? Promise.resolve(this);
-    }
-
     static create_render(name, config) {
         let name_hash = Name.from(name);
         let pipeline_state = ResourceCache.get().fetch(CacheTypes.PIPELINE_STATE, name_hash);

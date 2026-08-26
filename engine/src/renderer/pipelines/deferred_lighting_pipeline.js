@@ -118,7 +118,7 @@ export class DeferredLightingPipeline {
         // Some implementations alternate history targets; buffer bindings while reusing one pipeline layout.
         bind_group_cache_key: `${lighting_pass_name}_${current_buffered_frame}`,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         draw_quad(pass);
       }

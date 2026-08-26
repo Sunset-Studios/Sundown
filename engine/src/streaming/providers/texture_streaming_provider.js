@@ -2,7 +2,6 @@ import { MAX_BUFFERED_FRAMES } from "../../core/minimal.js";
 import { global_dispatcher } from "../../core/dispatcher.js";
 import { Renderer } from "../../renderer/renderer.js";
 import { TextureArrayPools } from "../../renderer/texture_pool.js";
-import { TextureManager } from "../../renderer/texture_manager.js";
 import { JobSystem, JobStatus } from "../../utility/job_system.js";
 import { Name } from "../../utility/names.js";
 import { StreamProvider, StreamUpdateStatus } from "../stream_provider.js";
@@ -97,7 +96,6 @@ function create_texture_load_job_payload(paths, config = {}) {
   const semantic_cap = config.pool_key
     ? TextureArrayPools.get_dimension_cap(config.pool_key)
     : Number.POSITIVE_INFINITY;
-  const global_cap = TextureManager.get_max_texture_dimension();
 
   return {
     paths,
@@ -115,7 +113,7 @@ function create_texture_load_job_payload(paths, config = {}) {
     pooled_height: pool?.config.height,
     pooled_mip_levels: pool?.config.mip_levels,
     supports_bc: Renderer.get().has_bc,
-    max_texture_dimension: Math.min(semantic_cap, global_cap),
+    max_texture_dimension: semantic_cap,
     texture_usage:
       config.texture_usage ??
       (config.pool_key
@@ -127,10 +125,9 @@ function create_texture_load_job_payload(paths, config = {}) {
 }
 
 function resolve_texture_load_target(source_width, source_height, config = {}) {
-  const global_cap = TextureManager.get_max_texture_dimension();
   if (!config.pool_key) {
-    const width = Math.max(1, Math.min(source_width, global_cap));
-    const height = Math.max(1, Math.min(source_height, global_cap));
+    const width = Math.max(1, source_width);
+    const height = Math.max(1, source_height);
     return {
       width,
       height,
@@ -138,7 +135,7 @@ function resolve_texture_load_target(source_width, source_height, config = {}) {
     };
   }
 
-  const cap = Math.min(TextureArrayPools.get_dimension_cap(config.pool_key), global_cap);
+  const cap = TextureArrayPools.get_dimension_cap(config.pool_key);
   const pool = TextureArrayPools.get_pool(config.pool_key);
   const width = Math.max(1, Math.min(source_width, cap));
   const height = Math.max(1, Math.min(source_height, cap));

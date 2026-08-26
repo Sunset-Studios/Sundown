@@ -3,12 +3,6 @@ import {
   SURFACE_CACHE_DIRECT_OUTPUT_NAME,
   SURFACE_CACHE_SPECULAR_OUTPUT_NAME,
 } from "./radiance_caches/surface_cache.js";
-import { EntityManager } from "../../core/ecs/entity.js";
-import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
-import { EntityFlags } from "../../core/minimal.js";
-import { DEFAULT_CHUNK_CAPACITY } from "../../core/ecs/solar/types.js";
-import { SharedEnvironmentData } from "../../core/shared_data.js";
-import { MaterialAllocationTable } from "../material_allocation_table.js";
 
 /** Surface-cache global illumination without a per-pixel tracing branch. */
 export class SCGI {

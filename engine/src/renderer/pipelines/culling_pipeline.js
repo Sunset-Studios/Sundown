@@ -208,7 +208,7 @@ export class CullingPipeline {
         `init_meshlet_draw_args_view_${current_view}`,
         RenderPassFlags.GraphLocal,
         {},
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           graph
             .get_physical_buffer(frustum_meshlet_draw_args)
             .write(new Uint32Array([124 * 3, 0, 0, 0]));
@@ -223,7 +223,7 @@ export class CullingPipeline {
           `init_meshlet_stats_view_${current_view}`,
           RenderPassFlags.GraphLocal,
           {},
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             graph.get_physical_buffer(frustum_meshlet_stats).write(new Uint32Array([0, 0, 0, 0]));
             graph
               .get_physical_buffer(culling_pass_outputs.occlusion_meshlet_stats)
@@ -238,7 +238,7 @@ export class CullingPipeline {
         `init_meshlet_params_view_${current_view}`,
         RenderPassFlags.GraphLocal,
         {},
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           graph
             .get_physical_buffer(meshlet_frustum_params)
             .write(new Uint32Array([current_view, meshlet_draw_count, 0, 0]));
@@ -268,7 +268,7 @@ export class CullingPipeline {
           outputs: [frustum_meshlet_list, frustum_meshlet_draw_args],
           shader_setup: meshlet_frustum_cull_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch(Math.ceil(meshlet_draw_count / 64), 1, 1);
         }
@@ -283,7 +283,7 @@ export class CullingPipeline {
             outputs: [frustum_meshlet_stats],
             shader_setup: meshlet_stats_capture_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(1, 1, 1);
           }
@@ -352,7 +352,7 @@ export class CullingPipeline {
           outputs: [occlusion_meshlet_list, occlusion_meshlet_draw_args],
           shader_setup: meshlet_occlusion_cull_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch(Math.ceil(meshlet_list_capacity / 64), 1, 1);
         }
@@ -367,7 +367,7 @@ export class CullingPipeline {
             outputs: [occlusion_meshlet_stats],
             shader_setup: meshlet_stats_capture_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(1, 1, 1);
           }
@@ -495,7 +495,7 @@ export class CullingPipeline {
           input_views: [i === 0 ? 0 : i, i + 1],
           shader_setup: hzb_reduce_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
 
           const depth = graph.get_physical_image(hzb_depth_image);

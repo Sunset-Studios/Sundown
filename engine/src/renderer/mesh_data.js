@@ -173,22 +173,6 @@ export class MeshData {
     this.name_to_index.delete(key);
   }
 
-  static update_mesh_bounds(mesh) {
-    if (!this.is_initialized) {
-      this.initialize();
-    }
-
-    const key = Name.from(mesh.name);
-    const index = this.name_to_index.get(key);
-    if (index === undefined) return;
-
-    const b = mesh.bounds_min_and_max;
-    if (!b) return;
-
-    this._set_bounds(index, b);
-    MeshBLAS.build_from_mesh(mesh);
-  }
-
   static _set_bounds(index, b) {
     const base = index * mesh_bounds_size;
 

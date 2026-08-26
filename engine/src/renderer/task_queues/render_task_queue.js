@@ -7,7 +7,6 @@ import {
   Sparse2DRandomAccessAllocator,
 } from "../../memory/allocator.js";
 import { ResourceCache } from "../resource_cache.js";
-import { MeshData } from "../mesh_data.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { profile_scope } from "../../utility/performance.js";
 import { BindGroupType, CacheTypes, MaterialFamilyType, MaterialPassType } from "../renderer_types.js";
@@ -1122,10 +1121,6 @@ export class RenderWorkQueue {
     );
   }
 
-  static mark_needs_sort() {
-    this.needs_sort = true;
-  }
-
   static reset() {
     this.task_store.reset();
     this.needs_sort = true;
@@ -1295,74 +1290,6 @@ export class RenderWorkQueue {
 
   static clear_queue_buffers() {
     this.resources.clear_if_empty(this.object_instances);
-  }
-
-  static submit_indexed_indirect_draws(
-    render_pass,
-    view_index = 0,
-    clipmap_index = 0,
-    skip_material_bind = true,
-    opaque_only = false,
-    pass_type = MaterialPassType.Raster,
-    should_reset = false,
-    indirect_draw_buffer = null
-  ) {
-    const index_buffer = MeshData.index_buffer;
-    const index_buffer_multiplier = index_buffer.config.element_type === "uint16" ? 2 : 4;
-
-    let last_material = null;
-    let last_pass_type = -1;
-
-    const indirect_draw_object = this.get_indirect_draw_object(view_index, clipmap_index);
-    const indirect_buffer = indirect_draw_buffer ?? indirect_draw_object.indirect_draw_buffer;
-
-    for (let i = 0; i < this.batches.length; ++i) {
-      const batch = this.batches[i];
-      const mesh = ResourceCache.get().fetch(CacheTypes.MESH, batch.mesh_id);
-      if (!mesh || mesh.index_buffer_offset === -1) {
-        continue;
-      }
-
-      const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, batch.material_id);
-      if (opaque_only && material?.family !== MaterialFamilyType.Opaque) {
-        continue;
-      }
-
-      if (!skip_material_bind) {
-        if (material && (material !== last_material || last_pass_type !== pass_type)) {
-          if (!material.bind(
-            render_pass,
-            render_pass.frame_bind_groups,
-            render_pass.frame_attachments,
-            pass_type
-          )) {
-            continue;
-          }
-          if (render_pass.frame_bind_groups[BindGroupType.Global]) {
-            render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
-          }
-          if (render_pass.frame_bind_groups[BindGroupType.Pass]) {
-            render_pass.frame_bind_groups[BindGroupType.Pass].bind(render_pass);
-          }
-          last_material = material;
-          last_pass_type = pass_type;
-        }
-      }
-
-      render_pass.pass.setIndexBuffer(
-        index_buffer.buffer,
-        index_buffer.config.element_type,
-        (mesh.index_buffer_offset + batch.first_index) * index_buffer_multiplier,
-        batch.index_count * index_buffer_multiplier
-      );
-      render_pass.pass.drawIndexedIndirect(
-        indirect_buffer.buffer,
-        i * 20
-      );
-    }
-    if (should_reset) {
-      this.reset();
-    }
   }
 
   static bind_visibility_bucket_material(render_pass, bucket, pass_type = MaterialPassType.Raster) {

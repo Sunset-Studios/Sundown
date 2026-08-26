@@ -176,7 +176,7 @@ export class VisibilityBufferPipeline {
         `init_visibility_bucket_${stage_name}_draw_args_view_${current_view}_bucket_${bucket.key}`,
         RenderPassFlags.GraphLocal,
         {},
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           graph
             .get_physical_buffer(resources.draw_args)
             .write(meshlet_draw_args_reset_data);
@@ -188,7 +188,7 @@ export class VisibilityBufferPipeline {
           `init_visibility_bucket_${stage_name}_stats_view_${current_view}_bucket_${bucket.key}`,
           RenderPassFlags.GraphLocal,
           {},
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             graph.get_physical_buffer(resources.stats).write(new Uint32Array([0, 0, 0, 0]));
           }
         );
@@ -209,7 +209,7 @@ export class VisibilityBufferPipeline {
           outputs: [resources.meshlet_list, resources.draw_args],
           shader_setup: visibility_bucket_meshlet_compact_shader_setup,
         },
-        (graph, frame_data, encoder) => {
+        (graph, frame_data) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           pass.dispatch(Math.ceil(meshlet_list_capacity / 128), 1, 1);
         }
@@ -224,7 +224,7 @@ export class VisibilityBufferPipeline {
             outputs: [resources.stats],
             shader_setup: meshlet_stats_capture_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(1, 1, 1);
           }
@@ -273,7 +273,7 @@ export class VisibilityBufferPipeline {
         shader_setup,
         b_skip_pass_pipeline_setup: true,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         RenderTaskQueue.submit_visibility_bucket_indirect_draw(
           pass,
@@ -328,7 +328,7 @@ export class VisibilityBufferPipeline {
         shader_setup,
         b_skip_pass_pipeline_setup: true,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         RenderTaskQueue.submit_visibility_bucket_indirect_draw(
           pass,
@@ -379,7 +379,7 @@ export class VisibilityBufferPipeline {
         shader_setup,
         b_skip_pass_pipeline_setup: true,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         RenderTaskQueue.submit_visibility_bucket_resolve(pass, bucket);
       }
@@ -427,7 +427,7 @@ export class VisibilityBufferPipeline {
         shader_setup,
         b_skip_pass_pipeline_setup: true,
       },
-      (graph, frame_data, encoder) => {
+      (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         RenderTaskQueue.submit_visibility_bucket_indirect_draw(
           pass,

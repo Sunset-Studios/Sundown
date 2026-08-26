@@ -175,8 +175,5 @@ export class ShadowAllocator {
     ShadowAllocator.free_list.push(index);
   }
 
-  static get_total_count() {
-    return ShadowAllocator.current_size;
-  }
 }
 

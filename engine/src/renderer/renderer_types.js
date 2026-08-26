@@ -1,8 +1,3 @@
-const graphics_pass_name = "Graphics";
-const present_pass_name = "Present";
-const compute_pass_name = "Compute";
-const graph_local_pass_name = "GraphLocal";
-
 /**
  * Flags for image resources in the render graph.
  * @enum {number}
@@ -195,17 +190,3 @@ export const TextureChannel = {
   B: 2,
   A: 3,
 };
-
-/**
- * Converts render pass flags to a string.
- * @param {number} flags - The flags to convert.
- * @returns {string} The string representation of the flags.
- */
-export function render_pass_flags_to_string(flags) {
-  const flag_names = [];
-  if (flags & RenderPassFlags.Graphics) flag_names.push(graphics_pass_name);
-  if (flags & RenderPassFlags.Present) flag_names.push(present_pass_name);
-  if (flags & RenderPassFlags.Compute) flag_names.push(compute_pass_name);
-  if (flags & RenderPassFlags.GraphLocal) flag_names.push(graph_local_pass_name);
-  return flag_names.join(", ");
-}

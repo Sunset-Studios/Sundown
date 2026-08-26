@@ -81,10 +81,6 @@ export class MaterialTemplate {
     this.family = family;
   }
 
-  add_resource(resource) {
-    this.resources.push(resource);
-  }
-
   get base_reflection() {
     return this.shader?.reflection ?? null;
   }
@@ -694,10 +690,6 @@ export class Material {
     }
 
     return true;
-  }
-
-  new_instance(instance_name) {
-    return Material.create(instance_name, this.template.name, {}, this.parent);
   }
 
   static create(name, template_name, options = {}, parent_id = null) {

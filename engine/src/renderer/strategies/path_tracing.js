@@ -16,19 +16,16 @@ import { MeshData } from "../mesh_data.js";
 import { PostProcessStack } from "../post_process/post_process_stack.js";
 import { RenderTaskQueue } from "../task_queues/render_task_queue.js";
 import { ComputeTaskQueue } from "../task_queues/compute_task_queue.js";
-import { ResourceCache } from "../resource_cache.js";
-import { TextureArrayPools } from "../texture_pool.js";
 import { EnvironmentPipeline } from "../pipelines/environment_pipeline.js";
 import { CullingPipeline } from "../pipelines/culling_pipeline.js";
 import { GBufferTargetsPipeline } from "../pipelines/gbuffer_targets_pipeline.js";
 import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipeline.js";
 
 // Types and utilities
-import { RenderPassFlags, CacheTypes } from "../renderer_types.js";
+import { RenderPassFlags } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
 import { profile_scope } from "../../utility/performance.js";
-import { Name } from "../../utility/names.js";
 import {
   rgba16float_format,
   depth32float_format,
@@ -45,7 +42,6 @@ const path_tracing_profile_scope_name = "PathTracingStrategy.draw";
 const transforms_name = "transforms";
 const bounds_name = "bounds";
 const light_fragment_name = "light_fragment";
-const mesh_asset_id_name = "mesh_asset_id";
 
 const main_depth_image2_config = {
   name: "main_depth_1",
@@ -163,34 +159,6 @@ export class PathTracingStrategy {
   refresh(render_graph, reinit = false) {
     this.force_reinit = reinit;
     this.force_recreate = true;
-  }
-
-  /**
-   * Set path tracing parameters
-   * @param {Object} params - Path tracing parameters
-   * @param {number} params.max_bounces - Maximum number of bounces
-   * @param {number} params.trace_rate - Trace rate (1=full res, 2=half, 4=quarter)
-   * @param {number} params.samples_per_pixel - Samples per pixel per frame
-   * @param {number} params.max_accumulation_frames - Maximum temporal frames to retain, or Infinity
-   */
-  set_parameters(params) {
-    if (params.max_bounces !== undefined) this.max_bounces = params.max_bounces;
-    if (params.trace_rate !== undefined) this.trace_rate = params.trace_rate;
-    if (params.samples_per_pixel !== undefined) this.samples_per_pixel = params.samples_per_pixel;
-    if (params.max_accumulation_frames !== undefined) {
-      const max_accumulation_frames = params.max_accumulation_frames;
-      if (
-        max_accumulation_frames !== Infinity &&
-        (!Number.isInteger(max_accumulation_frames) ||
-          max_accumulation_frames < 1 ||
-          max_accumulation_frames > 0xffffffff)
-      ) {
-        throw new RangeError(
-          "max_accumulation_frames must be a positive uint32 integer or Infinity"
-        );
-      }
-      this.max_accumulation_frames = max_accumulation_frames;
-    }
   }
 
   _draw_internal(render_graph) {
@@ -362,7 +330,7 @@ export class PathTracingStrategy {
             inputs: [lights, dense_lights],
             outputs: [dense_lights],
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             // Reset light counters to zero (header u32[4])
             const dense_lights_buf = graph.get_physical_buffer(dense_lights);
@@ -596,7 +564,7 @@ export class PathTracingStrategy {
             outputs: [composited_image],
             shader_setup: path_trace_composite_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(
               Math.ceil(image_extent.width / 8),
@@ -656,7 +624,7 @@ export class PathTracingStrategy {
             outputs: [rg_output_image],
             shader_setup: fullscreen_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             draw_quad(pass);
           }
@@ -694,7 +662,7 @@ export class PathTracingStrategy {
             outputs: [entity_flags],
             shader_setup: clear_dirty_flags_shader_setup,
           },
-          (graph, frame_data, encoder) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(Math.ceil(EntityManager.get_max_rows() / 128), 1, 1);
           }

@@ -52,7 +52,6 @@ import { Name } from "../utility/names.js";
 import { StaticIntArray } from "../memory/container.js";
 import { profile_scope } from "../utility/performance.js";
 import { GPUTimeQuery } from "./query.js";
-import { deserialize_json, read_file } from "../streaming/streaming_io.js";
 import { deep_clone } from "../utility/object.js";
 
 // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -174,7 +173,7 @@ const RGFrameData = Object.freeze({
 });
 
 /**
- * Reserved pass dependency metadata template.
+ * Pass dependency metadata.
  *
  * @typedef {Object} RGPassMetadata
  * @property {number} handle - Frame-local pass handle.
@@ -184,17 +183,8 @@ const RGFrameData = Object.freeze({
  * @property {Array<number>} outputs - Write dependencies.
  * @property {boolean} b_is_culled - Whether compilation removed the pass.
  */
-const RGPassMetadata = Object.freeze({
-  handle: 0,
-  physical_id: 0,
-  reference_count: 0,
-  inputs: [],
-  outputs: [],
-  b_is_culled: false,
-});
-
 /**
- * Reserved execution configuration for a graph pass.
+ * Execution configuration for a graph pass.
  *
  * @typedef {Object} RGPassConfig
  * @property {string} name - Name of the pass.
@@ -202,13 +192,6 @@ const RGPassMetadata = Object.freeze({
  * @property {boolean} b_is_async - Whether execution may move to an asynchronous queue.
  * @property {number} execution_queue - Target command queue.
  */
-const RGPassConfig = Object.freeze({
-  name: "",
-  b_is_compute: false,
-  b_is_async: false,
-  execution_queue: 0,
-});
-
 /**
  * Optional shader and fixed-function state used for automatic pipeline creation.
  *

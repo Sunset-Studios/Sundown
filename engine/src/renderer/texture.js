@@ -1,17 +1,11 @@
 import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
-import SimulationCore from "../core/simulation_core.js";
 import { Renderer } from "./renderer.js";
 import { Name } from "../utility/names.js";
 import { ResourceCache } from "./resource_cache.js";
 import { ImageFlags } from "./renderer_types.js";
 import { CacheTypes } from "./renderer_types.js";
 import { TextureArrayPools } from "./texture_pool.js";
-import { TextureManager } from "./texture_manager.js";
-import {
-  close_bitmap_mip_chains,
-  TextureStreamingProvider,
-} from "../streaming/providers/texture_streaming_provider.js";
-import { StreamingSystem } from "../streaming/streaming_system.js";
+import { TextureStreamingProvider } from "../streaming/providers/texture_streaming_provider.js";
 import {
   r8unorm_format,
 } from "../utility/config_permutations.js";
@@ -295,10 +289,6 @@ export class Texture {
     return this.image.createView(view_descriptor);
   }
 
-  set_current_view(index) {
-    this.current_view = index;
-  }
-
   get_view(index) {
     return this.views[index];
   }
@@ -347,18 +337,6 @@ export class Texture {
         { width: w, height: h, depthOrArrayLayers: texture.config.depth }
       );
     }
-  }
-
-  copy_external(encoder, image, origin = { x: 0, y: 0, z: 0 }, cols = 0, rows = 0, flip_y = false) {
-    const dest_origin = { ...origin };
-    if (this.config.pool_key) {
-      dest_origin.z = this.bindless_handle;
-    }
-    encoder.copyExternalImageToTexture(
-      { source: image, flipY: flip_y },
-      { texture: this.image, origin: dest_origin },
-      [cols, rows]
-    );
   }
 
   write(
@@ -462,20 +440,6 @@ export class Texture {
         };
         this.views.push(this.create_view(config));
       }
-    }
-  }
-
-  _upload_bitmaps(mip_chains, flip_y, renderer = Renderer.get()) {
-    try {
-      for (let layer = 0; layer < mip_chains.length; layer++) {
-        const mip_chain = mip_chains[layer];
-
-        for (let lvl = 0; lvl < mip_chain.length; lvl++) {
-          this._upload_bitmap(layer, lvl, mip_chain[lvl], flip_y, renderer);
-        }
-      }
-    } finally {
-      close_bitmap_mip_chains(mip_chains);
     }
   }
 
@@ -601,10 +565,6 @@ export class Texture {
     }
 
     return image;
-  }
-
-  static set_max_dimension(max_dimension) {
-    TextureManager.set_max_texture_dimension(max_dimension);
   }
 
   static is_compressed_format(format) {
@@ -880,28 +840,5 @@ export class Texture {
       default:
         return "2d";
     }
-  }
-}
-
-/**
- * Compatibility facade for the former renderer-owned streaming subsystem.
- * New integrations should register providers with StreamingSystem directly.
- */
-export class TextureStreamingSystem {
-  static install() {
-    const system = StreamingSystem.install(SimulationCore);
-    TextureStreamingProvider.install(system);
-    return system;
-  }
-
-  static begin_streaming_load(texture, reload_only = false) {
-    return TextureStreamingProvider.begin_streaming_load(
-      texture,
-      reload_only
-    );
-  }
-
-  static cancel_streaming_load(texture) {
-    return TextureStreamingProvider.cancel_streaming_load(texture);
   }
 }

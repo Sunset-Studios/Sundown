@@ -1,9 +1,8 @@
 import { SharedFrameInfoBuffer, SharedViewBuffer } from "../../../core/shared_data.js";
 import { FragmentGpuBuffer } from "../../../core/ecs/solar/memory.js";
-import { Texture } from "../../texture.js";
 import { Buffer } from "../../buffer.js";
 import { DebugDrawType, RenderPassFlags } from "../../renderer_types.js";
-import { floor_to_multiple, clamp } from "../../../utility/math.js";
+import { floor_to_multiple } from "../../../utility/math.js";
 import {
   register_material_buffers,
   register_scene_lighting_data,
