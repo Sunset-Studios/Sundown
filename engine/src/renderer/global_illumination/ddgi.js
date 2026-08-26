@@ -45,6 +45,7 @@ export class DDGI {
     compact_transforms,
     index_buffer,
     dense_lights,
+    emissive_lights,
     draw_count,
     hzb_texture,
     force_recreate = false
@@ -80,6 +81,7 @@ export class DDGI {
         compact_transforms,
         index_buffer,
         dense_lights,
+        emissive_lights,
         hzb_texture,
       },
     });

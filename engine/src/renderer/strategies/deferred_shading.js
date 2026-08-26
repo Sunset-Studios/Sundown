@@ -25,6 +25,7 @@ import { DeferredLightingPipeline } from "../pipelines/deferred_lighting_pipelin
 import { EnvironmentPipeline } from "../pipelines/environment_pipeline.js";
 import { GBufferTargetsPipeline } from "../pipelines/gbuffer_targets_pipeline.js";
 import { HistoryPipeline } from "../pipelines/history_pipeline.js";
+import { LightSamplingPipeline } from "../pipelines/light_sampling_pipeline.js";
 import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipeline.js";
 
 // Types and utilities
@@ -108,21 +109,6 @@ const transparency_composite_shader_setup = {
   attachment_blend: src_alpha_one_minus_src_alpha_blend_config,
 };
 
-const dense_lights_buffer_config = {
-  name: "dense_lights",
-  size: 0,
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-};
-
-const compact_lights_pass_name = "compact_lights";
-const compact_lights_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "system_compute/compact_lights.wgsl",
-    },
-  },
-};
-
 const fullscreen_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "fullscreen.wgsl" },
@@ -165,6 +151,7 @@ export class DeferredShadingStrategy {
   deferred_lighting_pipeline = null;
   gbuffer_targets_pipeline = null;
   history_pipeline = null;
+  light_sampling_pipeline = null;
   environment_pipeline = null;
   scene_voxelizer = null;
   scene_voxelizer_outputs = null;
@@ -182,6 +169,7 @@ export class DeferredShadingStrategy {
     this.environment_pipeline ??= new EnvironmentPipeline();
     this.gbuffer_targets_pipeline ??= new GBufferTargetsPipeline();
     this.history_pipeline ??= new HistoryPipeline();
+    this.light_sampling_pipeline ??= new LightSamplingPipeline();
     this.visibility_buffer_pipeline ??= new VisibilityBufferPipeline();
     this.scene_voxelizer ??= new SceneVoxelizer();
     this.svlm ??= new SparseVolumetricLightmapper();
@@ -366,9 +354,6 @@ export class DeferredShadingStrategy {
       );
       const lights = render_graph.register_buffer(light_fragment_buffer.buffer.config.name);
 
-      dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size / 4 + 4;
-      const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
-
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
       // └─────────────────────────────────────────────────────────────────────────────┘
@@ -459,27 +444,24 @@ export class DeferredShadingStrategy {
       // │ 💡 PASS: Compact Active Lights                                             │
       // │    Pack sparse light data into dense buffers for efficient access         │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        // Compute pass to compact active lights to dense buffer
-        render_graph.add_pass(
-          compact_lights_pass_name,
-          RenderPassFlags.Compute,
-          {
-            shader_setup: compact_lights_shader_setup,
-            inputs: [lights, dense_lights],
-            outputs: [dense_lights],
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            // Reset light counters to zero (header u32[4])
-            const dense_lights_buf = graph.get_physical_buffer(dense_lights);
-            dense_lights_buf.write_raw(new Uint32Array([0, 0, 0, 0]), 0);
-            // Dispatch compute to compact lights
-            const max_light_count = EntityManager.get_max_rows();
-            pass.dispatch((max_light_count + 128 - 1) / 128, 1, 1);
-          }
-        );
-      }
+      const { dense_lights, emissive_lights } = this.light_sampling_pipeline.add_passes(
+        render_graph,
+        {
+          lights,
+          light_capacity: light_fragment_buffer.buffer.config.size / 4,
+          max_emissive_lights: Math.max(
+            this.svlm.config.max_emissive_lights,
+            this.gi?.config?.max_emissive_lights ?? 0
+          ),
+          tlas_bvh2_bounds: aabb_bounds,
+          tlas_bvh_info,
+          blas_directory,
+          index_buffer,
+          entity_transforms,
+          entity_index_lookup,
+          force_recreate: this.force_recreate,
+        }
+      );
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌌 PASS: Skybox Rendering                                                  │
@@ -746,6 +728,7 @@ export class DeferredShadingStrategy {
           blas_bvh2_nodes,
           index_buffer,
           dense_lights,
+          emissive_lights,
           force_recreate: this.force_recreate,
         });
 
@@ -794,6 +777,7 @@ export class DeferredShadingStrategy {
           compact_transforms,
           index_buffer,
           dense_lights,
+          emissive_lights,
           draw_count,
           main_hzb_image,
           this.force_recreate

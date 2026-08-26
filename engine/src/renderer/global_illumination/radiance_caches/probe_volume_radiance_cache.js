@@ -74,7 +74,6 @@ export class ProbeVolumeRadianceCache {
       trace_init: compute_shader("gi/ddgi_probe_trace_init.wgsl"),
       trace_hit: compute_shader("gi/ddgi_probe_trace_hit.wgsl"),
       classify: compute_shader("gi/ddgi_probe_state_classify.wgsl"),
-      compact_emissive: compute_shader("system_compute/compact_emissive_lights.wgsl"),
       shade: compute_shader("gi/ddgi_probe_trace_shade.wgsl"),
       accumulate: compute_shader("gi/ddgi_sh_probe_accumulate.wgsl"),
       depth_update: compute_shader("gi/ddgi_depth_update.wgsl"),
@@ -304,13 +303,6 @@ export class ProbeVolumeRadianceCache {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    render_graph.create_buffer({
-      name: "probe_volume_emissive_lights",
-      size: 4 + Math.max(1, Math.floor(config.max_emissive_lights)) * 12,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: context.force_recreate,
-    });
-
     render_graph.register_buffer(FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name);
 
     this._ensure_counters(context.force_recreate);
@@ -473,7 +465,7 @@ export class ProbeVolumeRadianceCache {
     const depth_slot_allocator_state = render_graph.get_resource_handle(
       "probe_volume_depth_slot_allocator_state"
     );
-    const emissive_lights = render_graph.get_resource_handle("probe_volume_emissive_lights");
+    const emissive_lights = inputs.emissive_lights;
     const entity_index_lookup = render_graph.get_resource_handle(
       FragmentGpuBuffer.entity_index_map_buffer.buffer.config.name
     );
@@ -528,42 +520,6 @@ export class ProbeVolumeRadianceCache {
 
       graph.get_physical_buffer(params).write_raw(this.params_data);
     });
-
-    render_graph.add_pass(
-      "compact_emissive_lights",
-      RenderPassFlags.Compute,
-      {
-        shader_setup: this.shader_setups.compact_emissive,
-        inputs: [
-          inputs.tlas_bvh2_bounds,
-          inputs.tlas_bvh_info,
-          inputs.blas_directory,
-          inputs.index_buffer,
-          inputs.entity_transforms,
-          materials.params_gpu_buffer,
-          materials.material_offsets_buffer,
-          materials.material_palette_buffer,
-          entity_index_lookup,
-          emissive_lights,
-          textures.albedo,
-          textures.emission,
-        ],
-        outputs: [emissive_lights],
-      },
-      (graph, frame_data) => {
-        const bounds_buffer = graph.get_physical_buffer(inputs.tlas_bvh2_bounds);
-        const emissive_lights_buffer = graph.get_physical_buffer(emissive_lights);
-        emissive_lights_buffer.write_raw(new Uint32Array([0, 0, 0, 0]), 0);
-
-        graph
-          .get_physical_pass(frame_data.current_pass)
-          .dispatch(
-            Math.ceil(Math.floor(bounds_buffer.config.size / 32) / COMPUTE_WORKGROUP_SIZE),
-            1,
-            1
-          );
-      }
-    );
 
     render_graph.add_pass(
       "probe_volume_reset",

@@ -438,12 +438,6 @@ const svlm_irradiance_advance_shader_setup = {
   },
 };
 
-const compact_emissive_lights_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "system_compute/compact_emissive_lights.wgsl" },
-  },
-};
-
 const svlm_debug_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/svlm_debug_lines.wgsl" },
@@ -605,7 +599,6 @@ export class SparseVolumetricLightmapper {
   irradiance_leaf_buffer = null;
   irradiance_buffer = null;
   irradiance_ray_buffer = null;
-  emissive_light_buffer = null;
   debug_line_buffer = null;
   debug_texture = null;
 
@@ -649,7 +642,6 @@ export class SparseVolumetricLightmapper {
   tile_bake_partition_promise = null;
   tile_bake_finalize_promise = null;
   tile_bake_start_pending = false;
-  tile_bake_emissive_ready = false;
   tile_bake_completed_probe_samples = 0;
   tile_bake_required_probe_samples = 0;
   tile_bake_total_irradiance_words = 0;
@@ -2457,11 +2449,9 @@ export class SparseVolumetricLightmapper {
     this.irradiance_leaf_buffer?.destroy();
     this.irradiance_buffer?.destroy();
     this.irradiance_ray_buffer?.destroy();
-    this.emissive_light_buffer?.destroy();
     this.irradiance_leaf_buffer = null;
     this.irradiance_buffer = null;
     this.irradiance_ray_buffer = null;
-    this.emissive_light_buffer = null;
     this.irradiance_probe_capacity = 0;
   }
 
@@ -2486,7 +2476,6 @@ export class SparseVolumetricLightmapper {
     this.tile_bake_partition_promise = null;
     this.tile_bake_finalize_promise = null;
     this.tile_bake_start_pending = false;
-    this.tile_bake_emissive_ready = false;
     this.tile_bake_completed_probe_samples = 0;
     this.tile_bake_required_probe_samples = 0;
     this.tile_bake_total_irradiance_words = 0;
@@ -2641,6 +2630,7 @@ export class SparseVolumetricLightmapper {
       blas_bvh2_nodes,
       index_buffer,
       dense_lights,
+      emissive_lights,
       force_recreate = false,
     }
   ) {
@@ -2650,7 +2640,6 @@ export class SparseVolumetricLightmapper {
     const allocation_complete =
       (this.counters_data[COUNTER_IRRADIANCE_STATUS] & IRRADIANCE_STATUS_ALLOCATION_COMPLETE) !== 0;
     let start_irradiance = false;
-    let start_emissive = false;
 
     if (
       !build_hierarchy &&
@@ -2667,10 +2656,6 @@ export class SparseVolumetricLightmapper {
       } catch (tile_start_error) {
         this._fail_tile_bake(tile_start_error);
       }
-      if (start_irradiance && !this.tile_bake_emissive_ready) {
-        start_emissive = true;
-        this.tile_bake_emissive_ready = true;
-      }
     }
 
     const gather_irradiance = this.irradiance_bake_in_flight;
@@ -2682,7 +2667,6 @@ export class SparseVolumetricLightmapper {
     const rays_per_probe = this.config.irradiance_rays_per_probe;
     const probes_per_batch = this.config.irradiance_probes_per_batch;
     const ray_words = Math.max(4, 4 + probes_per_batch * rays_per_probe * PROBE_RAY_U32_STRIDE);
-    const emissive_words = Math.max(4, 4 + this.config.max_emissive_lights * 12);
     const max_dispatch_groups = ceil_div(this.config.max_nodes, THREADS_PER_GROUP);
 
     // The hierarchy persists for partitioning and debug. Irradiance buffers are
@@ -2742,7 +2726,6 @@ export class SparseVolumetricLightmapper {
     let irradiance = null;
     let irradiance_leaves = null;
     let ray_data = null;
-    let emissive_lights = null;
     let materials = null;
     let textures = null;
     let lighting = null;
@@ -2768,17 +2751,9 @@ export class SparseVolumetricLightmapper {
         force: force_recreate,
       });
 
-      this.emissive_light_buffer = Buffer.create({
-        name: "svlm_emissive_lights",
-        size: emissive_words,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        force: force_recreate,
-      });
-
       irradiance = render_graph.register_buffer(this.irradiance_buffer.config.name);
       irradiance_leaves = render_graph.register_buffer(this.irradiance_leaf_buffer.config.name);
       ray_data = render_graph.register_buffer(this.irradiance_ray_buffer.config.name);
-      emissive_lights = render_graph.register_buffer(this.emissive_light_buffer.config.name);
       materials = register_material_buffers(render_graph);
       textures = register_texture_pools(render_graph);
       lighting = register_scene_lighting_data(render_graph);
@@ -2877,43 +2852,6 @@ export class SparseVolumetricLightmapper {
         },
         (graph, frame_data) => {
           graph.get_physical_pass(frame_data.current_pass).dispatch(1, 1, 1);
-        }
-      );
-    }
-
-    if (start_emissive) {
-      // Build the persistent light list once when the first tile chunk starts.
-      render_graph.add_pass(
-        `svlm_compact_emissive_${this.bake_serial}`,
-        RenderPassFlags.Compute,
-        {
-          inputs: [
-            tlas_bvh2_nodes,
-            tlas_bvh_info,
-            blas_directory,
-            index_buffer,
-            entity_transforms,
-            materials.params_gpu_buffer,
-            materials.material_offsets_buffer,
-            materials.material_palette_buffer,
-            entity_index_lookup,
-            emissive_lights,
-            textures.albedo,
-            textures.emission,
-          ],
-          outputs: [emissive_lights],
-          shader_setup: compact_emissive_lights_shader_setup,
-        },
-        (graph, frame_data) => {
-          const bounds_buffer = graph.get_physical_buffer(tlas_bvh2_nodes);
-          graph.get_physical_buffer(emissive_lights).write_raw(new Uint32Array([0, 0, 0, 0]), 0);
-          graph
-            .get_physical_pass(frame_data.current_pass)
-            .dispatch(
-              Math.ceil(Math.floor(bounds_buffer.config.size / 32) / THREADS_PER_GROUP),
-              1,
-              1
-            );
         }
       );
     }

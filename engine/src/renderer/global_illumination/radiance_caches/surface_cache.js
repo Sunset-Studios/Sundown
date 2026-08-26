@@ -22,8 +22,6 @@ const SURFACE_CACHE_UPDATE_DISPATCH_OFFSET = 3 * Uint32Array.BYTES_PER_ELEMENT;
 const SURFACE_CACHE_BOOTSTRAP_UPDATE_DISPATCH_OFFSET = 6 * Uint32Array.BYTES_PER_ELEMENT;
 const SURFACE_CACHE_HIT_WORD_COUNT = 12;
 const SURFACE_CACHE_RADIANCE_WORD_COUNT = 16;
-const EMPTY_EMISSIVE_LIGHT_HEADER = new Uint32Array(4);
-
 const compute_shader = (path) => ({ pipeline_shaders: { compute: { path } } });
 
 /**
@@ -32,7 +30,6 @@ const compute_shader = (path) => ({ pipeline_shaders: { compute: { path } } });
 export class SurfaceRadianceCache {
   constructor() {
     this.shader_setups = {
-      compact_emissive: compute_shader("system_compute/compact_emissive_lights.wgsl"),
       prepare_dispatch: compute_shader("gi/surface_cache_prepare_dispatch.wgsl"),
       feedback: compute_shader("gi/surface_cache_feedback.wgsl"),
       trace_hit: compute_shader("gi/surface_cache_trace_hit.wgsl"),
@@ -181,12 +178,7 @@ export class SurfaceRadianceCache {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    resources.emissive_lights = render_graph.create_buffer({
-      name: "surface_cache_emissive_lights",
-      size: 4 + Math.max(1, Math.floor(context.config.max_emissive_lights ?? 32768)) * 12,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: context.force_recreate,
-    });
+    resources.emissive_lights = context.inputs.emissive_lights;
     resources.sh = render_graph.create_buffer({
       name: "surface_cache_sh",
       size: context.total_patches * 6,
@@ -417,40 +409,6 @@ export class SurfaceRadianceCache {
       texture_pools,
       scene_lighting_data,
     } = this.surface_cache_resources;
-
-    render_graph.add_pass(
-      "surface_cache_compact_emissive_lights",
-      RenderPassFlags.Compute,
-      {
-        shader_setup: this.shader_setups.compact_emissive,
-        inputs: [
-          context.inputs.tlas_bvh2_bounds,
-          context.inputs.tlas_bvh_info,
-          context.inputs.blas_directory,
-          context.inputs.index_buffer,
-          context.inputs.entity_transforms,
-          material_buffers.params_gpu_buffer,
-          material_buffers.material_offsets_buffer,
-          material_buffers.material_palette_buffer,
-          entity_index_lookup,
-          emissive_lights,
-          texture_pools.albedo,
-          texture_pools.emission,
-        ],
-        outputs: [emissive_lights],
-      },
-      (graph, frame_data) => {
-        const bounds_buffer = graph.get_physical_buffer(context.inputs.tlas_bvh2_bounds);
-        graph.get_physical_buffer(emissive_lights).write_raw(EMPTY_EMISSIVE_LIGHT_HEADER, 0);
-        graph
-          .get_physical_pass(frame_data.current_pass)
-          .dispatch(
-            Math.ceil(Math.floor(bounds_buffer.config.size / 32) / COMPUTE_WORKGROUP_SIZE),
-            1,
-            1
-          );
-      }
-    );
 
     render_graph.add_pass(
       "surface_cache_shade_hits",
@@ -841,8 +799,6 @@ export class SurfaceRadianceCache {
       context.ray_buffer_capacity *
       (SURFACE_CACHE_HIT_WORD_COUNT + SURFACE_CACHE_RADIANCE_WORD_COUNT) *
       4;
-    const emissive_light_bytes =
-      (4 + Math.max(1, Math.floor(context.config.max_emissive_lights ?? 32768)) * 12) * 4;
     const scheduling_bytes =
       this.params_data.byteLength +
       (context.total_patches + context.bootstrap_patch_capacity) * 4 +
@@ -896,7 +852,6 @@ export class SurfaceRadianceCache {
       hashmap_bytes,
       sh_bytes,
       ray_working_set_bytes,
-      emissive_light_bytes,
       scheduling_bytes,
       output_bytes,
       total_memory_bytes:
@@ -904,7 +859,6 @@ export class SurfaceRadianceCache {
         hashmap_bytes +
         sh_bytes +
         ray_working_set_bytes +
-        emissive_light_bytes +
         scheduling_bytes +
         output_bytes,
     };

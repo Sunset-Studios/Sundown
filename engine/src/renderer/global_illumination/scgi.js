@@ -90,6 +90,7 @@ export class SCGI {
     compact_transforms,
     index_buffer,
     dense_lights,
+    emissive_lights,
     draw_count,
     _hzb_texture,
     force_recreate = false
@@ -116,6 +117,7 @@ export class SCGI {
     this.frame_context.inputs.compact_transforms = compact_transforms;
     this.frame_context.inputs.index_buffer = index_buffer;
     this.frame_context.inputs.dense_lights = dense_lights;
+    this.frame_context.inputs.emissive_lights = emissive_lights;
 
     this.radiance_cache.add_passes(render_graph, this.frame_context);
 
