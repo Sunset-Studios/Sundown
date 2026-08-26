@@ -24,6 +24,7 @@ import { DeferredDebugPipeline } from "../pipelines/deferred_debug_pipeline.js";
 import { DeferredLightingPipeline } from "../pipelines/deferred_lighting_pipeline.js";
 import { EnvironmentPipeline } from "../pipelines/environment_pipeline.js";
 import { GBufferTargetsPipeline } from "../pipelines/gbuffer_targets_pipeline.js";
+import { HistoryPipeline } from "../pipelines/history_pipeline.js";
 import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipeline.js";
 
 // Types and utilities
@@ -107,14 +108,6 @@ const transparency_composite_shader_setup = {
   attachment_blend: src_alpha_one_minus_src_alpha_blend_config,
 };
 
-const prev_lighting_mip_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "reflections/ssr_lighting_mip.wgsl",
-    },
-  },
-};
-
 const dense_lights_buffer_config = {
   name: "dense_lights",
   size: 0,
@@ -171,6 +164,7 @@ export class DeferredShadingStrategy {
   debug_pipeline = null;
   deferred_lighting_pipeline = null;
   gbuffer_targets_pipeline = null;
+  history_pipeline = null;
   environment_pipeline = null;
   scene_voxelizer = null;
   scene_voxelizer_outputs = null;
@@ -187,6 +181,7 @@ export class DeferredShadingStrategy {
     this.culling_pipeline ??= new CullingPipeline();
     this.environment_pipeline ??= new EnvironmentPipeline();
     this.gbuffer_targets_pipeline ??= new GBufferTargetsPipeline();
+    this.history_pipeline ??= new HistoryPipeline();
     this.visibility_buffer_pipeline ??= new VisibilityBufferPipeline();
     this.scene_voxelizer ??= new SceneVoxelizer();
     this.svlm ??= new SparseVolumetricLightmapper();
@@ -980,69 +975,18 @@ export class DeferredShadingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 📋 PASS: Copy History                                                    │
-      // │    Copy current bloom result into prev_lighting for the next frame        │
+      // │ 📋 PIPELINE: Update History                                                │
+      // │    Copy current frame textures and build the previous-lighting mip chain   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      render_graph.add_pass(
-        "copy_history",
-        RenderPassFlags.GraphLocal,
-        {
-          inputs: [post_lighting_image_desc, main_normal_image, main_depth_image],
-          outputs: [prev_lighting, prev_normal_image, prev_depth_image],
-        },
-        (graph, frame_data, encoder) => {
-          const curr_final_lighting = graph.get_physical_image(post_lighting_image_desc);
-          const prev_final_lighting = graph.get_physical_image(prev_lighting);
-          prev_final_lighting.copy_texture(encoder, curr_final_lighting);
-
-          const curr_normal = graph.get_physical_image(main_normal_image);
-          const prev_normal = graph.get_physical_image(prev_normal_image);
-          if (prev_normal) {
-            prev_normal.copy_texture(encoder, curr_normal);
-          }
-
-          const curr_depth = graph.get_physical_image(main_depth_image);
-          const prev_depth = graph.get_physical_image(prev_depth_image);
-          if (prev_depth) {
-            prev_depth.copy_texture(encoder, curr_depth);
-          }
-        }
-      );
-
-      let prev_lighting_mip_params_chain = [];
-      for (let i = 1; i < this.prev_lighting_image.config.mip_levels; i++) {
-        prev_lighting_mip_params_chain.push(
-          render_graph.create_buffer({
-            name: `prev_lighting_mip_params_${i}`,
-            data: [0.0, 0.0, 0.0, 0.0],
-            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          })
-        );
-
-        render_graph.add_pass(
-          `prev_lighting_mip_${i}`,
-          RenderPassFlags.Compute,
-          {
-            inputs: [prev_lighting, prev_lighting, prev_lighting_mip_params_chain[i - 1]],
-            outputs: [prev_lighting],
-            input_views: [i, i + 1],
-            shader_setup: prev_lighting_mip_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            const prevLighting = graph.get_physical_image(prev_lighting);
-            const params = graph.get_physical_buffer(prev_lighting_mip_params_chain[i - 1]);
-
-            const srcWidth = Math.max(1, prevLighting.config.width >> (i - 1));
-            const srcHeight = Math.max(1, prevLighting.config.height >> (i - 1));
-            const dstWidth = Math.max(1, prevLighting.config.width >> i);
-            const dstHeight = Math.max(1, prevLighting.config.height >> i);
-
-            params.write([srcWidth, srcHeight, dstWidth, dstHeight]);
-            pass.dispatch((dstWidth + 7) / 8, (dstHeight + 7) / 8, 1);
-          }
-        );
-      }
+      this.history_pipeline.add_passes(render_graph, {
+        current_lighting_image: post_lighting_image_desc,
+        current_normal_image: main_normal_image,
+        current_depth_image: main_depth_image,
+        prev_lighting_image: prev_lighting,
+        prev_normal_image,
+        prev_depth_image,
+        lighting_mip_levels: this.prev_lighting_image.config.mip_levels,
+      });
 
       this.bloom.add_passes(
         render_graph,
