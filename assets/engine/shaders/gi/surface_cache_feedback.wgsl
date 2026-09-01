@@ -26,20 +26,10 @@ fn surface_cache_patch_is_due(patch_index: u32) -> bool {
     let history_is_mature =
         surface_patch.history.x >= surface_cache_params.max_history_samples &&
         surface_patch.metadata.w >= surface_cache_params.history_footprint_end_samples;
-    if (!history_is_mature) {
-        return true;
-    }
 
-    // Once both radiance and footprint history are saturated, distribute
-    // maintenance updates across frames. Invalidation lowers radiance maturity
-    // before this test, so unfinished refresh work remains eligible.
-    let update_period = max(
-        u32(surface_cache_params.mature_patch_update_period),
-        1u
-    );
-    return update_period == 1u ||
-        hash(patch_index) % update_period ==
-            u32(surface_cache_params.frame_index) % update_period;
+    return !history_is_mature || u32(surface_cache_params.mature_patch_update_period) == 1u ||
+        hash(patch_index) % u32(surface_cache_params.mature_patch_update_period) ==
+            u32(surface_cache_params.frame_index) % u32(surface_cache_params.mature_patch_update_period);
 }
 
 fn append_active_patch(patch_index: u32, bootstrap: bool) {
@@ -163,29 +153,24 @@ fn feedback_surface_level_deduplicated(
     capacity: u32,
     search_count: u32,
     lifetime: u32,
-    descriptor_valid: bool,
     subgroup_lane: u32,
     subgroup_size: u32
 ) -> f32 {
-    var quantized_position = vec3<i32>(0);
-    var grid_key = vec4<i32>(0);
-    if (descriptor_valid) {
-        let cell_size = surface_cache_cell_size(cell_exponent);
-        let descriptor_position =
-            position + descriptor_bias * cell_size;
-        quantized_position = vec3<i32>(floor(
-            descriptor_position / cell_size
-        ));
-        grid_key = surface_cache_make_grid_key(
-            quantized_position,
-            directional_bin,
-            cell_exponent
-        );
-    }
+    let cell_size = surface_cache_cell_size(cell_exponent);
+    let descriptor_position =
+        position + descriptor_bias * cell_size;
+    let quantized_position = vec3<i32>(floor(
+        descriptor_position / cell_size
+    ));
+    let grid_key = surface_cache_make_grid_key(
+        quantized_position,
+        directional_bin,
+        cell_exponent
+    );
 
     // Coherent screen-space pixels usually share a cache descriptor. Electing
     // one lane per exact key removes redundant global probes and atomic traffic.
-    var pending = descriptor_valid;
+    var pending = true;
     var sample_count = 0.0;
     for (
         var group_index = 0u;
@@ -274,57 +259,45 @@ fn cs(
     @builtin(subgroup_invocation_id) subgroup_lane: u32,
     @builtin(subgroup_size) subgroup_size: u32
 ) {
-    let pixel_coord = gid.xy;
     let full_resolution = surface_cache_full_resolution(surface_cache_params);
-    let frame = u32(surface_cache_params.frame_index);
-    let capacity = max(u32(surface_cache_params.total_patch_count), 1u);
     let search_count = surface_cache_hash_search_count(surface_cache_params);
-    let lifetime = max(u32(surface_cache_params.cache_entry_lifetime), 1u);
-    var pixel_valid =
-        pixel_coord.x < full_resolution.x &&
-        pixel_coord.y < full_resolution.y;
-    var position = vec3<f32>(0.0);
-    var normal = vec3<f32>(0.0, 1.0, 0.0);
-    var descriptor_bias = vec3<f32>(0.0);
-    var directional_bin = 0u;
-    var base_exponent_value = f32(SURFACE_CACHE_MIN_CELL_EXPONENT);
-    var base_fine_exponent = SURFACE_CACHE_MIN_CELL_EXPONENT;
-    var base_coarse_exponent = SURFACE_CACHE_MIN_CELL_EXPONENT;
+    if (gid.x >= full_resolution.x || gid.y >= full_resolution.y) {
+        return;
+    } 
 
-    if (pixel_valid) {
-        let normal_data = textureLoad(
-            gbuffer_normal,
-            vec2<i32>(pixel_coord),
-            0
-        );
-        pixel_valid = dot(normal_data.xyz, normal_data.xyz) > 1e-8;
-        if (pixel_valid) {
-            normal = safe_normalize(normal_data.xyz);
-            let descriptor_normal = safe_normalize(normal);
-            descriptor_bias = surface_cache_descriptor_offset_normalized(
-                descriptor_normal,
-                1.0,
-                surface_cache_params
-            );
-            directional_bin = surface_cache_directional_bin_normalized(
-                descriptor_normal
-            );
-            position = reconstruct_world_position(
-                coord_to_uv(vec2<i32>(pixel_coord), full_resolution),
-                textureLoad(depth_texture, vec2<i32>(pixel_coord), 0).r,
-                u32(frame_info.view_index)
-            );
-            base_exponent_value = surface_cache_cell_exponent_value(
-                position,
-                surface_cache_params
-            );
-            base_fine_exponent = i32(floor(base_exponent_value));
-            base_coarse_exponent = min(
-                base_fine_exponent + 1,
-                SURFACE_CACHE_MAX_CELL_EXPONENT
-            );
-        }
+    let normal_data = textureLoad(
+        gbuffer_normal,
+        vec2<i32>(gid.xy),
+        0
+    );
+    if (dot(normal_data.xyz, normal_data.xyz) <= 1e-8) {
+        return;
     }
+
+    let normal = safe_normalize(normal_data.xyz);
+    let descriptor_normal = safe_normalize(normal);
+    let descriptor_bias = surface_cache_descriptor_offset_normalized(
+        descriptor_normal,
+        1.0,
+        surface_cache_params
+    );
+    let directional_bin = surface_cache_directional_bin_normalized(
+        descriptor_normal
+    );
+    let position = reconstruct_world_position(
+        coord_to_uv(vec2<i32>(gid.xy), full_resolution),
+        textureLoad(depth_texture, vec2<i32>(gid.xy), 0).r,
+        u32(frame_info.view_index)
+    );
+    let base_exponent_value = surface_cache_cell_exponent_value(
+        position,
+        surface_cache_params
+    );
+    let base_fine_exponent = i32(floor(base_exponent_value));
+    let base_coarse_exponent = min(
+        base_fine_exponent + 1,
+        SURFACE_CACHE_MAX_CELL_EXPONENT
+    );
 
     // Always request the native footprint so it can accumulate history. While
     // either native level is new or underconverged, also request a temporary
@@ -333,34 +306,30 @@ fn cs(
         position,
         normal,
         descriptor_bias,
-        frame,
+        u32(surface_cache_params.frame_index),
         base_fine_exponent,
         directional_bin,
-        capacity,
+        u32(surface_cache_params.total_patch_count),
         search_count,
-        lifetime,
-        pixel_valid,
+        u32(surface_cache_params.cache_entry_lifetime),
         subgroup_lane,
         subgroup_size
     );
     var cell_history = fine_history;
-    let base_coarse_valid = pixel_valid &&
-        base_coarse_exponent != base_fine_exponent;
     let coarse_history = feedback_surface_level_deduplicated(
         position,
         normal,
         descriptor_bias,
-        frame,
+        u32(surface_cache_params.frame_index),
         base_coarse_exponent,
         directional_bin,
-        capacity,
+        u32(surface_cache_params.total_patch_count),
         search_count,
-        lifetime,
-        base_coarse_valid,
+        u32(surface_cache_params.cache_entry_lifetime),
         subgroup_lane,
         subgroup_size
     );
-    if (base_coarse_valid) {
+    if (base_coarse_exponent != base_fine_exponent) {
         cell_history = min(cell_history, coarse_history);
     }
 
@@ -377,39 +346,31 @@ fn cs(
         history_fine_exponent + 1,
         SURFACE_CACHE_MAX_CELL_EXPONENT
     );
-    let history_fine_valid = pixel_valid &&
-        history_fine_exponent != base_fine_exponent &&
-        history_fine_exponent != base_coarse_exponent;
+
     feedback_surface_level_deduplicated(
         position,
         normal,
         descriptor_bias,
-        frame,
+        u32(surface_cache_params.frame_index),
         history_fine_exponent,
         directional_bin,
-        capacity,
+        u32(surface_cache_params.total_patch_count),
         search_count,
-        lifetime,
-        history_fine_valid,
+        u32(surface_cache_params.cache_entry_lifetime),
         subgroup_lane,
         subgroup_size
     );
 
-    let history_coarse_valid = pixel_valid &&
-        history_coarse_exponent != history_fine_exponent &&
-        history_coarse_exponent != base_fine_exponent &&
-        history_coarse_exponent != base_coarse_exponent;
     feedback_surface_level_deduplicated(
         position,
         normal,
         descriptor_bias,
-        frame,
+        u32(surface_cache_params.frame_index),
         history_coarse_exponent,
         directional_bin,
-        capacity,
+        u32(surface_cache_params.total_patch_count),
         search_count,
-        lifetime,
-        history_coarse_valid,
+        u32(surface_cache_params.cache_entry_lifetime),
         subgroup_lane,
         subgroup_size
     );

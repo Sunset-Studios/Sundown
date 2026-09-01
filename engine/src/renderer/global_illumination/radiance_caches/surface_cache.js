@@ -249,17 +249,14 @@ export class SurfaceRadianceCache {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    resources.debug_output =
-      context.debug_view === DebugDrawType.GI_SurfaceCache
-        ? render_graph.create_image({
-          name: "surface_cache_debug_output",
-          format: "rgba16float",
-          width: context.width,
-          height: context.height,
-          usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-          force: context.force_recreate,
-        })
-        : null;
+    resources.debug_output = render_graph.create_image({
+      name: "surface_cache_debug_output",
+      format: "rgba16float",
+      width: context.width,
+      height: context.height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: context.force_recreate,
+    });
     return resources;
   }
 
