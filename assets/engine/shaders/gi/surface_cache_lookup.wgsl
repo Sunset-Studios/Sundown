@@ -33,7 +33,7 @@ fn surface_cache_lookup_context(
         descriptor_normal,
         // directional_bin normalized the same receiver again. Reuse the exact
         // normalized value already needed by descriptor quantization.
-        surface_cache_directional_bin_normalized(descriptor_normal),
+        surface_cache_directional_bin(descriptor_normal),
         surface_cache_dominant_axis(receiver_normal),
         surface_cache_dominant_axis(descriptor_normal),
         max(u32(surface_cache_params.total_patch_count), 1u),
@@ -52,48 +52,12 @@ fn surface_cache_lookup_context_normalized(
         position,
         normal,
         normal,
-        surface_cache_directional_bin_normalized(normal),
+        surface_cache_directional_bin(normal),
         dominant_axis,
         dominant_axis,
         max(u32(surface_cache_params.total_patch_count), 1u),
         surface_cache_hash_search_count(surface_cache_params)
     );
-}
-
-fn surface_cache_descriptor_offset_for_context(
-    context: SurfaceCacheLookupContext,
-    cell_size: f32
-) -> vec3<f32> {
-    let bias = max(surface_cache_params.cache_normal_bias, 0.0) * cell_size;
-    if (context.descriptor_dominant_axis == 0u) {
-        return vec3<f32>(select(
-            -bias,
-            bias,
-            context.descriptor_normal.x >= 0.0
-        ), 0.0, 0.0);
-    }
-    if (context.descriptor_dominant_axis == 1u) {
-        return vec3<f32>(0.0, select(
-            -bias,
-            bias,
-            context.descriptor_normal.y >= 0.0
-        ), 0.0);
-    }
-    return vec3<f32>(0.0, 0.0, select(
-        -bias,
-        bias,
-        context.descriptor_normal.z >= 0.0
-    ));
-}
-
-fn surface_cache_quantize_context(
-    context: SurfaceCacheLookupContext,
-    cell_exponent: i32
-) -> vec3<i32> {
-    let cell_size = surface_cache_cell_size(cell_exponent);
-    let descriptor_position = context.receiver_position +
-        surface_cache_descriptor_offset_for_context(context, cell_size);
-    return vec3<i32>(floor(descriptor_position / cell_size));
 }
 
 fn surface_cache_find_patch(
@@ -133,7 +97,7 @@ fn surface_cache_level_history(
     cell_exponent: i32
 ) -> f32 {
     let patch_index_i = surface_cache_find_patch(
-        surface_cache_quantize_context(context, cell_exponent),
+        surface_cache_quantize_position(context.receiver_position, context.receiver_normal, cell_exponent, surface_cache_params),
         context.directional_bin,
         cell_exponent,
         context.hash_capacity,
@@ -416,7 +380,7 @@ fn surface_cache_sample_level_nearest(
 ) -> SurfaceCacheLevelSample {
     let cell_size = surface_cache_cell_size(cell_exponent);
     let tap = surface_cache_sample_descriptor(
-        surface_cache_quantize_context(context, cell_exponent),
+        surface_cache_quantize_position(context.receiver_position, context.receiver_normal, cell_exponent, surface_cache_params),
         context,
         cell_exponent,
         max(cell_size * SURFACE_CACHE_LOOKUP_PLANE_LIMIT_SCALE, 0.002),
@@ -439,9 +403,10 @@ fn surface_cache_sample_level(
 ) -> SurfaceCacheLevelSample {
     let cell_size = surface_cache_cell_size(cell_exponent);
     let dominant_axis = context.dominant_axis;
-    let descriptor_offset = surface_cache_descriptor_offset_for_context(
-        context,
-        cell_size
+    let descriptor_offset = surface_cache_descriptor_offset(
+        context.descriptor_normal,
+        cell_size,
+        surface_cache_params
     );
     let descriptor_position = context.receiver_position + descriptor_offset;
     let tangent_position = surface_cache_tangent_components(

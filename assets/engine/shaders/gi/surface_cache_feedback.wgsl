@@ -146,7 +146,6 @@ fn feedback_surface_descriptor(
 fn feedback_surface_level_deduplicated(
     position: vec3<f32>,
     normal: vec3<f32>,
-    descriptor_bias: vec3<f32>,
     frame: u32,
     cell_exponent: i32,
     directional_bin: u32,
@@ -158,7 +157,7 @@ fn feedback_surface_level_deduplicated(
 ) -> f32 {
     let cell_size = surface_cache_cell_size(cell_exponent);
     let descriptor_position =
-        position + descriptor_bias * cell_size;
+        position;
     let quantized_position = vec3<i32>(floor(
         descriptor_position / cell_size
     ));
@@ -275,14 +274,8 @@ fn cs(
     }
 
     let normal = safe_normalize(normal_data.xyz);
-    let descriptor_normal = safe_normalize(normal);
-    let descriptor_bias = surface_cache_descriptor_offset_normalized(
-        descriptor_normal,
-        1.0,
-        surface_cache_params
-    );
-    let directional_bin = surface_cache_directional_bin_normalized(
-        descriptor_normal
+    let directional_bin = surface_cache_directional_bin(
+        normal
     );
     let position = reconstruct_world_position(
         coord_to_uv(vec2<i32>(gid.xy), full_resolution),
@@ -305,7 +298,6 @@ fn cs(
     let fine_history = feedback_surface_level_deduplicated(
         position,
         normal,
-        descriptor_bias,
         u32(surface_cache_params.frame_index),
         base_fine_exponent,
         directional_bin,
@@ -319,7 +311,6 @@ fn cs(
     let coarse_history = feedback_surface_level_deduplicated(
         position,
         normal,
-        descriptor_bias,
         u32(surface_cache_params.frame_index),
         base_coarse_exponent,
         directional_bin,
@@ -350,7 +341,6 @@ fn cs(
     feedback_surface_level_deduplicated(
         position,
         normal,
-        descriptor_bias,
         u32(surface_cache_params.frame_index),
         history_fine_exponent,
         directional_bin,
@@ -364,7 +354,6 @@ fn cs(
     feedback_surface_level_deduplicated(
         position,
         normal,
-        descriptor_bias,
         u32(surface_cache_params.frame_index),
         history_coarse_exponent,
         directional_bin,

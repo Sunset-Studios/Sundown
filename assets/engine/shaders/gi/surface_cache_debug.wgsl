@@ -44,7 +44,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         surface_cache_params
     );
     let cell_exponent = history_levels.fine_exponent;
-    let descriptor_position = surface_cache_quantize_position_normalized(
+    let descriptor_position = surface_cache_quantize_position(
         position,
         lookup_context.receiver_normal,
         cell_exponent,

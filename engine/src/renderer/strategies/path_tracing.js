@@ -130,8 +130,8 @@ export class PathTracingStrategy {
   path_tracer = null;
 
   // Path tracing parameters (optimized for hybrid mode)
-  max_bounces = 4;
-  trace_rate = 4; // 1=full res, 2=half, 4=quarter, etc.
+  max_bounces = 1;
+  trace_rate = 1; // 1=full res, 2=half, 4=quarter, etc.
   samples_per_pixel = 1; // Number of samples per pixel per frame
   max_accumulation_frames = Infinity; // Infinite keeps progressive accumulation enabled
 

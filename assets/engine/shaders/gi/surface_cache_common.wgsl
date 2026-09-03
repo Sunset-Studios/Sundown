@@ -420,9 +420,9 @@ fn surface_cache_cell_exponent_value(
     params: SurfaceCacheParams
 ) -> f32 {
     let view = view_buffer[u32(frame_info.view_index)];
-    let projection_y_scale = max(abs(view.projection_matrix[1][1]), 1e-6);
-    let view_depth = abs((view.view_matrix * vec4<f32>(position, 1.0)).z);
+    let projection_y_scale = abs(view.projection_matrix[1][1]);
     let is_perspective = abs(view.projection_matrix[3][3]) < 0.5;
+    let view_depth = abs((view.view_matrix * vec4<f32>(position, 1.0)).z);
     // projection_y_scale is cot(vertical_fov / 2), so the perspective branch
     // is the article's d * tan(vertical_fov / 2) half-height calculation.
     let half_view_height = select(
@@ -539,12 +539,12 @@ fn surface_cache_decode_cell_exponent(encoded_exponent: u32) -> i32 {
     return i32(encoded_exponent) - SURFACE_CACHE_CELL_EXPONENT_BIAS;
 }
 
-fn surface_cache_descriptor_offset_normalized(
-    normalized: vec3<f32>,
+fn surface_cache_descriptor_offset(
+    normal: vec3<f32>,
     cell_size: f32,
     params: SurfaceCacheParams
 ) -> vec3<f32> {
-    let absolute_normal = abs(normalized);
+    let absolute_normal = abs(normal);
     let dominant_axis = select(
         select(2u, 1u, absolute_normal.y >= absolute_normal.z),
         0u,
@@ -553,24 +553,12 @@ fn surface_cache_descriptor_offset_normalized(
     let bias = max(params.cache_normal_bias, 0.0) * cell_size;
 
     if (dominant_axis == 0u) {
-        return vec3<f32>(select(-bias, bias, normalized.x >= 0.0), 0.0, 0.0);
+        return vec3<f32>(select(-bias, bias, normal.x >= 0.0), 0.0, 0.0);
     }
     if (dominant_axis == 1u) {
-        return vec3<f32>(0.0, select(-bias, bias, normalized.y >= 0.0), 0.0);
+        return vec3<f32>(0.0, select(-bias, bias, normal.y >= 0.0), 0.0);
     }
-    return vec3<f32>(0.0, 0.0, select(-bias, bias, normalized.z >= 0.0));
-}
-
-fn surface_cache_descriptor_offset(
-    normal: vec3<f32>,
-    cell_size: f32,
-    params: SurfaceCacheParams
-) -> vec3<f32> {
-    return surface_cache_descriptor_offset_normalized(
-        safe_normalize(normal),
-        cell_size,
-        params
-    );
+    return vec3<f32>(0.0, 0.0, select(-bias, bias, normal.z >= 0.0));
 }
 
 fn surface_cache_quantize_position(
@@ -582,21 +570,6 @@ fn surface_cache_quantize_position(
     let cell_size = surface_cache_cell_size(cell_exponent);
     let descriptor_position = position + surface_cache_descriptor_offset(
         normal,
-        cell_size,
-        params
-    );
-    return vec3<i32>(floor(descriptor_position / cell_size));
-}
-
-fn surface_cache_quantize_position_normalized(
-    position: vec3<f32>,
-    normalized: vec3<f32>,
-    cell_exponent: i32,
-    params: SurfaceCacheParams
-) -> vec3<i32> {
-    let cell_size = surface_cache_cell_size(cell_exponent);
-    let descriptor_position = position + surface_cache_descriptor_offset_normalized(
-        normalized,
         cell_size,
         params
     );
@@ -667,42 +640,8 @@ fn surface_cache_octahedral_direction(normal: vec3<f32>) -> vec2<f32> {
     );
 }
 
-fn surface_cache_octahedral_direction_normalized(
-    normalized: vec3<f32>
-) -> vec2<f32> {
-    let projected = normalized / max(
-        abs(normalized.x) + abs(normalized.y) + abs(normalized.z),
-        1e-6
-    );
-    var octahedral = projected.xy;
-    if (projected.z < 0.0) {
-        let signs = vec2<f32>(
-            select(-1.0, 1.0, projected.x >= 0.0),
-            select(-1.0, 1.0, projected.y >= 0.0)
-        );
-        octahedral = (vec2<f32>(1.0) - abs(projected.yx)) * signs;
-    }
-    return clamp(
-        octahedral * 0.5 + vec2<f32>(0.5),
-        vec2<f32>(0.0),
-        vec2<f32>(1.0)
-    );
-}
-
 fn surface_cache_directional_bin(normal: vec3<f32>) -> u32 {
-    let encoded = surface_cache_octahedral_direction(normal);
-    let coordinate = min(
-        vec2<u32>(
-            encoded * f32(SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION)
-        ),
-        vec2<u32>(SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION - 1u)
-    );
-    return coordinate.x +
-        coordinate.y * SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION;
-}
-
-fn surface_cache_directional_bin_normalized(normalized: vec3<f32>) -> u32 {
-    let encoded = surface_cache_octahedral_direction_normalized(normalized);
+    let encoded = encode_octahedral(normal);
     let coordinate = min(
         vec2<u32>(
             encoded * f32(SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION)
