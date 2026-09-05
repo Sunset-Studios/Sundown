@@ -112,8 +112,7 @@ fn trace_surface_cache_prepared_ray(
 fn trace_surface_cache_ray(
     patch_index: u32,
     ray_index_in_patch: u32,
-    ray_data_index: u32,
-    bootstrap_batch: bool
+    ray_data_index: u32
 ) {
     let surface_patch = surface_cache[patch_index];
     let normal = safe_normalize(surface_patch.normal_cell_exponent.xyz);
@@ -122,11 +121,9 @@ fn trace_surface_cache_ray(
         seed,
         normal,
         u32(surface_patch.history.y) + ray_index_in_patch,
-        select(
-            0.0,
-            SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY,
-            bootstrap_batch
-        )
+        // Reuse the bootstrap importance mixture for regular refresh too.
+        // Its inverse PDF is already carried into SH accumulation.
+        SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY
     );
     let direction = ray_sample.direction;
     let cell_exponent = surface_cache_grid_key_cell_exponent(surface_patch.grid_key);
@@ -240,11 +237,7 @@ fn cs(
             normal_history.xyz,
             r1,
             r2,
-            select(
-                0.0,
-                SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY,
-                work.bootstrap_batch != 0u
-            )
+            SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY
         );
         trace_surface_cache_prepared_ray(
             ray_sample.direction,
@@ -275,7 +268,6 @@ fn cs(
     trace_surface_cache_ray(
         patch_index,
         work.ray_index_in_patch,
-        work.data_index,
-        work.bootstrap_batch != 0u
+        work.data_index
     );
 }

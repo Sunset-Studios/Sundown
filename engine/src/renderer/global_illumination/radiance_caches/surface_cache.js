@@ -243,12 +243,6 @@ export class SurfaceRadianceCache {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
-    resources.atrous_params = render_graph.create_buffer({
-      name: "surface_cache_atrous_params",
-      size: this.atrous_params_data.length,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      force: context.force_recreate,
-    });
     resources.debug_output = render_graph.create_image({
       name: "surface_cache_debug_output",
       format: "rgba16float",
@@ -640,11 +634,19 @@ export class SurfaceRadianceCache {
       requested_atrous_pass_count > 0
         ? requested_atrous_pass_count + (requested_atrous_pass_count & 1)
         : 0;
-    const { atrous_params, history_curr, atrous_scratch, resolve_aux } = this.surface_cache_resources;
+    const { history_curr, atrous_scratch, resolve_aux } = this.surface_cache_resources;
 
     let atrous_read = history_curr;
     let atrous_write = atrous_scratch;
     for (let pass_index = 0; pass_index < atrous_pass_count; pass_index++) {
+      // Queue writes precede the graph's GPU submission. Each pass needs a
+      // distinct persistent uniform so earlier scales retain their step width.
+      const atrous_params = render_graph.create_buffer({
+        name: `surface_cache_atrous_params_${pass_index}`,
+        size: this.atrous_params_data.length,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        force: context.force_recreate,
+      });
       render_graph.add_pass(
         `surface_cache_atrous_upload_${context.history_frame}_${pass_index}`,
         RenderPassFlags.GraphLocal,
