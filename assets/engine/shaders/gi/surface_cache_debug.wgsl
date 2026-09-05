@@ -40,7 +40,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let lookup_context = surface_cache_lookup_context(position, normal);
     let history_levels = surface_cache_history_cell_levels_from_base(
         base_levels.exponent_value,
-        surface_cache_native_history(lookup_context, base_levels),
         surface_cache_params
     );
     let cell_exponent = history_levels.fine_exponent;

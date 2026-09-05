@@ -298,16 +298,10 @@ export class SCGIStats extends DevConsoleTool {
       metric_pair(
         "Pixel footprint",
         `${Number(stats.cache_pixel_footprint).toFixed(1)}-${(
-          Number(stats.cache_pixel_footprint) * Number(stats.history_footprint_max_scale)
+          Number(stats.cache_pixel_footprint)
         ).toFixed(1)} px`,
         "Normal bias",
         Number(stats.cache_normal_bias).toFixed(4)
-      );
-      metric_pair(
-        "History footprint",
-        `${format_number(stats.history_footprint_start_samples)}-${format_number(stats.history_footprint_end_samples)} samples`,
-        "Low-history scale",
-        `${Number(stats.history_footprint_max_scale).toFixed(1)}x`
       );
       metric_pair(
         "Maximum ray length",

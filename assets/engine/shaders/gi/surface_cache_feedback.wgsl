@@ -23,9 +23,7 @@ fn append_regular_patch(patch_index: u32) {
 
 fn surface_cache_patch_is_due(patch_index: u32) -> bool {
     let surface_patch = surface_cache[patch_index];
-    let history_is_mature =
-        surface_patch.history.x >= surface_cache_params.max_history_samples &&
-        surface_patch.metadata.w >= surface_cache_params.history_footprint_end_samples;
+    let history_is_mature = surface_patch.history.x >= surface_cache_params.max_history_samples;
 
     return !history_is_mature || u32(surface_cache_params.mature_patch_update_period) == 1u ||
         hash(patch_index) % u32(surface_cache_params.mature_patch_update_period) ==
@@ -307,7 +305,6 @@ fn cs(
         subgroup_lane,
         subgroup_size
     );
-    var cell_history = fine_history;
     let coarse_history = feedback_surface_level_deduplicated(
         position,
         normal,
@@ -320,15 +317,9 @@ fn cs(
         subgroup_lane,
         subgroup_size
     );
-    if (base_coarse_exponent != base_fine_exponent) {
-        cell_history = min(cell_history, coarse_history);
-    }
 
     let history_exponent_value = clamp(
-        base_exponent_value + log2(surface_cache_history_footprint_scale(
-            cell_history,
-            surface_cache_params
-        )),
+        base_exponent_value,
         f32(SURFACE_CACHE_MIN_CELL_EXPONENT),
         f32(SURFACE_CACHE_MAX_CELL_EXPONENT)
     );

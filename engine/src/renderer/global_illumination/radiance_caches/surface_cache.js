@@ -294,23 +294,17 @@ export class SurfaceRadianceCache {
         this.params_data[13] = Math.max(context.config.cache_pixel_footprint ?? 3, 1);
         this.params_data[14] = clamp(Math.floor(context.config.hash_search_count ?? 10), 1, 64);
         this.params_data[15] = Math.max(context.config.cache_normal_bias ?? 0, 0);
-        this.params_data[16] = Math.max(context.config.history_footprint_start_samples ?? 4, 0);
-        this.params_data[17] = Math.max(
-          context.config.history_footprint_end_samples ?? 32,
-          this.params_data[16] + 1
-        );
-        this.params_data[18] = Math.max(context.config.history_footprint_max_scale ?? 1, 1);
-        this.params_data[19] = context.bootstrap_enabled ? context.bootstrap_patch_capacity : 0;
-        this.params_data[20] = context.mature_patch_update_period;
-        this.params_data[21] = context.maximum_ray_count_per_frame;
-        this.params_data[22] = clamp(
+        this.params_data[16] = context.bootstrap_enabled ? context.bootstrap_patch_capacity : 0;
+        this.params_data[17] = context.mature_patch_update_period;
+        this.params_data[18] = context.maximum_ray_count_per_frame;
+        this.params_data[19] = clamp(
           context.config.native_promotion_start_confidence ?? 0.3,
           0.0,
           0.99
         );
-        this.params_data[23] = clamp(
+        this.params_data[20] = clamp(
           context.config.native_promotion_end_confidence ?? 0.85,
-          this.params_data[22] + 0.01,
+          this.params_data[19] + 0.01,
           1.0
         );
         graph.get_physical_buffer(params).write_raw(this.params_data);
@@ -834,9 +828,6 @@ export class SurfaceRadianceCache {
       max_ray_length: context.config.max_ray_length,
       cache_entry_lifetime: context.config.cache_entry_lifetime,
       cache_pixel_footprint: context.config.cache_pixel_footprint,
-      history_footprint_start_samples: context.config.history_footprint_start_samples ?? 0,
-      history_footprint_end_samples: context.config.history_footprint_end_samples ?? 0,
-      history_footprint_max_scale: context.config.history_footprint_max_scale ?? 1,
       cache_normal_bias: context.config.cache_normal_bias,
       hash_search_count: context.config.hash_search_count,
       history_hysteresis: context.config.history_hysteresis,

@@ -15,8 +15,8 @@ const SURFACE_CACHE_DIRECTIONAL_BIN_COUNT: u32 =
     SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION *
     SURFACE_CACHE_DIRECTIONAL_BIN_RESOLUTION;
 const SURFACE_CACHE_CELL_EXPONENT_BIAS: i32 = 16;
-const SURFACE_CACHE_MIN_CELL_EXPONENT: i32 = -16;
-const SURFACE_CACHE_MAX_CELL_EXPONENT: i32 = 15;
+const SURFACE_CACHE_MIN_CELL_EXPONENT: i32 = -32;
+const SURFACE_CACHE_MAX_CELL_EXPONENT: i32 = 31;
 const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.0;
 const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 1.0;
 const SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP: f32 = 2.0;
@@ -42,9 +42,6 @@ struct SurfaceCacheParams {
     cache_pixel_footprint: f32,
     hash_search_count: f32,
     cache_normal_bias: f32,
-    history_footprint_start_samples: f32,
-    history_footprint_end_samples: f32,
-    history_footprint_max_scale: f32,
     bootstrap_patch_capacity: f32,
     mature_patch_update_period: f32,
     maximum_ray_count_per_frame: f32,
@@ -387,29 +384,8 @@ fn surface_cache_commit_accumulation(
         valid_sample_count,
         f32(surface_cache_regular_rays_per_patch(params))
     );
-    (*cache_buffer)[patch_index].metadata.w = min(
-        (*cache_buffer)[patch_index].metadata.w + footprint_history_increment,
-        max(params.history_footprint_end_samples, 1.0)
-    );
-}
-
-fn surface_cache_history_footprint_scale(
-    sample_count: f32,
-    params: SurfaceCacheParams
-) -> f32 {
-    let maximum_scale = max(params.history_footprint_max_scale, 1.0);
-    if (maximum_scale <= 1.0) {
-        return 1.0;
-    }
-    let history_readiness = smoothstep(
-        max(params.history_footprint_start_samples, 0.0),
-        max(
-            params.history_footprint_end_samples,
-            params.history_footprint_start_samples + 1.0
-        ),
-        max(sample_count, 0.0)
-    );
-    return mix(maximum_scale, 1.0, history_readiness);
+    (*cache_buffer)[patch_index].metadata.w = 
+        (*cache_buffer)[patch_index].metadata.w + footprint_history_increment;
 }
 
 // Convert the configured screen-space feature size into a continuous
@@ -476,15 +452,10 @@ fn surface_cache_cell_levels(
 
 fn surface_cache_history_cell_levels_from_base(
     base_exponent_value: f32,
-    sample_count: f32,
     params: SurfaceCacheParams
 ) -> SurfaceCacheCellLevels {
-    let footprint_scale = surface_cache_history_footprint_scale(
-        sample_count,
-        params
-    );
     let exponent_value = clamp(
-        base_exponent_value + log2(footprint_scale),
+        base_exponent_value,
         f32(SURFACE_CACHE_MIN_CELL_EXPONENT),
         f32(SURFACE_CACHE_MAX_CELL_EXPONENT)
     );
@@ -513,12 +484,10 @@ fn surface_cache_history_cell_levels_from_base(
 
 fn surface_cache_history_cell_levels(
     position: vec3<f32>,
-    sample_count: f32,
     params: SurfaceCacheParams
 ) -> SurfaceCacheCellLevels {
     return surface_cache_history_cell_levels_from_base(
         surface_cache_cell_exponent_value(position, params),
-        sample_count,
         params
     );
 }

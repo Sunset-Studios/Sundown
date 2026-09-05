@@ -697,18 +697,8 @@ fn surface_cache_sample_context(
         context.receiver_position,
         surface_cache_params
     );
-    let base_fine_exponent = i32(floor(base_exponent_value));
-    let base_coarse_exponent = min(
-        base_fine_exponent + 1,
-        SURFACE_CACHE_MAX_CELL_EXPONENT
-    );
     let levels = surface_cache_history_cell_levels_from_base(
         base_exponent_value,
-        surface_cache_native_history_exponents(
-            context,
-            base_fine_exponent,
-            base_coarse_exponent
-        ),
         surface_cache_params
     );
     let fine_sample = surface_cache_sample_level(
@@ -761,19 +751,9 @@ fn surface_cache_sample_nearest_irradiance(
         position,
         surface_cache_params
     );
-    let base_fine_exponent = i32(floor(base_exponent_value));
-    let base_coarse_exponent = min(
-        base_fine_exponent + 1,
-        SURFACE_CACHE_MAX_CELL_EXPONENT
-    );
     let context = surface_cache_lookup_context(position, normal);
     let levels = surface_cache_history_cell_levels_from_base(
         base_exponent_value,
-        surface_cache_native_history_exponents(
-            context,
-            base_fine_exponent,
-            base_coarse_exponent
-        ),
         surface_cache_params
     );
     let fine_sample = surface_cache_sample_level_nearest(
