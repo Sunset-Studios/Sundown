@@ -21,8 +21,7 @@ const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.0;
 const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 1.0;
 const SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP: f32 = 2.0;
 const SURFACE_CACHE_EMISSIVE_OVERFLOW_SCALE: f32 = 0.1;
-const SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY: f32 = 0.5;
-const SURFACE_CACHE_PARALLEL_BOOTSTRAP_THRESHOLD: u32 = 64u;
+const SURFACE_CACHE_COSINE_PROBABILITY: f32 = 0.5;
 const SURFACE_CACHE_BACKFACE_HIT: u32 = INVALID_IDX - 1u;
 
 struct SurfaceCacheParams {
@@ -35,18 +34,17 @@ struct SurfaceCacheParams {
     history_hysteresis: f32,
     max_history_samples: f32,
     indirect_boost: f32,
-    regular_rays_per_patch: f32,
+    rays_per_patch: f32,
     cache_entry_lifetime: f32,
-    maximum_bootstrap_rays_per_patch: f32,
-    bootstrap_ray_budget_fraction: f32,
     cache_pixel_footprint: f32,
     hash_search_count: f32,
     cache_normal_bias: f32,
-    bootstrap_patch_capacity: f32,
-    mature_patch_update_period: f32,
     maximum_ray_count_per_frame: f32,
     native_promotion_start_confidence: f32,
     native_promotion_end_confidence: f32,
+    padding0: f32,
+    padding1: f32,
+    padding2: f32,
 };
 
 struct SurfaceCacheCellLevels {
@@ -75,29 +73,19 @@ struct SurfacePatchReadOnly {
 struct SurfaceCacheCounters {
     active_patch_count: atomic<u32>,
     update_patch_count: atomic<u32>,
-    bootstrap_patch_count: atomic<u32>,
-    bootstrap_rays_per_patch: atomic<u32>,
-    regular_schedule_offset: atomic<u32>,
-    padding0: atomic<u32>,
-    available_bootstrap_patch_count: atomic<u32>,
-    bootstrap_schedule_offset: atomic<u32>,
+    schedule_offset: atomic<u32>,
     available_update_patch_count: atomic<u32>,
     feedback_miss_count: atomic<u32>,
-    regular_rays_per_patch: atomic<u32>,
+    scheduled_rays_per_patch: atomic<u32>,
 };
 
 struct SurfaceCacheCountersReadOnly {
     active_patch_count: u32,
     update_patch_count: u32,
-    bootstrap_patch_count: u32,
-    bootstrap_rays_per_patch: u32,
-    regular_schedule_offset: u32,
-    padding0: u32,
-    available_bootstrap_patch_count: u32,
-    bootstrap_schedule_offset: u32,
+    schedule_offset: u32,
     available_update_patch_count: u32,
     feedback_miss_count: u32,
-    regular_rays_per_patch: u32,
+    scheduled_rays_per_patch: u32,
 };
 
 struct SurfaceCacheHitInfo {
@@ -122,7 +110,6 @@ struct SurfaceCacheRayWork {
     active_index: u32,
     ray_index_in_patch: u32,
     data_index: u32,
-    bootstrap_batch: u32,
 };
 
 fn surface_cache_sh_patch_read(
@@ -169,38 +156,17 @@ fn surface_cache_full_resolution(params: SurfaceCacheParams) -> vec2<u32> {
     return vec2<u32>(u32(params.full_resolution_x), u32(params.full_resolution_y));
 }
 
-fn surface_cache_regular_rays_per_patch(params: SurfaceCacheParams) -> u32 {
-    return max(u32(params.regular_rays_per_patch), 1u);
-}
-
-fn surface_cache_regular_ray_count(
-    counters: SurfaceCacheCountersReadOnly,
-    _params: SurfaceCacheParams
-) -> u32 {
-    return counters.update_patch_count * max(counters.regular_rays_per_patch, 1u);
+fn surface_cache_ray_count(counters: SurfaceCacheCountersReadOnly) -> u32 {
+    return counters.update_patch_count * max(counters.scheduled_rays_per_patch, 1u);
 }
 
 fn surface_cache_total_ray_count(
-    counters: SurfaceCacheCountersReadOnly,
-    params: SurfaceCacheParams
+    counters: SurfaceCacheCountersReadOnly
 ) -> u32 {
-    return surface_cache_regular_ray_count(counters, params) +
-        counters.bootstrap_patch_count * max(counters.bootstrap_rays_per_patch, 1u);
+    return surface_cache_ray_count(counters);
 }
 
-fn surface_cache_ray_data_index(
-    local_index: u32,
-    data_count: u32,
-    bootstrap_batch: bool
-) -> u32 {
-    return select(
-        local_index,
-        data_count - 1u - local_index,
-        bootstrap_batch
-    );
-}
-
-fn surface_cache_regular_schedule_index(
+fn surface_cache_schedule_index(
     scheduled_index: u32,
     counters: SurfaceCacheCountersReadOnly
 ) -> u32 {
@@ -221,36 +187,7 @@ fn surface_cache_regular_schedule_index(
     ));
     let distributed_index =
         scheduled_index * base_step + remainder_step;
-    let rotated_index = distributed_index + counters.regular_schedule_offset;
-    return select(
-        rotated_index,
-        rotated_index - available_patch_count,
-        rotated_index >= available_patch_count
-    );
-}
-
-fn surface_cache_bootstrap_schedule_index(
-    scheduled_index: u32,
-    counters: SurfaceCacheCountersReadOnly
-) -> u32 {
-    let available_patch_count = max(
-        counters.available_bootstrap_patch_count,
-        1u
-    );
-    if (counters.bootstrap_patch_count >= available_patch_count) {
-        return scheduled_index;
-    }
-
-    let scheduled_patch_count = max(counters.bootstrap_patch_count, 1u);
-    let base_step = available_patch_count / scheduled_patch_count;
-    let remainder = available_patch_count % scheduled_patch_count;
-    let remainder_step = u32(floor(
-        f32(scheduled_index) *
-            (f32(remainder) / f32(scheduled_patch_count))
-    ));
-    let distributed_index =
-        scheduled_index * base_step + remainder_step;
-    let rotated_index = distributed_index + counters.bootstrap_schedule_offset;
+    let rotated_index = distributed_index + counters.schedule_offset;
     return select(
         rotated_index,
         rotated_index - available_patch_count,
@@ -260,27 +197,13 @@ fn surface_cache_bootstrap_schedule_index(
 
 fn surface_cache_ray_work(
     work_index: u32,
-    data_count: u32,
-    counters: SurfaceCacheCountersReadOnly,
-    params: SurfaceCacheParams
+    counters: SurfaceCacheCountersReadOnly
 ) -> SurfaceCacheRayWork {
-    let regular_ray_count = surface_cache_regular_ray_count(counters, params);
-    let bootstrap_batch = work_index >= regular_ray_count;
-    let local_index = select(
-        work_index,
-        work_index - regular_ray_count,
-        bootstrap_batch
-    );
-    let rays_per_patch = select(
-        max(counters.regular_rays_per_patch, 1u),
-        max(counters.bootstrap_rays_per_patch, 1u),
-        bootstrap_batch
-    );
+    let rays_per_patch = max(counters.scheduled_rays_per_patch, 1u);
     return SurfaceCacheRayWork(
-        local_index / rays_per_patch,
-        local_index % rays_per_patch,
-        surface_cache_ray_data_index(local_index, data_count, bootstrap_batch),
-        select(0u, 1u, bootstrap_batch)
+        work_index / rays_per_patch,
+        work_index % rays_per_patch,
+        work_index
     );
 }
 
@@ -382,7 +305,7 @@ fn surface_cache_commit_accumulation(
     (*cache_buffer)[patch_index].metadata.x = params.frame_index;
     let footprint_history_increment = min(
         valid_sample_count,
-        f32(surface_cache_regular_rays_per_patch(params))
+        params.rays_per_patch
     );
     (*cache_buffer)[patch_index].metadata.w = 
         (*cache_buffer)[patch_index].metadata.w + footprint_history_increment;
@@ -729,7 +652,7 @@ fn generate_ray_sample(
 ) -> SurfaceCacheRaySample {
     // A Cranley-Patterson rotated R2 sequence drives a uniform/cosine mixture.
     // The uniform component preserves directional SH coverage while the cosine
-    // component concentrates bootstrap work where diffuse irradiance is most
+    // component concentrates work where diffuse irradiance is most
     // sensitive. The inverse mixture PDF keeps the L1 estimator unbiased.
     var rng = random_seed(seed);
     let rotation_u = rand_float(rng);

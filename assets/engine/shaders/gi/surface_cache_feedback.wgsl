@@ -8,43 +8,17 @@
 @group(1) @binding(4) var depth_texture: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(6) var<storage, read_write> surface_cache_hashmap: array<atomic<u32>>;
-@group(1) @binding(7) var<storage, read_write> bootstrap_indices: array<u32>;
 
-fn append_regular_patch(patch_index: u32) {
+fn append_patch(patch_index: u32) {
     let update_index = atomicAdd(&counters.update_patch_count, 1u);
     if (update_index < arrayLength(&update_indices)) {
         update_indices[update_index] = patch_index;
     }
 }
 
-fn surface_cache_patch_is_due(patch_index: u32) -> bool {
-    let surface_patch = surface_cache[patch_index];
-    let history_is_mature = surface_patch.history.x >= surface_cache_params.max_history_samples;
-
-    return !history_is_mature || u32(surface_cache_params.mature_patch_update_period) == 1u ||
-        hash(patch_index) % u32(surface_cache_params.mature_patch_update_period) ==
-            u32(surface_cache_params.frame_index) % u32(surface_cache_params.mature_patch_update_period);
-}
-
-fn append_active_patch(patch_index: u32, bootstrap: bool) {
+fn append_active_patch(patch_index: u32) {
     atomicAdd(&counters.active_patch_count, 1u);
-
-    let bootstrap_capacity = min(
-        u32(surface_cache_params.bootstrap_patch_capacity),
-        arrayLength(&bootstrap_indices)
-    );
-    if (bootstrap && bootstrap_capacity > 0u) {
-        let bootstrap_index = atomicAdd(&counters.bootstrap_patch_count, 1u);
-        if (bootstrap_index < bootstrap_capacity) {
-            bootstrap_indices[bootstrap_index] = patch_index;
-            return;
-        }
-    }
-    // Capacity normally covers the complete cache. If a caller deliberately
-    // limits it, overflow still receives the regular batch instead of going black.
-    if (bootstrap || surface_cache_patch_is_due(patch_index)) {
-        append_regular_patch(patch_index);
-    }
+    append_patch(patch_index);
 }
 
 fn feedback_surface_level(
@@ -95,7 +69,7 @@ fn feedback_surface_level(
             0.0
         );
         surface_cache[result.index].history = vec4<f32>(0.0);
-        append_active_patch(result.index, true);
+        append_active_patch(result.index);
         return 0.0;
     } else if (result.status == HASHMAP_RESULT_FOUND) {
         let metadata = surface_cache[result.index].metadata;
@@ -116,8 +90,7 @@ fn feedback_surface_level(
             normal,
             f32(cell_exponent)
         );
-        let requires_bootstrap = history.x <= 0.0 && metadata.w <= 0.0;
-        append_active_patch(result.index, requires_bootstrap);
+        append_active_patch(result.index);
         return sample_count;
     } else if (result.status == HASHMAP_RESULT_ALREADY_UPDATED) {
         return surface_cache[result.index].metadata.w;

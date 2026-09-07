@@ -10,21 +10,20 @@
 @group(1) @binding(2) var<storage, read> surface_cache: array<SurfacePatchReadOnly>;
 @group(1) @binding(3) var<storage, read> surface_cache_sh: array<u32>;
 @group(1) @binding(4) var<storage, read> update_indices: array<u32>;
-@group(1) @binding(5) var<storage, read> bootstrap_indices: array<u32>;
-@group(1) @binding(6) var<storage, read> counters: SurfaceCacheCountersReadOnly;
-@group(1) @binding(7) var<storage, read> hit_info: array<SurfaceCacheHitInfo>;
-@group(1) @binding(8) var<storage, read> material_params: array<StandardMaterialParams>;
-@group(1) @binding(9) var<storage, read> material_table_offset: array<u32>;
-@group(1) @binding(10) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(11) var<storage, read> compact_transforms: array<RayInstanceTransform>;
-@group(1) @binding(12) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(13) var<storage, read> emissive_lights_buffer: EmissiveLightsBuffer;
-@group(1) @binding(14) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(15) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(16) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(17) var skybox_texture: texture_cube<f32>;
-@group(1) @binding(18) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
-@group(1) @binding(19) var<storage, read> surface_cache_hashmap: array<HashMapEntry>;
+@group(1) @binding(5) var<storage, read> counters: SurfaceCacheCountersReadOnly;
+@group(1) @binding(6) var<storage, read> hit_info: array<SurfaceCacheHitInfo>;
+@group(1) @binding(7) var<storage, read> material_params: array<StandardMaterialParams>;
+@group(1) @binding(8) var<storage, read> material_table_offset: array<u32>;
+@group(1) @binding(9) var<storage, read> material_palette: array<u32>;
+@group(1) @binding(10) var<storage, read> compact_transforms: array<RayInstanceTransform>;
+@group(1) @binding(11) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(12) var<storage, read> emissive_lights_buffer: EmissiveLightsBuffer;
+@group(1) @binding(13) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(15) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(16) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(17) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
+@group(1) @binding(18) var<storage, read> surface_cache_hashmap: array<HashMapEntry>;
 
 fn sample_weighted_surface_cache_emissive_light(
     rng: ptr<function, u32>,
@@ -83,14 +82,12 @@ fn sample_weighted_surface_cache_emissive_light(
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= surface_cache_total_ray_count(counters, surface_cache_params)) {
+    if (gid.x >= surface_cache_total_ray_count(counters)) {
         return;
     }
     let work = surface_cache_ray_work(
         gid.x,
-        arrayLength(&radiance_info),
-        counters,
-        surface_cache_params
+        counters
     );
     let ray_data_index = work.data_index;
 
@@ -219,20 +216,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    var patch_index = 0u;
-    if (work.bootstrap_batch != 0u) {
-        patch_index = bootstrap_indices[
-            surface_cache_bootstrap_schedule_index(
-                work.active_index,
-                counters
-            )
-        ];
-    } else {
-        patch_index = update_indices[surface_cache_regular_schedule_index(
-            work.active_index,
-            counters
-        )];
-    }
+    let patch_index = update_indices[surface_cache_schedule_index(
+        work.active_index,
+        counters
+    )];
     let surface_patch = surface_cache[patch_index];
 
     // Follow the patch's progressive sample sequence rather than absolute

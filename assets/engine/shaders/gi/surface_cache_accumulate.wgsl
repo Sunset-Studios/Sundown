@@ -5,55 +5,19 @@
 @group(1) @binding(1) var<storage, read_write> surface_cache: array<SurfacePatch>;
 @group(1) @binding(2) var<storage, read_write> surface_cache_sh: array<u32>;
 @group(1) @binding(3) var<storage, read> update_indices: array<u32>;
-@group(1) @binding(4) var<storage, read> bootstrap_indices: array<u32>;
-@group(1) @binding(5) var<storage, read> counters: SurfaceCacheCountersReadOnly;
-@group(1) @binding(6) var<storage, read> hit_info: array<SurfaceCacheHitInfo>;
-@group(1) @binding(7) var<storage, read> radiance_info: array<SurfaceCacheRadianceInfo>;
+@group(1) @binding(4) var<storage, read> counters: SurfaceCacheCountersReadOnly;
+@group(1) @binding(5) var<storage, read> hit_info: array<SurfaceCacheHitInfo>;
+@group(1) @binding(6) var<storage, read> radiance_info: array<SurfaceCacheRadianceInfo>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let bootstrap_batch = gid.x >= counters.update_patch_count;
-    if (
-        bootstrap_batch &&
-        counters.bootstrap_rays_per_patch >
-            SURFACE_CACHE_PARALLEL_BOOTSTRAP_THRESHOLD
-    ) {
+    if (gid.x >= counters.update_patch_count) {
         return;
     }
-
-    let active_index = select(
-        gid.x,
-        gid.x - counters.update_patch_count,
-        bootstrap_batch
-    );
-    if (
-        bootstrap_batch &&
-        active_index >= counters.bootstrap_patch_count
-    ) {
-        return;
-    }
-
-    var patch_index = 0u;
-    if (bootstrap_batch) {
-        patch_index = bootstrap_indices[
-            surface_cache_bootstrap_schedule_index(
-                active_index,
-                counters
-            )
-        ];
-    } else {
-        let source_index = surface_cache_regular_schedule_index(
-            active_index,
-            counters
-        );
-        patch_index = update_indices[source_index];
-    }
-    let rays_per_patch = select(
-        max(counters.regular_rays_per_patch, 1u),
-        max(counters.bootstrap_rays_per_patch, 1u),
-        bootstrap_batch
-    );
-    let local_ray_base = active_index * rays_per_patch;
+    let source_index = surface_cache_schedule_index(gid.x, counters);
+    let patch_index = update_indices[source_index];
+    let rays_per_patch = max(counters.scheduled_rays_per_patch, 1u);
+    let local_ray_base = gid.x * rays_per_patch;
 
     var sample_sh_sum = sh_l1_rgb_zero();
     var luminance_sum = 0.0;
@@ -61,11 +25,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var valid_sample_count = 0.0;
 
     for (var ray_index = 0u; ray_index < rays_per_patch; ray_index = ray_index + 1u) {
-        let ray_data_index = surface_cache_ray_data_index(
-            local_ray_base + ray_index,
-            arrayLength(&radiance_info),
-            bootstrap_batch
-        );
+        let ray_data_index = local_ray_base + ray_index;
         let sample_info = radiance_info[ray_data_index].sample_radiance;
         if (sample_info.w <= 0.0) {
             continue;

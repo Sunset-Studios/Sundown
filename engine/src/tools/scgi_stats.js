@@ -268,17 +268,17 @@ export class SCGIStats extends DevConsoleTool {
         secondary_accent
       );
       metric_pair(
-        "Updates / deferred",
-        `${format_number(stats.update_patch_count)} / ${format_number(stats.deferred_patch_count)}`,
-        "Bootstrap scheduled",
-        `${format_number(stats.bootstrap_patch_count)} / ${format_number(stats.available_bootstrap_patch_count)}`,
+        "Updates scheduled",
+        format_number(stats.update_patch_count),
+        "Updates available",
+        format_number(stats.available_update_patch_count),
         secondary_accent
       );
       metric_pair(
         "Feedback misses",
         format_number(stats.feedback_miss_count),
-        "Bootstrap pending",
-        format_number(stats.pending_bootstrap_patch_count),
+        "Deferred patches",
+        format_number(stats.deferred_patch_count),
         stats.feedback_miss_count > 0 ? secondary_accent : accent
       );
 
@@ -312,8 +312,8 @@ export class SCGIStats extends DevConsoleTool {
       metric_pair(
         "Rays / patch",
         format_number(stats.rays_per_patch),
-        "Bootstrap rays",
-        format_number(stats.bootstrap_rays_per_patch)
+        "Maximum rays / patch",
+        format_number(stats.maximum_rays_per_patch)
       );
       metric_pair(
         "Frame ray ceiling",
@@ -324,8 +324,8 @@ export class SCGIStats extends DevConsoleTool {
       metric_pair(
         "History hysteresis",
         Number(stats.history_hysteresis).toFixed(3),
-        "Bootstrap ceiling",
-        `${(Number(stats.bootstrap_ray_budget_fraction) * 100).toFixed(0)}% of rays`
+        "Maximum history",
+        format_number(stats.max_history_samples)
       );
 
       section_header("GPU memory");

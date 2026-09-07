@@ -20,14 +20,12 @@ fn cs(
     @builtin(local_invocation_index) local_idx: u32,
 ) {
     bvh_stack_lane = local_idx;
-    if (gid.x >= surface_cache_total_ray_count(counters, surface_cache_params)) {
+    if (gid.x >= surface_cache_total_ray_count(counters)) {
         return;
     }
     let work = surface_cache_ray_work(
         gid.x,
-        arrayLength(&radiance_info),
-        counters,
-        surface_cache_params
+        counters
     );
     let ray_data_index = work.data_index;
     let shadow_state = radiance_info[ray_data_index].shadow_radiance.w;

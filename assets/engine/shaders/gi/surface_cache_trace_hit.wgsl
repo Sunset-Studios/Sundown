@@ -6,16 +6,15 @@
 @group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<storage, read> surface_cache: array<SurfacePatchReadOnly>;
 @group(1) @binding(2) var<storage, read> update_indices: array<u32>;
-@group(1) @binding(3) var<storage, read> bootstrap_indices: array<u32>;
-@group(1) @binding(4) var<storage, read> counters: SurfaceCacheCountersReadOnly;
-@group(1) @binding(5) var<storage, read_write> hit_info: array<SurfaceCacheHitInfo>;
-@group(1) @binding(6) var<storage, read> tlas_bvh2_bounds: array<AABB>;
-@group(1) @binding(7) var<uniform> tlas_bvh_info: BVHInfo;
-@group(1) @binding(8) var<storage, read> blas_bvh2_nodes: array<AABB>;
-@group(1) @binding(9) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
-@group(1) @binding(10) var<storage, read> compact_transforms: array<RayInstanceTransform>;
-@group(1) @binding(11) var<storage, read> index_buffer: array<u32>;
-@group(1) @binding(12) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(3) var<storage, read> counters: SurfaceCacheCountersReadOnly;
+@group(1) @binding(4) var<storage, read_write> hit_info: array<SurfaceCacheHitInfo>;
+@group(1) @binding(5) var<storage, read> tlas_bvh2_bounds: array<AABB>;
+@group(1) @binding(6) var<uniform> tlas_bvh_info: BVHInfo;
+@group(1) @binding(7) var<storage, read> blas_bvh2_nodes: array<AABB>;
+@group(1) @binding(8) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
+@group(1) @binding(9) var<storage, read> compact_transforms: array<RayInstanceTransform>;
+@group(1) @binding(10) var<storage, read> index_buffer: array<u32>;
+@group(1) @binding(11) var<storage, read> entity_index_lookup: array<u32>;
 
 // The BVH traversal stack consumes 12 KiB of workgroup storage. Sixty-six
 // patch slots cover every patch intersecting a 128-ray workgroup when sharing
@@ -40,29 +39,8 @@ fn surface_cache_shared_patch_slot(
     work: SurfaceCacheRayWork
 ) -> u32 {
     let workgroup_begin = (work_index / 128u) * 128u;
-    let workgroup_end = workgroup_begin + 128u;
-    let regular_rays_per_patch = max(counters.regular_rays_per_patch, 1u);
-    let regular_ray_count = surface_cache_regular_ray_count(
-        counters,
-        surface_cache_params
-    );
-    let regular_begin = min(workgroup_begin, regular_ray_count);
-    let regular_end = min(workgroup_end, regular_ray_count);
-    var regular_patch_span = 0u;
-    if (regular_end > regular_begin) {
-        regular_patch_span =
-            (regular_end - 1u) / regular_rays_per_patch -
-            regular_begin / regular_rays_per_patch + 1u;
-    }
-
-    if (work.bootstrap_batch == 0u) {
-        return work.active_index - regular_begin / regular_rays_per_patch;
-    }
-
-    let bootstrap_rays_per_patch = max(counters.bootstrap_rays_per_patch, 1u);
-    let bootstrap_begin = max(workgroup_begin, regular_ray_count) - regular_ray_count;
-    return regular_patch_span + work.active_index -
-        bootstrap_begin / bootstrap_rays_per_patch;
+    let rays_per_patch = max(counters.scheduled_rays_per_patch, 1u);
+    return work.active_index - workgroup_begin / rays_per_patch;
 }
 
 fn trace_surface_cache_prepared_ray(
@@ -121,9 +99,7 @@ fn trace_surface_cache_ray(
         seed,
         normal,
         u32(surface_patch.history.y) + ray_index_in_patch,
-        // Reuse the bootstrap importance mixture for regular refresh too.
-        // Its inverse PDF is already carried into SH accumulation.
-        SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY
+        SURFACE_CACHE_COSINE_PROBABILITY
     );
     let direction = ray_sample.direction;
     let cell_exponent = surface_cache_grid_key_cell_exponent(surface_patch.grid_key);
@@ -150,46 +126,27 @@ fn cs(
     @builtin(local_invocation_index) local_idx: u32,
 ) {
     bvh_stack_lane = local_idx;
-    let ray_count = surface_cache_total_ray_count(counters, surface_cache_params);
+    let ray_count = surface_cache_total_ray_count(counters);
     let valid_work = gid.x < ray_count;
     let work = surface_cache_ray_work(
         gid.x,
-        arrayLength(&hit_info),
-        counters,
-        surface_cache_params
+        counters
     );
 
-    // The shared array is sized for at least two rays per patch. Breadth-first
-    // bootstrap can intentionally assign one ray to each patch during a large
-    // admission wave, so use the direct path for that exceptional frame.
-    let use_shared_patch_setup =
-        counters.regular_rays_per_patch >= 2u &&
-        (
-            counters.bootstrap_patch_count == 0u ||
-            counters.bootstrap_rays_per_patch >= 2u
-        );
+    // The shared array is sized for at least two rays per patch.
+    let use_shared_patch_setup = counters.scheduled_rays_per_patch >= 2u;
     if (use_shared_patch_setup) {
         var shared_slot = 0u;
         if (valid_work) {
             shared_slot = surface_cache_shared_patch_slot(gid.x, work);
             let first_patch_lane = local_idx == 0u || work.ray_index_in_patch == 0u;
             if (first_patch_lane) {
-                var shared_patch_index = 0u;
-                if (work.bootstrap_batch != 0u) {
-                    shared_patch_index = bootstrap_indices[
-                        surface_cache_bootstrap_schedule_index(
-                            work.active_index,
-                            counters
-                        )
-                    ];
-                } else {
-                    shared_patch_index = update_indices[
-                        surface_cache_regular_schedule_index(
-                            work.active_index,
-                            counters
-                        )
-                    ];
-                }
+                let shared_patch_index = update_indices[
+                    surface_cache_schedule_index(
+                        work.active_index,
+                        counters
+                    )
+                ];
                 let shared_patch = surface_cache[shared_patch_index];
                 let normal = safe_normalize(shared_patch.normal_cell_exponent.xyz);
                 let cell_exponent = surface_cache_grid_key_cell_exponent(
@@ -237,7 +194,7 @@ fn cs(
             normal_history.xyz,
             r1,
             r2,
-            SURFACE_CACHE_BOOTSTRAP_COSINE_PROBABILITY
+            SURFACE_CACHE_COSINE_PROBABILITY
         );
         trace_surface_cache_prepared_ray(
             ray_sample.direction,
@@ -251,20 +208,10 @@ fn cs(
     if (!valid_work) {
         return;
     }
-    var patch_index = 0u;
-    if (work.bootstrap_batch != 0u) {
-        patch_index = bootstrap_indices[
-            surface_cache_bootstrap_schedule_index(
-                work.active_index,
-                counters
-            )
-        ];
-    } else {
-        patch_index = update_indices[surface_cache_regular_schedule_index(
-            work.active_index,
-            counters
-        )];
-    }
+    let patch_index = update_indices[surface_cache_schedule_index(
+        work.active_index,
+        counters
+    )];
     trace_surface_cache_ray(
         patch_index,
         work.ray_index_in_patch,

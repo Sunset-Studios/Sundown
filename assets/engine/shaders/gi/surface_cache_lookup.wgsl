@@ -135,7 +135,7 @@ fn surface_cache_level_history(
     }
     // Feedback snapshots history before this frame's accumulation. Using that
     // value keeps newly allocated cells on the coarse footprint through the
-    // resolve that first consumes them, even after their bootstrap rays land.
+    // resolve that first consumes them, even after their first rays land.
     let metadata = surface_cache[patch_index].metadata;
     return select(
         metadata.w,

@@ -14,10 +14,9 @@ export const SURFACE_CACHE_DIFFUSE_OUTPUT_NAME = "surface_cache_diffuse_output";
 export const SURFACE_CACHE_SPECULAR_OUTPUT_NAME = "surface_cache_black_output";
 
 const SURFACE_CACHE_COUNTERS_NAME = "surface_cache_counters";
-const SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT = 9;
+const SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT = 6;
 const SURFACE_CACHE_TRACE_DISPATCH_OFFSET = 0;
 const SURFACE_CACHE_UPDATE_DISPATCH_OFFSET = 3 * Uint32Array.BYTES_PER_ELEMENT;
-const SURFACE_CACHE_BOOTSTRAP_UPDATE_DISPATCH_OFFSET = 6 * Uint32Array.BYTES_PER_ELEMENT;
 const SURFACE_CACHE_HIT_WORD_COUNT = 12;
 const SURFACE_CACHE_RADIANCE_WORD_COUNT = 16;
 const compute_shader = (path) => ({ pipeline_shaders: { compute: { path } } });
@@ -34,7 +33,6 @@ export class SurfaceRadianceCache {
       shade: compute_shader("gi/surface_cache_trace_shade.wgsl"),
       shadow: compute_shader("gi/surface_cache_trace_shadow.wgsl"),
       accumulate: compute_shader("gi/surface_cache_accumulate.wgsl"),
-      accumulate_bootstrap: compute_shader("gi/surface_cache_accumulate_bootstrap.wgsl"),
       resolve: compute_shader("gi/surface_cache_resolve.wgsl"),
       temporal: compute_shader("gi/surface_cache_temporal.wgsl"),
       atrous: compute_shader("gi/surface_cache_atrous.wgsl"),
@@ -42,11 +40,11 @@ export class SurfaceRadianceCache {
     };
     this.final_diffuse_output_name = SURFACE_CACHE_DIFFUSE_OUTPUT_NAME;
     this.frame_context = null;
-    this.params_data = new Float32Array(24);
+    this.params_data = new Float32Array(20);
     this.temporal_params_data = new Float32Array(6);
     this.atrous_params_data = new Float32Array(8);
-    this.counters_reset_data = new Uint32Array(11);
-    this.counters_data = new Uint32Array(11);
+    this.counters_reset_data = new Uint32Array(6);
+    this.counters_data = new Uint32Array(6);
     this.counters_buffer = null;
     this.stats_enabled = false;
     this.surface_cache_resources = {};
@@ -83,22 +81,6 @@ export class SurfaceRadianceCache {
     context.total_patches = Math.max(16, floor_to_multiple(context.config.surface_cache_size, 16));
     context.rays_per_patch = Math.max(Math.floor(context.config.rays_per_patch ?? 1), 1);
     context.total_ray_count = context.total_patches * context.rays_per_patch;
-    context.bootstrap_rays_per_patch = Math.max(
-      Math.floor(context.config.bootstrap_rays_per_patch ?? context.rays_per_patch),
-      context.rays_per_patch
-    );
-    context.bootstrap_patch_capacity = clamp(
-      Math.floor(context.config.bootstrap_patch_capacity ?? 0),
-      0,
-      context.total_patches
-    );
-    context.bootstrap_enabled =
-      context.bootstrap_patch_capacity > 0 &&
-      context.bootstrap_rays_per_patch > context.rays_per_patch;
-    context.mature_patch_update_period = Math.max(
-      Math.floor(context.config.mature_patch_update_period ?? 1),
-      1
-    );
     context.maximum_ray_count_per_frame = clamp(
       Math.floor(context.config.maximum_ray_count_per_frame ?? context.total_ray_count),
       context.rays_per_patch,
@@ -137,12 +119,6 @@ export class SurfaceRadianceCache {
     resources.update_indices = render_graph.create_buffer({
       name: "surface_cache_update_indices",
       size: context.total_patches,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: context.force_recreate,
-    });
-    resources.bootstrap_indices = render_graph.create_buffer({
-      name: "surface_cache_bootstrap_indices",
-      size: Math.max(1, context.bootstrap_patch_capacity),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
@@ -260,7 +236,6 @@ export class SurfaceRadianceCache {
       surface_cache,
       hashmap_entries,
       update_indices,
-      bootstrap_indices,
       hit_info,
       dispatch_args,
       entity_index_lookup,
@@ -283,22 +258,18 @@ export class SurfaceRadianceCache {
         this.params_data[8] = context.config.indirect_boost;
         this.params_data[9] = context.rays_per_patch;
         this.params_data[10] = context.config.cache_entry_lifetime;
-        this.params_data[11] = context.bootstrap_rays_per_patch;
-        this.params_data[12] = clamp(context.config.bootstrap_ray_budget_fraction ?? 0.5, 0.0, 1.0);
-        this.params_data[13] = Math.max(context.config.cache_pixel_footprint ?? 3, 1);
-        this.params_data[14] = clamp(Math.floor(context.config.hash_search_count ?? 10), 1, 64);
-        this.params_data[15] = Math.max(context.config.cache_normal_bias ?? 0, 0);
-        this.params_data[16] = context.bootstrap_enabled ? context.bootstrap_patch_capacity : 0;
-        this.params_data[17] = context.mature_patch_update_period;
-        this.params_data[18] = context.maximum_ray_count_per_frame;
-        this.params_data[19] = clamp(
+        this.params_data[11] = Math.max(context.config.cache_pixel_footprint ?? 3, 1);
+        this.params_data[12] = clamp(Math.floor(context.config.hash_search_count ?? 10), 1, 64);
+        this.params_data[13] = Math.max(context.config.cache_normal_bias ?? 0, 0);
+        this.params_data[14] = context.maximum_ray_count_per_frame;
+        this.params_data[15] = clamp(
           context.config.native_promotion_start_confidence ?? 0.3,
           0.0,
           0.99
         );
-        this.params_data[20] = clamp(
+        this.params_data[16] = clamp(
           context.config.native_promotion_end_confidence ?? 0.85,
-          this.params_data[19] + 0.01,
+          this.params_data[15] + 0.01,
           1.0
         );
         graph.get_physical_buffer(params).write_raw(this.params_data);
@@ -320,9 +291,8 @@ export class SurfaceRadianceCache {
           context.inputs.depth_texture,
           context.inputs.gbuffer_normal,
           hashmap_entries,
-          bootstrap_indices,
         ],
-        outputs: [surface_cache, counters, update_indices, hashmap_entries, bootstrap_indices],
+        outputs: [surface_cache, counters, update_indices, hashmap_entries],
       },
       (graph, frame_data) =>
         graph
@@ -350,7 +320,6 @@ export class SurfaceRadianceCache {
           params,
           surface_cache,
           update_indices,
-          bootstrap_indices,
           counters,
           hit_info,
           context.inputs.tlas_bvh2_bounds,
@@ -380,7 +349,6 @@ export class SurfaceRadianceCache {
       surface_cache,
       hashmap_entries,
       update_indices,
-      bootstrap_indices,
       counters,
       dispatch_args,
       hit_info,
@@ -404,7 +372,6 @@ export class SurfaceRadianceCache {
           surface_cache,
           sh,
           update_indices,
-          bootstrap_indices,
           counters,
           hit_info,
           material_buffers.params_gpu_buffer,
@@ -467,7 +434,6 @@ export class SurfaceRadianceCache {
       surface_cache,
       hashmap_entries,
       update_indices,
-      bootstrap_indices,
       counters,
       dispatch_args,
       hit_info,
@@ -488,7 +454,6 @@ export class SurfaceRadianceCache {
           surface_cache,
           sh,
           update_indices,
-          bootstrap_indices,
           counters,
           hit_info,
           radiance_info,
@@ -502,31 +467,6 @@ export class SurfaceRadianceCache {
           .dispatch_indirect(
             graph.get_physical_buffer(dispatch_args),
             SURFACE_CACHE_UPDATE_DISPATCH_OFFSET
-          )
-    );
-    render_graph.add_pass(
-      "surface_cache_bootstrap_sh_accumulate",
-      RenderPassFlags.Compute,
-      {
-        shader_setup: this.shader_setups.accumulate_bootstrap,
-        inputs: [
-          params,
-          surface_cache,
-          sh,
-          bootstrap_indices,
-          counters,
-          hit_info,
-          radiance_info,
-          dispatch_args,
-        ],
-        outputs: [surface_cache, sh],
-      },
-      (graph, frame_data) =>
-        graph
-          .get_physical_pass(frame_data.current_pass)
-          .dispatch_indirect(
-            graph.get_physical_buffer(dispatch_args),
-            SURFACE_CACHE_BOOTSTRAP_UPDATE_DISPATCH_OFFSET
           )
     );
     render_graph.add_pass(
@@ -761,28 +701,13 @@ export class SurfaceRadianceCache {
 
     const active_patch_count = Math.min(this.counters_data[0] || 0, context.total_patches);
     const update_patch_count = Math.min(this.counters_data[1] || 0, active_patch_count);
-    const bootstrap_patch_count = Math.min(
-      this.counters_data[2] || 0,
-      context.bootstrap_patch_capacity
+    const available_update_patch_count = Math.min(
+      this.counters_data[3] || update_patch_count,
+      active_patch_count
     );
-    const available_bootstrap_patch_count = Math.min(
-      this.counters_data[6] || bootstrap_patch_count,
-      context.bootstrap_patch_capacity
-    );
-    const bootstrap_rays_per_patch =
-      bootstrap_patch_count > 0
-        ? clamp(
-          this.counters_data[3] || context.rays_per_patch,
-          1,
-          context.bootstrap_rays_per_patch
-        )
-        : 0;
-    const regular_rays_per_patch =
-      update_patch_count > 0 ? clamp(this.counters_data[10] || 1, 1, context.rays_per_patch) : 0;
-    const deferred_patch_count = Math.max(
-      active_patch_count - bootstrap_patch_count - update_patch_count,
-      0
-    );
+    const scheduled_rays_per_patch =
+      update_patch_count > 0 ? clamp(this.counters_data[5] || 1, 1, context.rays_per_patch) : 0;
+    const deferred_patch_count = Math.max(available_update_patch_count - update_patch_count, 0);
     const surface_cache_bytes = context.total_patches * 20 * 4;
     const hashmap_bytes = context.total_patches * 3 * 4;
     const sh_bytes = context.total_patches * 6 * 4;
@@ -792,7 +717,7 @@ export class SurfaceRadianceCache {
       4;
     const scheduling_bytes =
       this.params_data.byteLength +
-      (context.total_patches + context.bootstrap_patch_capacity) * 4 +
+      context.total_patches * 4 +
       this.counters_data.byteLength +
       SURFACE_CACHE_DISPATCH_ARGS_WORD_COUNT * Uint32Array.BYTES_PER_ELEMENT;
     const output_bytes = context.width * context.height * 8 * 5 + 8;
@@ -804,26 +729,11 @@ export class SurfaceRadianceCache {
       total_patch_count: context.total_patches,
       active_patch_count,
       update_patch_count,
-      bootstrap_patch_count,
-      available_bootstrap_patch_count,
-      pending_bootstrap_patch_count: Math.max(
-        available_bootstrap_patch_count - bootstrap_patch_count,
-        0
-      ),
+      available_update_patch_count,
       deferred_patch_count,
-      rays_per_patch: regular_rays_per_patch,
-      maximum_regular_rays_per_patch: context.rays_per_patch,
-      bootstrap_rays_per_patch,
-      maximum_bootstrap_rays_per_patch: context.bootstrap_rays_per_patch,
-      bootstrap_ray_budget_fraction: clamp(
-        context.config.bootstrap_ray_budget_fraction ?? 0.5,
-        0.0,
-        1.0
-      ),
-      bootstrap_patch_capacity: context.bootstrap_patch_capacity,
-      total_rays_fired:
-        update_patch_count * regular_rays_per_patch +
-        bootstrap_patch_count * bootstrap_rays_per_patch,
+      rays_per_patch: scheduled_rays_per_patch,
+      maximum_rays_per_patch: context.rays_per_patch,
+      total_rays_fired: update_patch_count * scheduled_rays_per_patch,
       active_set_ray_budget: active_patch_count * context.rays_per_patch,
       maximum_ray_count_per_frame: context.maximum_ray_count_per_frame,
       maximum_ray_count: context.total_ray_count,
@@ -834,8 +744,7 @@ export class SurfaceRadianceCache {
       hash_search_count: context.config.hash_search_count,
       history_hysteresis: context.config.history_hysteresis,
       max_history_samples: context.config.max_history_samples,
-      mature_patch_update_period: context.mature_patch_update_period,
-      feedback_miss_count: this.counters_data[9] || 0,
+      feedback_miss_count: this.counters_data[4] || 0,
       surface_cache_bytes,
       hashmap_bytes,
       sh_bytes,
