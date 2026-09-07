@@ -653,15 +653,14 @@ fn surface_cache_make_grid_key(
     return vec4<i32>(
         quantized_position,
         i32(
-            surface_cache_encode_cell_exponent(cell_exponent) *
-            SURFACE_CACHE_DIRECTIONAL_BIN_COUNT + directional_bin
+            directional_bin + surface_cache_encode_cell_exponent(cell_exponent) *
+            SURFACE_CACHE_DIRECTIONAL_BIN_COUNT
         )
     );
 }
 
 fn surface_cache_grid_key_cell_exponent(grid_key: vec4<i32>) -> i32 {
-    let encoded_exponent =
-        u32(max(grid_key.w, 0)) / SURFACE_CACHE_DIRECTIONAL_BIN_COUNT;
+    let encoded_exponent = u32(grid_key.w) / SURFACE_CACHE_DIRECTIONAL_BIN_COUNT;
     return surface_cache_decode_cell_exponent(encoded_exponent);
 }
 

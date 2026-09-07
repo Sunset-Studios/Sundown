@@ -70,10 +70,7 @@ fn hashmap_xxhash32_combine(value: u32, nested_hash: u32) -> u32 {
 }
 
 fn hashmap_sanitize_checksum(checksum: u32) -> u32 {
-    if (checksum == HASHMAP_EMPTY_CHECKSUM) {
-        return 1u;
-    }
-    return checksum;
+    return select(checksum, 1u, checksum == HASHMAP_EMPTY_CHECKSUM);
 }
 
 fn hashmap_search_count(requested_count: u32, capacity: u32) -> u32 {

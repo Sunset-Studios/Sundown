@@ -18,7 +18,7 @@ export class SCGI {
     bootstrap_rays_per_patch: 32,
     bootstrap_ray_budget_fraction: 1.0,
     cache_entry_lifetime: 1,
-    hash_search_count: 10,
+    hash_search_count: 4,
     cache_pixel_footprint: 16.0,
     cache_normal_bias: 0.005,
     native_promotion_start_confidence: 0.2,
