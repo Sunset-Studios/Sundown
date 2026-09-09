@@ -40,7 +40,7 @@ export class SurfaceRadianceCache {
     };
     this.final_diffuse_output_name = SURFACE_CACHE_DIFFUSE_OUTPUT_NAME;
     this.frame_context = null;
-    this.params_data = new Float32Array(20);
+    this.params_data = new Float32Array(16);
     this.temporal_params_data = new Float32Array(6);
     this.atrous_params_data = new Float32Array(8);
     this.counters_reset_data = new Uint32Array(6);
@@ -262,16 +262,6 @@ export class SurfaceRadianceCache {
         this.params_data[12] = clamp(Math.floor(context.config.hash_search_count ?? 10), 1, 64);
         this.params_data[13] = Math.max(context.config.cache_normal_bias ?? 0, 0);
         this.params_data[14] = context.maximum_ray_count_per_frame;
-        this.params_data[15] = clamp(
-          context.config.native_promotion_start_confidence ?? 0.3,
-          0.0,
-          0.99
-        );
-        this.params_data[16] = clamp(
-          context.config.native_promotion_end_confidence ?? 0.85,
-          this.params_data[15] + 0.01,
-          1.0
-        );
         graph.get_physical_buffer(params).write_raw(this.params_data);
         this.counters_reset_data.fill(0);
         graph.get_physical_buffer(counters).write_raw(this.counters_reset_data);
@@ -481,11 +471,10 @@ export class SurfaceRadianceCache {
           context.inputs.depth_texture,
           context.inputs.gbuffer_normal,
           diffuse,
-          direct,
           hashmap_entries,
           resolve_aux,
         ],
-        outputs: [diffuse, direct, resolve_aux],
+        outputs: [diffuse, resolve_aux],
       },
       (graph, frame_data) =>
         graph

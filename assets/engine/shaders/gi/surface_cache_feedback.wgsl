@@ -21,7 +21,7 @@ fn append_active_patch(patch_index: u32) {
     append_patch(patch_index);
 }
 
-fn feedback_surface_level(
+fn feedback_surface_patch(
     position: vec3<f32>,
     normal: vec3<f32>,
     frame: u32,
@@ -30,7 +30,7 @@ fn feedback_surface_level(
     capacity: u32,
     search_count: u32,
     lifetime: u32
-) -> f32 {
+) {
     let cell_size = surface_cache_cell_size(cell_exponent);
     let quantized_position = vec3<i32>(floor(
         position / cell_size
@@ -70,12 +70,10 @@ fn feedback_surface_level(
         );
         surface_cache[result.index].history = vec4<f32>(0.0);
         append_active_patch(result.index);
-        return 0.0;
+        return;
     } else if (result.status == HASHMAP_RESULT_FOUND) {
         let metadata = surface_cache[result.index].metadata;
         let sample_count = metadata.w;
-        var history = surface_cache[result.index].history;
-
         surface_cache[result.index].metadata = vec4<f32>(
             metadata.x,
             sample_count,
@@ -91,12 +89,11 @@ fn feedback_surface_level(
             f32(cell_exponent)
         );
         append_active_patch(result.index);
-        return sample_count;
+        return;
     } else if (result.status == HASHMAP_RESULT_ALREADY_UPDATED) {
-        return surface_cache[result.index].metadata.w;
+        return;
     }
     atomicAdd(&counters.feedback_miss_count, 1u);
-    return 0.0;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -127,36 +124,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let search_count = surface_cache_hash_search_count(surface_cache_params);
 
-    // Always request the native footprint so it can accumulate history. While
-    // either native level is new or underconverged, also request a temporary
-    // coarser footprint used by lookup to hide its initial gathering noise.
-    let base_exponent_value = clamp(
-        surface_cache_cell_exponent_value(
-            position,
-            surface_cache_params),
-        f32(SURFACE_CACHE_MIN_CELL_EXPONENT),
-        f32(SURFACE_CACHE_MAX_CELL_EXPONENT)
-    );
-    let base_fine_exponent = i32(floor(base_exponent_value));
-    let base_coarse_exponent = min(
-        base_fine_exponent + 1,
-        SURFACE_CACHE_MAX_CELL_EXPONENT
-    );
-    let fine_history = feedback_surface_level(
+    feedback_surface_patch(
         position,
         normal,
         u32(surface_cache_params.frame_index),
-        base_fine_exponent,
-        directional_bin,
-        u32(surface_cache_params.total_patch_count),
-        search_count,
-        u32(surface_cache_params.cache_entry_lifetime)
-    );
-    let coarse_history = feedback_surface_level(
-        position,
-        normal,
-        u32(surface_cache_params.frame_index),
-        base_coarse_exponent,
+        surface_cache_cell_exponent(position, surface_cache_params),
         directional_bin,
         u32(surface_cache_params.total_patch_count),
         search_count,

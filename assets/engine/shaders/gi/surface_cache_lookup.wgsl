@@ -10,10 +10,8 @@ fn surface_cache_dominant_axis(normal: vec3<f32>) -> u32 {
 struct SurfaceCacheLookupContext {
     receiver_position: vec3<f32>,
     receiver_normal: vec3<f32>,
-    descriptor_normal: vec3<f32>,
     directional_bin: u32,
     dominant_axis: u32,
-    descriptor_dominant_axis: u32,
     hash_capacity: u32,
     hash_search_count: u32,
 };
@@ -22,21 +20,13 @@ fn surface_cache_lookup_context(
     position: vec3<f32>,
     normal: vec3<f32>
 ) -> SurfaceCacheLookupContext {
-    // All lookup entry points validate or construct a nonzero surface normal.
-    // normalize therefore matches safe_normalize's selected result without its
-    // additional length test at each normalization stage.
-    let receiver_normal = normalize(normal);
-    let descriptor_normal = normalize(receiver_normal);
+    let receiver_normal = safe_normalize(normal);
     return SurfaceCacheLookupContext(
         position,
         receiver_normal,
-        descriptor_normal,
-        // directional_bin normalized the same receiver again. Reuse the exact
-        // normalized value already needed by descriptor quantization.
-        surface_cache_directional_bin(descriptor_normal),
+        surface_cache_directional_bin(receiver_normal),
         surface_cache_dominant_axis(receiver_normal),
-        surface_cache_dominant_axis(descriptor_normal),
-        max(u32(surface_cache_params.total_patch_count), 1u),
+        u32(surface_cache_params.total_patch_count),
         surface_cache_hash_search_count(surface_cache_params)
     );
 }
@@ -46,16 +36,12 @@ fn surface_cache_lookup_context_normalized(
     normal: vec3<f32>
 ) -> SurfaceCacheLookupContext {
     let dominant_axis = surface_cache_dominant_axis(normal);
-    // Resolve already normalizes its G-buffer normal. Keeping that invariant
-    // explicit avoids two redundant reciprocal-square-root sequences per pixel.
     return SurfaceCacheLookupContext(
         position,
         normal,
-        normal,
         surface_cache_directional_bin(normal),
         dominant_axis,
-        dominant_axis,
-        max(u32(surface_cache_params.total_patch_count), 1u),
+        u32(surface_cache_params.total_patch_count),
         surface_cache_hash_search_count(surface_cache_params)
     );
 }
@@ -90,90 +76,6 @@ fn surface_cache_find_patch(
         return i32(patch_index);
     }
     return -1;
-}
-
-fn surface_cache_level_history(
-    context: SurfaceCacheLookupContext,
-    cell_exponent: i32
-) -> f32 {
-    let patch_index_i = surface_cache_find_patch(
-        surface_cache_quantize_position(context.receiver_position, context.receiver_normal, cell_exponent, surface_cache_params),
-        context.directional_bin,
-        cell_exponent,
-        context.hash_capacity,
-        context.hash_search_count
-    );
-    if (patch_index_i < 0) {
-        return 0.0;
-    }
-    let patch_index = u32(patch_index_i);
-    // Exact descriptor matches refer only to initialized patches, whose stored
-    // normals were validated at feedback time.
-    // Feedback is the sole writer and stores an already normalized G-buffer
-    // normal. Avoid renormalizing it for every history query.
-    let patch_normal = surface_cache[patch_index].normal_cell_exponent.xyz;
-    if (dot(
-        context.receiver_normal,
-        patch_normal
-    ) < SURFACE_CACHE_LOOKUP_NORMAL_THRESHOLD) {
-        return 0.0;
-    }
-    let position_delta = surface_cache[patch_index].position_frame.xyz -
-        context.receiver_position;
-    let plane_distance = max(
-        abs(dot(position_delta, context.receiver_normal)),
-        abs(dot(position_delta, patch_normal))
-    );
-    if (
-        plane_distance > max(
-            surface_cache_cell_size(cell_exponent) *
-                SURFACE_CACHE_LOOKUP_PLANE_LIMIT_SCALE,
-            0.002
-        )
-    ) {
-        return 0.0;
-    }
-    // Feedback snapshots history before this frame's accumulation. Using that
-    // value keeps newly allocated cells on the coarse footprint through the
-    // resolve that first consumes them, even after their first rays land.
-    let metadata = surface_cache[patch_index].metadata;
-    return select(
-        metadata.w,
-        metadata.y,
-        u32(metadata.z) == u32(surface_cache_params.frame_index)
-    );
-}
-
-fn surface_cache_native_history_exponents(
-    context: SurfaceCacheLookupContext,
-    fine_exponent: i32,
-    coarse_exponent: i32
-) -> f32 {
-    let fine_history = surface_cache_level_history(
-        context,
-        fine_exponent
-    );
-    if (coarse_exponent == fine_exponent) {
-        return fine_history;
-    }
-    return min(
-        fine_history,
-        surface_cache_level_history(
-            context,
-            coarse_exponent
-        )
-    );
-}
-
-fn surface_cache_native_history(
-    context: SurfaceCacheLookupContext,
-    levels: SurfaceCacheCellLevels
-) -> f32 {
-    return surface_cache_native_history_exponents(
-        context,
-        levels.fine_exponent,
-        levels.coarse_exponent
-    );
 }
 
 fn surface_cache_corner_descriptor(
@@ -404,7 +306,7 @@ fn surface_cache_sample_level(
     let cell_size = surface_cache_cell_size(cell_exponent);
     let dominant_axis = context.dominant_axis;
     let descriptor_offset = surface_cache_descriptor_offset(
-        context.descriptor_normal,
+        context.receiver_normal,
         cell_size,
         surface_cache_params
     );
@@ -466,10 +368,7 @@ fn surface_cache_sample_level(
     }
 
     if (weight_sum <= 1e-5) {
-        return surface_cache_sample_level_nearest(
-            context,
-            cell_exponent
-        );
+        return SurfaceCacheLevelSample(vec4<f32>(0.0), 0.0, 0.0);
     }
     return SurfaceCacheLevelSample(
         vec4<f32>(irradiance_sum, sample_count_sum) / weight_sum,
@@ -485,55 +384,7 @@ fn surface_cache_finalize_irradiance_sample(sample: vec4<f32>) -> vec4<f32> {
     );
 }
 
-fn surface_cache_finalize_sample(sample: vec4<f32>) -> vec4<f32> {
-    return surface_cache_finalize_irradiance_sample(sample);
-}
-
-fn surface_cache_blend_level_estimates(
-    fine_sample: SurfaceCacheLevelSample,
-    coarse_sample: SurfaceCacheLevelSample,
-    blend: f32
-) -> SurfaceCacheLevelSample {
-    let lod_blend = clamp(blend, 0.0, 1.0);
-    let fine_weight = (1.0 - lod_blend) * fine_sample.confidence;
-    let coarse_weight = lod_blend * coarse_sample.confidence;
-    let weight_sum = fine_weight + coarse_weight;
-    if (weight_sum > 1e-5) {
-        return SurfaceCacheLevelSample(
-            (
-                fine_sample.value * fine_weight +
-                coarse_sample.value * coarse_weight
-            ) / weight_sum,
-            clamp(weight_sum, 0.0, 1.0),
-            (
-                fine_sample.error_variance * fine_weight * fine_weight +
-                coarse_sample.error_variance * coarse_weight * coarse_weight
-            ) / (weight_sum * weight_sum)
-        );
-    }
-
-    // At a sparse edge the nominal LOD can have no geometrically compatible
-    // taps. Select the better-supported neighbor without treating a missing
-    // level as black irradiance.
-    if (coarse_sample.confidence > fine_sample.confidence) {
-        return coarse_sample;
-    }
-    return fine_sample;
-}
-
-fn surface_cache_blend_level_samples(
-    fine_sample: SurfaceCacheLevelSample,
-    coarse_sample: SurfaceCacheLevelSample,
-    blend: f32
-) -> vec4<f32> {
-    return surface_cache_blend_level_estimates(
-        fine_sample,
-        coarse_sample,
-        blend
-    ).value;
-}
-
-fn surface_cache_level_estimate_confidence(
+fn surface_cache_sample_confidence(
     sample: SurfaceCacheLevelSample
 ) -> f32 {
     if (sample.value.w <= 0.0 || sample.confidence <= 1e-5) {
@@ -541,8 +392,8 @@ fn surface_cache_level_estimate_confidence(
     }
 
     // Sample count prevents a coincidentally zero first-frame variance from
-    // promoting a patch. Standard error then lets smooth, low-variance patches
-    // mature sooner than difficult emissive or high-contrast neighborhoods.
+    // reporting high confidence. Standard error lets smooth, low-variance
+    // patches mature sooner than difficult emissive neighborhoods.
     let sample_readiness = smoothstep(
         SURFACE_CACHE_MIN_QUERY_SAMPLES,
         64.0,
@@ -559,123 +410,20 @@ fn surface_cache_level_estimate_confidence(
     );
 }
 
-// Resolve native cache levels separately from their one-level-coarser parent.
-// A young native estimate remains hidden behind a compatible mature parent
-// until its measured confidence crosses the configured promotion window.
 fn surface_cache_presentation_sample_context(
     context: SurfaceCacheLookupContext
 ) -> SurfaceCachePresentationSample {
-    let exponent_value = surface_cache_cell_exponent_value(
+    let cell_exponent = surface_cache_cell_exponent(
         context.receiver_position,
         surface_cache_params
     );
-    let native_fine_exponent = i32(floor(exponent_value));
-    let native_coarse_exponent = min(
-        native_fine_exponent + 1,
-        SURFACE_CACHE_MAX_CELL_EXPONENT
-    );
-    let level_blend = select(
-        smoothstep(
-            SURFACE_CACHE_LEVEL_BLEND_START,
-            SURFACE_CACHE_LEVEL_BLEND_END,
-            fract(exponent_value)
-        ),
-        0.0,
-        native_fine_exponent == native_coarse_exponent
-    );
-
-    let native_fine = surface_cache_sample_level(
-        context,
-        native_fine_exponent
-    );
-    var native = native_fine;
-    var native_coarse = native_fine;
-    if (native_coarse_exponent != native_fine_exponent) {
-        native_coarse = surface_cache_sample_level(
-            context,
-            native_coarse_exponent
-        );
-        native = surface_cache_blend_level_estimates(
-            native_fine,
-            native_coarse,
-            level_blend
-        );
-    }
-
-    let parent_fine_exponent = native_coarse_exponent;
-    let parent_coarse_exponent = min(
-        parent_fine_exponent + 1,
-        SURFACE_CACHE_MAX_CELL_EXPONENT
-    );
-    let parent_fine = native_coarse;
-    var parent = parent_fine;
-    if (parent_coarse_exponent != parent_fine_exponent) {
-        parent = surface_cache_blend_level_estimates(
-            parent_fine,
-            surface_cache_sample_level(context, parent_coarse_exponent),
-            level_blend
-        );
-    }
-
-    let native_confidence = surface_cache_level_estimate_confidence(native);
-    let parent_confidence = surface_cache_level_estimate_confidence(parent);
-    var presented = native;
-    var presented_confidence = native_confidence;
-    var fallback_weight = 0.0;
-
-    if (parent.value.w > 0.0 && parent.confidence > 1e-5) {
-        if (native.value.w <= 0.0 || native.confidence <= 1e-5) {
-            presented = parent;
-            presented_confidence = parent_confidence;
-            fallback_weight = 1.0;
-        } else {
-            let native_promotion = smoothstep(
-                surface_cache_params.native_promotion_start_confidence,
-                surface_cache_params.native_promotion_end_confidence,
-                native_confidence
-            );
-            // Never hold on to a parent which is less trustworthy than the
-            // native level. This also keeps a newly allocated parent from
-            // becoming another noisy fallback during a large reveal.
-            let weak_parent_release = 1.0 - smoothstep(
-                0.0,
-                0.5,
-                parent_confidence
-            );
-            let inferior_parent_release = smoothstep(
-                0.0,
-                0.2,
-                native_confidence - parent_confidence
-            );
-            let parent_release = max(
-                weak_parent_release,
-                inferior_parent_release
-            );
-            let promotion = max(native_promotion, parent_release);
-            fallback_weight = 1.0 - promotion;
-            presented = SurfaceCacheLevelSample(
-                mix(parent.value, native.value, promotion),
-                mix(parent.confidence, native.confidence, promotion),
-                mix(
-                    parent.error_variance,
-                    native.error_variance,
-                    promotion * promotion
-                )
-            );
-            presented_confidence = mix(
-                parent_confidence,
-                native_confidence,
-                promotion
-            );
-        }
-    }
-
+    let sample = surface_cache_sample_level(context, cell_exponent);
     let boost = surface_cache_params.indirect_boost;
     return SurfaceCachePresentationSample(
-        vec4<f32>(presented.value.xyz * boost, presented.value.w),
-        presented_confidence,
-        sqrt(max(presented.error_variance, 0.0)) * boost,
-        fallback_weight
+        vec4<f32>(sample.value.xyz * boost, sample.value.w),
+        surface_cache_sample_confidence(sample),
+        sqrt(max(sample.error_variance, 0.0)) * boost,
+        0.0
     );
 }
 
@@ -688,58 +436,6 @@ fn surface_cache_presentation_sample_normalized(
     );
 }
 
-fn surface_cache_sample_context(
-    context: SurfaceCacheLookupContext
-) -> vec4<f32> {
-    // Native blending is never consumed here; only its exponents seed history
-    // selection. Avoid the otherwise unused fract and smoothstep calculation.
-    let base_exponent_value = surface_cache_cell_exponent_value(
-        context.receiver_position,
-        surface_cache_params
-    );
-    let levels = surface_cache_history_cell_levels_from_base(
-        base_exponent_value,
-        surface_cache_params
-    );
-    let fine_sample = surface_cache_sample_level(
-        context,
-        levels.fine_exponent
-    );
-    if (levels.coarse_exponent == levels.fine_exponent) {
-        return surface_cache_finalize_sample(fine_sample.value);
-    }
-
-    let coarse_sample = surface_cache_sample_level(
-        context,
-        levels.coarse_exponent
-    );
-    return surface_cache_finalize_sample(
-        surface_cache_blend_level_samples(
-            fine_sample,
-            coarse_sample,
-            levels.blend
-        )
-    );
-}
-
-fn surface_cache_sample(
-    position: vec3<f32>,
-    normal: vec3<f32>
-) -> vec4<f32> {
-    return surface_cache_sample_context(
-        surface_cache_lookup_context(position, normal)
-    );
-}
-
-fn surface_cache_sample_normalized(
-    position: vec3<f32>,
-    normal: vec3<f32>
-) -> vec4<f32> {
-    return surface_cache_sample_context(
-        surface_cache_lookup_context_normalized(position, normal)
-    );
-}
-
 // Cache rays and the visible deferred resolve both consume incident irradiance.
 // The traced hit applies DDGI's diffuse response during recurrence, while the
 // deferred lighting pass applies the visible surface's material response.
@@ -747,41 +443,10 @@ fn surface_cache_sample_nearest_irradiance(
     position: vec3<f32>,
     normal: vec3<f32>
 ) -> vec4<f32> {
-    let base_exponent_value = surface_cache_cell_exponent_value(
-        position,
-        surface_cache_params
-    );
     let context = surface_cache_lookup_context(position, normal);
-    let levels = surface_cache_history_cell_levels_from_base(
-        base_exponent_value,
-        surface_cache_params
-    );
-    let fine_sample = surface_cache_sample_level_nearest(
+    let sample = surface_cache_sample_level_nearest(
         context,
-        levels.fine_exponent
+        surface_cache_cell_exponent(position, surface_cache_params)
     );
-    if (levels.coarse_exponent == levels.fine_exponent) {
-        return surface_cache_finalize_irradiance_sample(fine_sample.value);
-    }
-    let coarse_sample = surface_cache_sample_level_nearest(
-        context,
-        levels.coarse_exponent
-    );
-    return surface_cache_finalize_irradiance_sample(
-        surface_cache_blend_level_samples(
-            fine_sample,
-            coarse_sample,
-            levels.blend
-        )
-    );
-}
-
-fn surface_cache_sample_nearest(
-    position: vec3<f32>,
-    normal: vec3<f32>
-) -> vec4<f32> {
-    return surface_cache_sample_nearest_irradiance(
-        position,
-        normal
-    );
+    return surface_cache_finalize_irradiance_sample(sample.value);
 }

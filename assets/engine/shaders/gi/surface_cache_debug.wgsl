@@ -36,13 +36,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureLoad(depth_texture, pixel_coord, 0).r,
         view_index
     );
-    let base_levels = surface_cache_cell_levels(position, surface_cache_params);
     let lookup_context = surface_cache_lookup_context(position, normal);
-    let history_levels = surface_cache_history_cell_levels_from_base(
-        base_levels.exponent_value,
+    let cell_exponent = surface_cache_cell_exponent(
+        position,
         surface_cache_params
     );
-    let cell_exponent = history_levels.fine_exponent;
     let descriptor_position = surface_cache_quantize_position(
         position,
         lookup_context.receiver_normal,

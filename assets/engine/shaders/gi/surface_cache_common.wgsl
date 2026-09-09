@@ -17,8 +17,6 @@ const SURFACE_CACHE_DIRECTIONAL_BIN_COUNT: u32 =
 const SURFACE_CACHE_CELL_EXPONENT_BIAS: i32 = 16;
 const SURFACE_CACHE_MIN_CELL_EXPONENT: i32 = -32;
 const SURFACE_CACHE_MAX_CELL_EXPONENT: i32 = 31;
-const SURFACE_CACHE_LEVEL_BLEND_START: f32 = 0.0;
-const SURFACE_CACHE_LEVEL_BLEND_END: f32 = 1.0;
 const SURFACE_CACHE_EMISSIVE_LUMA_SOFT_CAP: f32 = 2.0;
 const SURFACE_CACHE_EMISSIVE_OVERFLOW_SCALE: f32 = 0.1;
 const SURFACE_CACHE_COSINE_PROBABILITY: f32 = 0.5;
@@ -40,18 +38,7 @@ struct SurfaceCacheParams {
     hash_search_count: f32,
     cache_normal_bias: f32,
     maximum_ray_count_per_frame: f32,
-    native_promotion_start_confidence: f32,
-    native_promotion_end_confidence: f32,
     padding0: f32,
-    padding1: f32,
-    padding2: f32,
-};
-
-struct SurfaceCacheCellLevels {
-    fine_exponent: i32,
-    coarse_exponent: i32,
-    blend: f32,
-    exponent_value: f32,
 };
 
 struct SurfacePatch {
@@ -222,14 +209,6 @@ fn surface_cache_commit_accumulation(
     }
 
     let inverse_sample_count = 1.0 / valid_sample_count;
-    let sample_sh = sh_l1_rgb_multiply_scalar(
-        sample_sh_sum,
-        inverse_sample_count
-    );
-    let sample_luminance = luminance_sum * inverse_sample_count;
-    let sample_luminance_squared =
-        luminance_squared_sum * inverse_sample_count;
-
     let history = (*cache_buffer)[patch_index].history;
     let previous_sample_count = history.x;
     let maximum_history_samples = max(params.max_history_samples, 1.0);
@@ -247,6 +226,10 @@ fn surface_cache_commit_accumulation(
         1.0
     );
 
+    let sample_luminance = luminance_sum * inverse_sample_count;
+    let sample_luminance_squared =
+        luminance_squared_sum * inverse_sample_count;
+
     let previous_variance = max(
         history.w - history.z * history.z,
         0.0
@@ -259,25 +242,22 @@ fn surface_cache_commit_accumulation(
         previous_variance / max(effective_previous_sample_count, 1.0) +
         sample_variance / max(valid_sample_count, 1.0);
     let change_threshold = max(3.0 * sqrt(mean_variance), 0.01);
-    let history_is_mature =
-        previous_sample_count >= maximum_history_samples;
-    let lighting_changed = history_is_mature &&
-        abs(sample_luminance - history.z) > change_threshold;
-    let response_alpha = 1.0 - clamp(
-        params.history_hysteresis,
-        0.0,
-        0.999
-    );
+    let lighting_changed =abs(sample_luminance - history.z) > change_threshold;
+
+    let response_alpha = 1.0 - params.history_hysteresis;
     let blend_alpha = max(
         running_alpha,
         select(0.0, response_alpha, lighting_changed)
     );
 
-    var result = sample_sh;
+    var result = sh_l1_rgb_multiply_scalar(
+        sample_sh_sum,
+        inverse_sample_count
+    );
     if (previous_sample_count > 0.0) {
         result = sh_l1_rgb_lerp(
             surface_cache_sh_patch_read(sh_buffer, patch_index),
-            sample_sh,
+            result,
             blend_alpha
         );
     }
@@ -345,78 +325,8 @@ fn surface_cache_cell_exponent_value(
     );
 }
 
-fn surface_cache_cell_levels(
-    position: vec3<f32>,
-    params: SurfaceCacheParams
-) -> SurfaceCacheCellLevels {
-    let exponent_value = surface_cache_cell_exponent_value(position, params);
-    let fine_exponent = i32(floor(exponent_value));
-    let coarse_exponent = min(
-        fine_exponent + 1,
-        SURFACE_CACHE_MAX_CELL_EXPONENT
-    );
-    let level_fraction = fract(exponent_value);
-    let blend = select(
-        smoothstep(
-            SURFACE_CACHE_LEVEL_BLEND_START,
-            SURFACE_CACHE_LEVEL_BLEND_END,
-            level_fraction
-        ),
-        0.0,
-        fine_exponent == coarse_exponent
-    );
-    return SurfaceCacheCellLevels(
-        fine_exponent,
-        coarse_exponent,
-        blend,
-        exponent_value
-    );
-}
-
-fn surface_cache_history_cell_levels_from_base(
-    base_exponent_value: f32,
-    params: SurfaceCacheParams
-) -> SurfaceCacheCellLevels {
-    let exponent_value = clamp(
-        base_exponent_value,
-        f32(SURFACE_CACHE_MIN_CELL_EXPONENT),
-        f32(SURFACE_CACHE_MAX_CELL_EXPONENT)
-    );
-    let fine_exponent = i32(floor(exponent_value));
-    let coarse_exponent = min(
-        fine_exponent + 1,
-        SURFACE_CACHE_MAX_CELL_EXPONENT
-    );
-    let level_fraction = fract(exponent_value);
-    let blend = select(
-        smoothstep(
-            SURFACE_CACHE_LEVEL_BLEND_START,
-            SURFACE_CACHE_LEVEL_BLEND_END,
-            level_fraction
-        ),
-        0.0,
-        fine_exponent == coarse_exponent
-    );
-    return SurfaceCacheCellLevels(
-        fine_exponent,
-        coarse_exponent,
-        blend,
-        exponent_value
-    );
-}
-
-fn surface_cache_history_cell_levels(
-    position: vec3<f32>,
-    params: SurfaceCacheParams
-) -> SurfaceCacheCellLevels {
-    return surface_cache_history_cell_levels_from_base(
-        surface_cache_cell_exponent_value(position, params),
-        params
-    );
-}
-
 fn surface_cache_cell_exponent(position: vec3<f32>, params: SurfaceCacheParams) -> i32 {
-    return surface_cache_cell_levels(position, params).fine_exponent;
+    return i32(floor(surface_cache_cell_exponent_value(position, params)));
 }
 
 fn surface_cache_cell_size(cell_exponent: i32) -> f32 {
