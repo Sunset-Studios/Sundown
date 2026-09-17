@@ -9,16 +9,6 @@ struct SurfaceCacheTemporalParams {
     _padding0: f32,
 };
 
-struct SurfaceCacheHistoryTap {
-    value: vec4<f32>,
-    weight: f32,
-};
-
-struct SurfaceCacheHistoryRepair {
-    value: vec4<f32>,
-    score: f32,
-};
-
 struct SurfaceCacheCurrentEstimate {
     value: vec4<f32>,
     luminance_minimum: f32,
@@ -30,247 +20,11 @@ struct SurfaceCacheCurrentEstimate {
 
 @group(1) @binding(0) var<uniform> temporal_params: SurfaceCacheTemporalParams;
 @group(1) @binding(1) var current_diffuse: texture_2d<f32>;
-@group(1) @binding(2) var history_diffuse: texture_2d<f32>;
+@group(1) @binding(2) var reprojected_history: texture_2d<f32>;
 @group(1) @binding(3) var depth_texture: texture_2d<f32>;
-@group(1) @binding(4) var prev_depth_texture: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(6) var prev_gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(7) var motion_texture: texture_2d<f32>;
-@group(1) @binding(8) var output_diffuse: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(5) var output_diffuse: texture_storage_2d<rgba16float, write>;
 
-fn surface_cache_history_tap(
-    tap_coord: vec2<i32>,
-    tap_weight: f32,
-    resolution: vec2<u32>,
-    current_position: vec3<f32>,
-    current_normal: vec3<f32>,
-    current_linear_depth: f32,
-    compare_surface_plane: bool,
-    view_index: u32
-) -> SurfaceCacheHistoryTap {
-    // Static reprojection commonly produces one unit bilinear weight and three
-    // exact zeros. Reject zero-weight taps before any history or geometry fetches.
-    if (tap_weight <= 0.0) {
-        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
-    }
-    if (
-        tap_coord.x < 0 || tap_coord.y < 0 ||
-        tap_coord.x >= i32(resolution.x) ||
-        tap_coord.y >= i32(resolution.y)
-    ) {
-        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
-    }
-
-    let history = textureLoad(history_diffuse, tap_coord, 0);
-    if (history.w <= 0.0) {
-        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
-    }
-    let previous_normal_data = textureLoad(
-        prev_gbuffer_normal,
-        tap_coord,
-        0
-    ).xyz;
-    if (dot(previous_normal_data, previous_normal_data) <= 1e-8) {
-        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
-    }
-    // Reject normal discontinuities before fetching depth and reconstructing
-    // a world position for a tap that cannot contribute.
-    let previous_normal = normalize(previous_normal_data);
-    if (
-        dot(current_normal, previous_normal) <
-        temporal_params.normal_threshold
-    ) {
-        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
-    }
-    let previous_depth = textureLoad(prev_depth_texture, tap_coord, 0).r;
-    if (previous_depth >= 1.0) {
-        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
-    }
-
-    let previous_position = reconstruct_prev_world_position(
-        coord_to_uv(tap_coord, resolution),
-        previous_depth,
-        view_index
-    );
-    let previous_linear_depth = abs(
-        (view_buffer[view_index].view_matrix * vec4<f32>(previous_position, 1.0)).z
-    );
-    let relative_depth_delta = abs(
-        previous_linear_depth - current_linear_depth
-    ) / max(current_linear_depth, 1e-3);
-    let relative_plane_delta = abs(dot(
-        previous_position - current_position,
-        current_normal
-    )) / max(current_linear_depth, 1e-3);
-    // Wide blur taps should follow the receiving plane. Raw view-depth deltas
-    // reject one screen axis on sloped surfaces and turn a circular kernel into
-    // an iso-depth streak; ordinary bilinear reprojection keeps its strict
-    // depth comparison.
-    let geometry_delta = select(
-        relative_depth_delta,
-        relative_plane_delta,
-        compare_surface_plane
-    );
-    let geometry_threshold = select(
-        temporal_params.depth_threshold,
-        max(temporal_params.depth_threshold * 0.5, 0.005),
-        compare_surface_plane
-    );
-    if (geometry_delta > geometry_threshold) {
-        return SurfaceCacheHistoryTap(vec4<f32>(0.0), 0.0);
-    }
-
-    return SurfaceCacheHistoryTap(history * tap_weight, tap_weight);
-}
-
-fn surface_cache_history_repair_candidate(
-    tap_coord: vec2<i32>,
-    resolution: vec2<u32>,
-    current_position: vec3<f32>,
-    current_normal: vec3<f32>,
-    current_linear_depth: f32,
-    tap_offset: vec2<i32>,
-    inverse_depth: f32,
-    repair_normal_threshold: f32,
-    repair_depth_threshold: f32,
-    repair_plane_threshold: f32,
-    search_radius_denominator: f32,
-    view_index: u32
-) -> SurfaceCacheHistoryRepair {
-    if (
-        tap_coord.x < 0 || tap_coord.y < 0 ||
-        tap_coord.x >= i32(resolution.x) ||
-        tap_coord.y >= i32(resolution.y)
-    ) {
-        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
-    }
-
-    // Repair runs on misses, where most candidates are empty. Keep dependent
-    // texture reads behind progressively cheaper rejection tests.
-    let history = textureLoad(history_diffuse, tap_coord, 0);
-    if (history.w <= 0.0) {
-        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
-    }
-    let previous_normal_data = textureLoad(
-        prev_gbuffer_normal,
-        tap_coord,
-        0
-    ).xyz;
-    if (dot(previous_normal_data, previous_normal_data) <= 1e-8) {
-        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
-    }
-    // The length check above guarantees normalize cannot take the zero path.
-    let previous_normal = normalize(previous_normal_data);
-    let normal_alignment = dot(current_normal, previous_normal);
-    if (normal_alignment < repair_normal_threshold) {
-        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
-    }
-    let previous_depth = textureLoad(prev_depth_texture, tap_coord, 0).r;
-    if (previous_depth >= 1.0) {
-        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
-    }
-
-    let previous_position = reconstruct_prev_world_position(
-        coord_to_uv(tap_coord, resolution),
-        previous_depth,
-        view_index
-    );
-    let previous_linear_depth = abs(
-        (view_buffer[view_index].view_matrix * vec4<f32>(previous_position, 1.0)).z
-    );
-    let relative_depth_delta = abs(
-        previous_linear_depth - current_linear_depth
-    ) * inverse_depth;
-    let position_delta = previous_position - current_position;
-    let relative_plane_delta = abs(dot(position_delta, current_normal)) *
-        inverse_depth;
-    if (
-        relative_depth_delta > repair_depth_threshold ||
-        relative_plane_delta > repair_plane_threshold
-    ) {
-        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
-    }
-    let relative_position_delta = length(position_delta) * inverse_depth;
-    if (relative_position_delta > repair_depth_threshold) {
-        return SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
-    }
-
-    let depth_score = relative_depth_delta / repair_depth_threshold;
-    let position_score = relative_position_delta / repair_depth_threshold;
-    let plane_score = relative_plane_delta / repair_plane_threshold;
-    let normal_score = (1.0 - normal_alignment) /
-        max(1.0 - repair_normal_threshold, 1e-3);
-    // Distance is needed only for candidates that survived every geometry test.
-    let spatial_score = length(vec2<f32>(tap_offset)) /
-        search_radius_denominator;
-    return SurfaceCacheHistoryRepair(
-        history,
-        depth_score + position_score + plane_score +
-            normal_score + spatial_score * 0.25
-    );
-}
-
-// Reprojection lands on the previous occluder for a true disocclusion. Search
-// a sparse 5x5 footprint around that location for nearby history belonging to
-// the newly exposed surface. This runs only when the normal four taps fail.
-fn surface_cache_repair_history(
-    previous_base: vec2<i32>,
-    resolution: vec2<u32>,
-    current_position: vec3<f32>,
-    current_normal: vec3<f32>,
-    current_linear_depth: f32,
-    search_radius: i32,
-    view_index: u32
-) -> SurfaceCacheHistoryRepair {
-    var best = SurfaceCacheHistoryRepair(vec4<f32>(0.0), 1e20);
-    let inverse_depth = 1.0 / max(current_linear_depth, 1e-3);
-    let repair_normal_threshold = max(
-        temporal_params.normal_threshold,
-        0.95
-    );
-    let repair_depth_threshold = max(
-        temporal_params.depth_threshold * 2.0,
-        0.01
-    );
-    let repair_plane_threshold = max(
-        temporal_params.depth_threshold * 0.5,
-        0.005
-    );
-    let search_radius_denominator = max(f32(search_radius), 1.0);
-    for (var tap_y = -2; tap_y <= 2; tap_y = tap_y + 1) {
-        for (var tap_x = -2; tap_x <= 2; tap_x = tap_x + 1) {
-            if (tap_x == 0 && tap_y == 0) {
-                continue;
-            }
-            let tap_offset = vec2<i32>(
-                (tap_x * search_radius) / 2,
-                (tap_y * search_radius) / 2
-            );
-            let candidate = surface_cache_history_repair_candidate(
-                previous_base + tap_offset,
-                resolution,
-                current_position,
-                current_normal,
-                current_linear_depth,
-                tap_offset,
-                inverse_depth,
-                repair_normal_threshold,
-                repair_depth_threshold,
-                repair_plane_threshold,
-                search_radius_denominator,
-                view_index
-            );
-            if (candidate.score < best.score) {
-                best = candidate;
-            }
-        }
-    }
-    return best;
-}
-
-// Surface-cache discontinuities are several pixels wide, so adjacent-pixel
-// filtering barely touches them. A sparse kernel reaches across roughly one
-// cache cell while the depth and normal tests keep unrelated surfaces apart.
 fn surface_cache_reconstruct_current(
     coord: vec2<i32>,
     resolution: vec2<u32>,
@@ -404,124 +158,29 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let coord = vec2<i32>(gid.xy);
-    let normal_data = textureLoad(gbuffer_normal, coord, 0).xyz;
-    if (dot(normal_data, normal_data) <= 1e-8) {
+    let normal = textureLoad(gbuffer_normal, coord, 0).xyz;
+    if (dot(normal, normal) <= 1e-8) {
         textureStore(output_diffuse, coord, vec4<f32>(0.0));
         return;
     }
 
     let view_index = u32(frame_info.view_index);
-    let uv = coord_to_uv(coord, resolution);
     let current_depth = textureLoad(depth_texture, coord, 0).r;
     let current_position = reconstruct_world_position(
-        uv,
+        coord_to_uv(coord, resolution),
         current_depth,
         view_index
     );
     let current_linear_depth = abs(
         (view_buffer[view_index].view_matrix * vec4<f32>(current_position, 1.0)).z
     );
-    let current_normal = normalize(normal_data);
-    let center = textureLoad(current_diffuse, coord, 0);
-    let motion = textureLoad(motion_texture, coord, 0).xy;
-    let previous_uv = uv + vec2<f32>(-0.5 * motion.x, 0.5 * motion.y);
-    let previous_pixel = previous_uv * vec2<f32>(resolution) - vec2<f32>(0.5);
-    let previous_base = vec2<i32>(floor(previous_pixel));
-    let previous_fraction = fract(previous_pixel);
-    let bilinear_weights = vec4<f32>(
-        (1.0 - previous_fraction.x) * (1.0 - previous_fraction.y),
-        previous_fraction.x * (1.0 - previous_fraction.y),
-        (1.0 - previous_fraction.x) * previous_fraction.y,
-        previous_fraction.x * previous_fraction.y
-    );
-
-    let tap_00 = surface_cache_history_tap(
-        previous_base,
-        bilinear_weights.x,
-        resolution,
-        current_position,
-        current_normal,
-        current_linear_depth,
-        false,
-        view_index
-    );
-    var history_sum = tap_00.value;
-    var history_weight = tap_00.weight;
-    let tap_10 = surface_cache_history_tap(
-        previous_base + vec2<i32>(1, 0),
-        bilinear_weights.y,
-        resolution,
-        current_position,
-        current_normal,
-        current_linear_depth,
-        false,
-        view_index
-    );
-    history_sum += tap_10.value;
-    history_weight += tap_10.weight;
-    let tap_01 = surface_cache_history_tap(
-        previous_base + vec2<i32>(0, 1),
-        bilinear_weights.z,
-        resolution,
-        current_position,
-        current_normal,
-        current_linear_depth,
-        false,
-        view_index
-    );
-    history_sum += tap_01.value;
-    history_weight += tap_01.weight;
-    let tap_11 = surface_cache_history_tap(
-        previous_base + vec2<i32>(1, 1),
-        bilinear_weights.w,
-        resolution,
-        current_position,
-        current_normal,
-        current_linear_depth,
-        false,
-        view_index
-    );
-    history_sum += tap_11.value;
-    history_weight += tap_11.weight;
-    var history = vec4<f32>(0.0);
-    if (history_weight > 1e-5) {
-        history = history_sum / history_weight;
-    } else {
-        let motion_distance_pixels = length(
-            previous_pixel - vec2<f32>(coord)
-        );
-        let repair_radius = i32(clamp(
-            ceil(motion_distance_pixels) + 2.0,
-            4.0,
-            16.0
-        ));
-        let repair = surface_cache_repair_history(
-            previous_base,
-            resolution,
-            current_position,
-            current_normal,
-            current_linear_depth,
-            repair_radius,
-            view_index
-        );
-        if (repair.score < 1e19) {
-            // Repaired history is a temporary bridge, not an authoritative
-            // reprojection. A short age hands control back to the current cache
-            // quickly and limits trails when the selected neighbor was imperfect.
-            history = vec4<f32>(repair.value.xyz, min(repair.value.w, 4.0));
-            history_weight = 1.0;
-        }
-    }
-
-    let history_valid = history_weight > 1e-5;
-    // Luminance moments are consumed only by the history-clipping path. True
-    // disocclusions skip that arithmetic and are reconstructed by the masked
-    // à-trous passes recorded after temporal accumulation.
+    let history = textureLoad(reprojected_history, coord, 0);
+    let history_valid = history.w > 0.0;
     let current_estimate = surface_cache_reconstruct_current(
         coord,
         resolution,
-        center,
-        current_normal,
+        textureLoad(current_diffuse, coord, 0),
+        normal,
         current_depth,
         current_linear_depth,
         view_index,
@@ -531,9 +190,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let current_valid = current.w >= 2.0;
     if (!current_valid) {
-        // Preserve valid reprojection while the current cache is still
-        // underconverged, but do not turn a true disocclusion black when the
-        // current cache is the only estimate.
         let retained_history = select(
             select(
                 vec4<f32>(0.0),
@@ -551,8 +207,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    // A relaxed luminance window rejects disocclusion outliers without
-    // pulling converged history toward the noisy current cache every frame.
     let mean_luminance = current_estimate.luminance_sum /
         max(current_estimate.valid_tap_count, 1.0);
     let luminance_variance = max(

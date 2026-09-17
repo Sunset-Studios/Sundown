@@ -34,6 +34,7 @@ export class SurfaceRadianceCache {
       shadow: compute_shader("gi/surface_cache_trace_shadow.wgsl"),
       accumulate: compute_shader("gi/surface_cache_accumulate.wgsl"),
       resolve: compute_shader("gi/surface_cache_resolve.wgsl"),
+      reproject: compute_shader("gi/surface_cache_reproject.wgsl"),
       temporal: compute_shader("gi/surface_cache_temporal.wgsl"),
       atrous: compute_shader("gi/surface_cache_atrous.wgsl"),
       debug: compute_shader("gi/surface_cache_debug.wgsl"),
@@ -500,7 +501,8 @@ export class SurfaceRadianceCache {
       1,
       8
     );
-    const { diffuse, history_prev, history_curr, temporal_params } = this.surface_cache_resources;
+    const { diffuse, history_prev, history_curr, atrous_scratch, temporal_params } =
+      this.surface_cache_resources;
 
     const temporal_params_need_upload =
       context.force_recreate ||
@@ -528,6 +530,29 @@ export class SurfaceRadianceCache {
     }
 
     render_graph.add_pass(
+      `surface_cache_reproject_${context.history_frame}`,
+      RenderPassFlags.Compute,
+      {
+        shader_setup: this.shader_setups.reproject,
+        inputs: [
+          temporal_params,
+          history_prev,
+          context.inputs.depth_texture,
+          context.inputs.prev_depth_texture,
+          context.inputs.gbuffer_normal,
+          context.inputs.gbuffer_normal_prev,
+          context.inputs.gbuffer_motion_emissive,
+          atrous_scratch,
+        ],
+        outputs: [atrous_scratch],
+      },
+      (graph, frame_data) =>
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(Math.ceil(context.width / 8), Math.ceil(context.height / 8), 1)
+    );
+
+    render_graph.add_pass(
       `surface_cache_temporal_${context.history_frame}`,
       RenderPassFlags.Compute,
       {
@@ -535,12 +560,9 @@ export class SurfaceRadianceCache {
         inputs: [
           temporal_params,
           diffuse,
-          history_prev,
+          atrous_scratch,
           context.inputs.depth_texture,
-          context.inputs.prev_depth_texture,
           context.inputs.gbuffer_normal,
-          context.inputs.gbuffer_normal_prev,
-          context.inputs.gbuffer_motion_emissive,
           history_curr,
         ],
         outputs: [history_curr],

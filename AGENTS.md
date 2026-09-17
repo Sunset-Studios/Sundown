@@ -78,6 +78,20 @@ In performance-sensitive code:
 
 * Avoid per-frame allocations.
 * Avoid temporary arrays in hot loops.
+* Treat render setup and render-graph construction that runs every frame as hot code.
+* Do not use object literals, array literals, spreads, destructuring rest, or helper-returned
+  collections merely to package or forward transient per-frame data. Store fixed-shape state on
+  the owning long-lived object and overwrite it in place, or pass values directly.
+* Helpers called from hot code must not allocate objects, arrays, iterators, promises, strings,
+  closures, or other garbage merely to package or forward data. Inline trivial access and
+  selection logic where practical. When an API requires a callback or descriptor, create only
+  the required value and do not layer convenience allocations around it.
+* When temporary variable-sized storage is genuinely required in a hot path, use the reusable
+  arenas, allocators, and containers in `engine/src/memory/allocator.js` and
+  `engine/src/memory/container.js`. Reset and reuse them instead of constructing native JS
+  collections each frame.
+* Allocation during initialization is acceptable for persistent state with explicit ownership;
+  do not disguise per-frame scratch allocation as a convenience abstraction.
 * Avoid repeated map or object lookups inside large loops.
 * Prefer contiguous GPU-friendly data layouts.
 * Preserve batching and indirect drawing.
@@ -85,7 +99,7 @@ In performance-sensitive code:
 * Avoid GPU readbacks unless absolutely required.
 * Prefer compute compaction over CPU-side filtering for large datasets.
 * Consider cache behavior, memory bandwidth, dispatch count, and draw-call count.
-* Use allocators and containers from our memory/allocators.js and memory/containers.js implementations where possible.
+* Use allocators and containers from our `memory/allocator.js` and `memory/container.js` implementations where possible.
 
 Do not optimize blindly. Explain the expected benefit of meaningful performance changes in comments.
 

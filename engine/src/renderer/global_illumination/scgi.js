@@ -13,14 +13,14 @@ export class SCGI {
 
   config = {
     surface_cache_size: 262144,
-    rays_per_patch: 8,
+    rays_per_patch: 64,
     cache_entry_lifetime: 1,
     hash_search_count: 4,
     cache_pixel_footprint: 16.0,
     cache_normal_bias: 0.005,
     history_hysteresis: 0.95,
     max_history_samples: 256,
-    maximum_ray_count_per_frame: 131072,
+    maximum_ray_count_per_frame: 524288,
     temporal_response: 0.001,
     temporal_max_history_frames: 256,
     temporal_depth_threshold: 0.03,
