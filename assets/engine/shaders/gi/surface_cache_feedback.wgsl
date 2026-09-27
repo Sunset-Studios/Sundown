@@ -31,10 +31,12 @@ fn feedback_surface_patch(
     search_count: u32,
     lifetime: u32
 ) {
-    let cell_size = surface_cache_cell_size(cell_exponent);
-    let quantized_position = vec3<i32>(floor(
-        position / cell_size
-    ));
+    let quantized_position = surface_cache_quantize_position(
+        position,
+        normal,
+        cell_exponent,
+        surface_cache_params,
+    );
     let result = hashmap_find_or_claim(
         &surface_cache_hashmap,
         surface_cache_hash_key(
@@ -79,14 +81,6 @@ fn feedback_surface_patch(
             sample_count,
             surface_cache_params.frame_index,
             metadata.w
-        );
-        surface_cache[result.index].position_frame = vec4<f32>(
-            position,
-            surface_cache_params.frame_index
-        );
-        surface_cache[result.index].normal_cell_exponent = vec4<f32>(
-            normal,
-            f32(cell_exponent)
         );
         append_active_patch(result.index);
         return;

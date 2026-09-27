@@ -24,11 +24,10 @@ export class MeshLODTool extends DevConsoleTool {
 
     let mesh_count = 0;
     for (const mesh of ResourceCache.get().fetch_all(CacheTypes.MESH).values()) {
-      if (!mesh || typeof mesh.set_min_lod !== "function") {
-        continue;
+      if (mesh) {
+        mesh.set_min_lod(lod);
+        mesh_count++;
       }
-      mesh.set_min_lod(lod);
-      mesh_count++;
     }
 
     log(`Default mesh LOD set to ${lod}; updated ${mesh_count} loaded meshes.`);
