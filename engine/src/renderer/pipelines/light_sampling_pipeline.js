@@ -19,6 +19,12 @@ const compact_emissive_lights_shader_setup = {
   },
 };
 
+const prepare_emissive_light_instances_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "system_compute/prepare_emissive_light_instances.wgsl" },
+  },
+};
+
 /**
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                         LIGHT SAMPLING PIPELINE                             ║
@@ -61,6 +67,32 @@ export class LightSamplingPipeline {
     const material_buffers = register_material_buffers(render_graph);
     const texture_pools = register_texture_pools(render_graph);
 
+    // Pack the two instance lookups into one binding to keep compaction within
+    // 10 storage buffers, including globals. This costs one dispatch and 8 bytes
+    // per primitive slot; the graph reuses the allocation until capacity grows.
+    const primitive_slot_capacity = Math.floor(render_graph.get_resource_config(entity_index_lookup).size / 4);
+    const emissive_light_instances = render_graph.create_buffer({
+      name: "emissive_light_instances",
+      size: Math.max(1, primitive_slot_capacity) * 2,
+      usage: GPUBufferUsage.STORAGE,
+      force: force_recreate,
+    });
+
+    render_graph.add_pass(
+      "prepare_emissive_light_instances",
+      RenderPassFlags.Compute,
+      {
+        shader_setup: prepare_emissive_light_instances_shader_setup,
+        inputs: [tlas_bvh_info, entity_index_lookup, material_buffers.material_offsets_buffer, emissive_light_instances],
+        outputs: [emissive_light_instances],
+      },
+      (graph, frame_data) => {
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(Math.ceil(primitive_slot_capacity / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
     render_graph.add_pass(
       "compact_lights",
       RenderPassFlags.Compute,
@@ -89,9 +121,8 @@ export class LightSamplingPipeline {
           index_buffer,
           entity_transforms,
           material_buffers.params_gpu_buffer,
-          material_buffers.material_offsets_buffer,
+          emissive_light_instances,
           material_buffers.material_palette_buffer,
-          entity_index_lookup,
           emissive_lights,
           texture_pools.albedo,
           texture_pools.emission,

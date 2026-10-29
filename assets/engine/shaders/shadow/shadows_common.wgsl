@@ -16,6 +16,8 @@ struct ASVSMSettings {
 struct ShadowCasterLight {
     light_index: u32,
     clip_index: u32,
+    view_index: u32,
+    shadow_index: u32,
 };
 
 struct VirtualTileInfo {

@@ -8,12 +8,11 @@
 @group(1) @binding(3) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(4) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(5) var<storage, read> material_params: array<StandardMaterialParams>;
-@group(1) @binding(6) var<storage, read> material_table_offset: array<u32>;
+@group(1) @binding(6) var<storage, read> emissive_light_instances: array<vec2<u32>>;
 @group(1) @binding(7) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
-@group(1) @binding(9) var<storage, read_write> emissive_lights_buffer: EmissiveLightsBufferA;
-@group(1) @binding(10) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(11) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(8) var<storage, read_write> emissive_lights_buffer: EmissiveLightsBufferA;
+@group(1) @binding(9) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(10) var texture_pool_emission: texture_2d_array<f32>;
 
 const MAX_TRIANGLES_PER_LEAF: u32 = 32u;
 fn triangle_area_and_normal(p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> vec4<f32> {
@@ -50,7 +49,8 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let prim_store = u32(-node.max.w - 1.0);
-    let entity_resolved = entity_index_lookup[prim_store];
+    let instance = emissive_light_instances[prim_store];
+    let entity_resolved = instance.x;
 
     let sample_count = min(MAX_TRIANGLES_PER_LEAF, tri_count);
 
@@ -61,7 +61,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let start_tri = (frame_index_u32 * sample_count + leaf_hash) % tri_count;
 
     let entity_transform = entity_transforms[entity_resolved];
-    let entity_palette_base = material_table_offset[entity_resolved];
+    let entity_palette_base = instance.y;
 
     for (var sample_idx = 0u; sample_idx < sample_count; sample_idx = sample_idx + 1u) {
         let tri_id_local = (start_tri + sample_idx) % tri_count;

@@ -818,8 +818,6 @@ export class AdaptiveSparseVirtualShadowMaps {
               meshlet_triangle_buffer,
               this.settings_buf,
               light_uniform,
-              this.light_view_buf,
-              this.light_shadow_idx_buf,
               entity_index_lookup,
               this.page_table,
             ],
@@ -910,6 +908,7 @@ export class AdaptiveSparseVirtualShadowMaps {
   #light_draw_uniforms = [];
   _setup_light_draw_uniforms(render_graph, lights_count, clipmap_levels) {
     this.#light_draw_uniforms.length = 0;
+    let uniforms_dirty = false;
 
     const total = lights_count * clipmap_levels;
 
@@ -921,16 +920,48 @@ export class AdaptiveSparseVirtualShadowMaps {
       for (let c = 0; c < clipmap_levels; c++) {
         const idx = light_idx * clipmap_levels + c;
 
-        // Light index uniform (binding 5)
-        light_draw_uniform_configs[idx] = {
-          name: `light_draw_uniform_${light_idx}_${c}`,
-          raw_data: new Uint32Array([light_idx, c]),
-          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        };
+        let config = light_draw_uniform_configs[idx];
+        if (!config || config.raw_data[0] !== light_idx || config.raw_data[1] !== c) {
+          config = {
+            name: `light_draw_uniform_${light_idx}_${c}`,
+            raw_data: new Uint32Array(4),
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          };
+          light_draw_uniform_configs[idx] = config;
+          uniforms_dirty = true;
+        }
+        const data = config.raw_data;
+        const view_index = this.active_view_indices[light_idx] ?? 0xffffffff;
+        const shadow_index = this.active_shadow_indices[light_idx] ?? 0xffffffff;
+        if (data[0] !== light_idx || data[1] !== c ||
+            data[2] !== view_index || data[3] !== shadow_index) {
+          data[0] = light_idx;
+          data[1] = c;
+          data[2] = view_index;
+          data[3] = shadow_index;
+          uniforms_dirty = true;
+        }
 
-        const light_buf = render_graph.create_buffer(light_draw_uniform_configs[idx]);
+        const light_buf = render_graph.create_buffer(config);
         this.#light_draw_uniforms.push(light_buf);
       }
+    }
+
+    // Per-draw indices remove two storage bindings and repeated vertex-stage
+    // lookups. Upload changed mappings explicitly because buffers persist.
+    if (uniforms_dirty) {
+      render_graph.add_pass(
+        "as_vsm_upload_light_draw_uniforms",
+        RenderPassFlags.GraphLocal,
+        {},
+        (graph) => {
+          for (let idx = 0; idx < this.#light_draw_uniforms.length; idx++) {
+            graph.get_physical_buffer(this.#light_draw_uniforms[idx]).write_raw(
+              light_draw_uniform_configs[idx].raw_data
+            );
+          }
+        }
+      );
     }
 
     return this.#light_draw_uniforms;

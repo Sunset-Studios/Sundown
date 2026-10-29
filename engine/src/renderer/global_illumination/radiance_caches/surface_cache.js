@@ -28,9 +28,12 @@ export class SurfaceRadianceCache {
   constructor() {
     this.shader_setups = {
       prepare_dispatch: compute_shader("gi/surface_cache_prepare_dispatch.wgsl"),
+      prepare_rays: compute_shader("gi/surface_cache_prepare_rays.wgsl"),
       feedback: compute_shader("gi/surface_cache_feedback.wgsl"),
       trace_hit: compute_shader("gi/surface_cache_trace_hit.wgsl"),
       shade: compute_shader("gi/surface_cache_trace_shade.wgsl"),
+      prepare_shading: compute_shader("gi/surface_cache_prepare_shading.wgsl"),
+      shade_recurrence: compute_shader("gi/surface_cache_shade_recurrence.wgsl"),
       shadow: compute_shader("gi/surface_cache_trace_shadow.wgsl"),
       accumulate: compute_shader("gi/surface_cache_accumulate.wgsl"),
       resolve: compute_shader("gi/surface_cache_resolve.wgsl"),
@@ -302,6 +305,25 @@ export class SurfaceRadianceCache {
       (graph, frame_data) => graph.get_physical_pass(frame_data.current_pass).dispatch(1, 1, 1)
     );
 
+    // Separate patch sampling from BVH traversal to remove two trace bindings.
+    // Prepared origins temporarily occupy hit attributes, keeping GPU memory flat.
+    render_graph.add_pass(
+      "surface_cache_prepare_rays",
+      RenderPassFlags.Compute,
+      {
+        shader_setup: this.shader_setups.prepare_rays,
+        inputs: [params, surface_cache, update_indices, counters, hit_info, dispatch_args],
+        outputs: [hit_info],
+      },
+      (graph, frame_data) =>
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch_indirect(
+            graph.get_physical_buffer(dispatch_args),
+            SURFACE_CACHE_TRACE_DISPATCH_OFFSET
+          )
+    );
+
     render_graph.add_pass(
       "surface_cache_trace_hits",
       RenderPassFlags.Compute,
@@ -309,8 +331,6 @@ export class SurfaceRadianceCache {
         shader_setup: this.shader_setups.trace_hit,
         inputs: [
           params,
-          surface_cache,
-          update_indices,
           counters,
           hit_info,
           context.inputs.tlas_bvh2_bounds,
@@ -353,30 +373,24 @@ export class SurfaceRadianceCache {
     } = this.surface_cache_resources;
 
     render_graph.add_pass(
-      "surface_cache_shade_hits",
+      "surface_cache_prepare_shading",
       RenderPassFlags.Compute,
       {
-        shader_setup: this.shader_setups.shade,
+        shader_setup: this.shader_setups.prepare_shading,
         inputs: [
           params,
           scene_lighting_data.scene_lighting_buffer,
-          surface_cache,
-          sh,
-          update_indices,
           counters,
           hit_info,
           material_buffers.params_gpu_buffer,
           material_buffers.material_offsets_buffer,
           material_buffers.material_palette_buffer,
           context.inputs.compact_transforms,
-          context.inputs.dense_lights,
-          emissive_lights,
           texture_pools.albedo,
           texture_pools.normal,
           texture_pools.emission,
           scene_lighting_data.skybox_image,
           radiance_info,
-          hashmap_entries,
           dispatch_args,
         ],
         outputs: [radiance_info],
@@ -388,6 +402,43 @@ export class SurfaceRadianceCache {
             graph.get_physical_buffer(dispatch_args),
             SURFACE_CACHE_TRACE_DISPATCH_OFFSET
           )
+    );
+    // Material attributes occupy shadow fields until recurrence and direct-light
+    // sampling consume them. Two dispatches reduce bindings without extra storage.
+    render_graph.add_pass(
+      "surface_cache_shade_recurrence",
+      RenderPassFlags.Compute,
+      {
+        shader_setup: this.shader_setups.shade_recurrence,
+        inputs: [params, surface_cache, sh, counters, radiance_info, hashmap_entries, dispatch_args],
+        outputs: [radiance_info],
+      },
+      (graph, frame_data) =>
+        graph.get_physical_pass(frame_data.current_pass).dispatch_indirect(
+          graph.get_physical_buffer(dispatch_args), SURFACE_CACHE_TRACE_DISPATCH_OFFSET
+        )
+    );
+    render_graph.add_pass(
+      "surface_cache_shade_hits",
+      RenderPassFlags.Compute,
+      {
+        shader_setup: this.shader_setups.shade,
+        inputs: [
+          params,
+          surface_cache,
+          update_indices,
+          counters,
+          context.inputs.dense_lights,
+          emissive_lights,
+          radiance_info,
+          dispatch_args,
+        ],
+        outputs: [radiance_info],
+      },
+      (graph, frame_data) =>
+        graph.get_physical_pass(frame_data.current_pass).dispatch_indirect(
+          graph.get_physical_buffer(dispatch_args), SURFACE_CACHE_TRACE_DISPATCH_OFFSET
+        )
     );
     render_graph.add_pass(
       "surface_cache_trace_shadows",

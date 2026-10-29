@@ -78,10 +78,14 @@ struct SurfaceCacheCountersReadOnly {
 struct SurfaceCacheHitInfo {
     ray_direction_sampling_weight: vec4<f32>,
     hit_identity: vec4<u32>,
-    hit_barycentrics_t: vec4<f32>,
+    hit_barycentrics_t: vec4<f32>, // Prepared origin/tmin until traversal writes hit barycentrics/t.
 };
 
 struct SurfaceCacheRadianceInfo {
+    // During shading preparation: shadow_radiance = diffuse response,
+    // sample_radiance = albedo, shadow_origin = position/emission,
+    // shadow_direction = normal/valid. Recurrence replaces sample_radiance;
+    // direct-light sampling then replaces the shadow fields with visibility work.
     shadow_radiance: vec4<f32>, // .w = 0 for none, 1 for pending visiblity, 2 for visible
     sample_radiance: vec4<f32>, // .w = valid sample
     shadow_origin: vec4<f32>,

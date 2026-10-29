@@ -12,10 +12,8 @@
 @group(1) @binding(5) var<storage, read> meshlet_triangles: array<u32>;
 @group(1) @binding(6) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(7) var<uniform> light_ub: ShadowCasterLight;
-@group(1) @binding(8) var<storage, read> light_view_buffer: array<u32>;
-@group(1) @binding(9) var<storage, read> light_shadow_idx_buffer: array<u32>;
-@group(1) @binding(10) var<storage, read> entity_index_lookup: array<u32>;
-@group(1) @binding(11) var page_table: texture_storage_2d_array<r32uint, read>;
+@group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(9) var page_table: texture_storage_2d_array<r32uint, read>;
 
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
@@ -35,7 +33,6 @@ fn vs(@builtin(vertex_index) vi: u32,
 
 #if SHADOWS_ENABLED
   let clip_index            = light_ub.clip_index;
-  let light_idx             = light_ub.light_index;
   let visible_entry         = visible_meshlets[ii];
   let object_instance_index = meshlet_object_index(visible_entry);
   let global_meshlet_index  = meshlet_index(visible_entry);
@@ -66,8 +63,8 @@ fn vs(@builtin(vertex_index) vi: u32,
     return out;
   }
 
-  let view_index            = light_view_buffer[light_idx];
-  let shadow_idx            = light_shadow_idx_buffer[light_idx];
+  let view_index            = light_ub.view_index;
+  let shadow_idx            = light_ub.shadow_index;
 
   let model_matrix          = entity_transforms[entity_row].transform;
   let world_pos             = model_matrix * vertex_position4(vertex_buffer[global_vertex_index]);
