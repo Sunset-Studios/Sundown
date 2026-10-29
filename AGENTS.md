@@ -26,6 +26,7 @@ Key priorities:
 
 ## Conventions 
 
+* Format all generated code for human readability, including shaders, scripts, and configuration. Use consistent indentation and line breaks, descriptive names, and concise documentation for non-obvious behavior; run the project formatter where available. For JS files or anything JS related, use the `prettier` dependency to auto-format.
 * Prefer small, focused patches over broad rewrites.
 * Do not refactor unrelated code.
 * Follow existing naming and architectural patterns.
@@ -47,6 +48,7 @@ Key priorities:
 
 ## WebGPU and WGSL Rules
 
+* Format every changed WGSL file with `npm run format:wgsl -- path/to/file.wgsl` before completing the work. Pass multiple paths to format several files, or add `--check` to verify formatting without writing. The formatter preserves Sundown preprocessing directives.
 * Consider alignment and padding for uniform and storage buffers.
 * Avoid unnecessary bind group changes.
 * Avoid recreating pipelines or bind groups inside hot per-frame loops.
