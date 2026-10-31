@@ -34,6 +34,9 @@ Key priorities:
 * Use `PascalCase` for classes and structs.
 * When generating comments for entire implementations or files, make them beautiful and stylized. Use mesh_blas.js as an example.
 * Prioritize functions, methods and scopes that are no longer than 200 lines. If an implementation would take more than 200 lines, split it up into multiple functions or scopes.
+* Add new lines spacing where it makes sense (between functions, functional units of code, includes, etc)
+* Name variables such that they are not obfuscated or hard to read. They should be self-documenting and human-friendly.
+* Use a minimal layout for the code. Do not create unnecessary functions and inline what you can, but keep everything clean and readable.
 
 ---
 
