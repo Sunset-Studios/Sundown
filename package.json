@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "A WebGPU game engine for fun and games.",
   "type": "module",
+  "main": "desktop/main.js",
   "scripts": {
     "cook": "node tools/texture_importer.js --apply && node tools/fragment_preprocessor.js && node tools/shader_preprocessor.js && node tools/meshlet_preprocessor.js && node tools/sbvh_preprocessor.js && node tools/msdf_font_generator.js",
     "import:textures": "node tools/texture_importer.js",
@@ -11,11 +12,11 @@
     "prebuild": "npm run cook",
     "build": "vite build",
     "predevtop": "npm run cook",
-    "devtop": "tauri dev",
+    "devtop": "node tools/desktop_dev.js",
     "prebuildtop": "npm run cook",
-    "buildtop": "vite build && tauri build",
+    "buildtop": "vite build && electron-builder --dir",
     "premake": "npm run cook",
-    "make": "vite build && tauri build && tauri package",
+    "make": "vite build && electron-builder",
     "format:wgsl": "node tools/format_wgsl.js"
   },
   "keywords": [
@@ -34,7 +35,8 @@
     "gl-matrix": "^3.4.3"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
     "@wasm-fmt/wgslfmt": "^0.1.0",
     "express": "^4.21.2",
     "ktx2-encoder": "^0.5.3",
@@ -46,7 +48,45 @@
     "wgsl_reflect": "^1.0.8"
   },
   "allowScripts": {
+    "electron": true,
     "sharp@0.33.5": true,
     "esbuild@0.25.12": true
+  },
+  "build": {
+    "appId": "com.ajadr.sundown",
+    "productName": "Sundown",
+    "directories": {
+      "output": "executables",
+      "buildResources": "desktop/icons"
+    },
+    "files": [
+      "desktop/main.js",
+      "desktop/protocol.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist",
+        "to": "dist"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.games"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game"
+    }
   }
 }

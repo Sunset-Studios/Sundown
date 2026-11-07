@@ -72,6 +72,7 @@ Key priorities:
 | 'static' | 'static_assert' | 'static_cast' | 'std' | 'subroutine' | 'super' | 'target' | 'template' | 'this' | 'thread_local'
 | 'throw' | 'trait' | 'try' | 'type' | 'typedef' | 'typeid' | 'typename' | 'typeof' | 'union' | 'unless' | 'unorm' | 'unsafe'
 | 'unsized' | 'use' | 'using' | 'varying' | 'virtual' | 'volatile' | 'wgsl' | 'where' | 'with' | 'writeonly' | 'yield'
+* Organize WGSL files in the following order: `enable` directives, includes, bindings, data structures, free and utility functions, shader functions
 
 ---
 

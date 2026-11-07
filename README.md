@@ -67,7 +67,8 @@ To run the development project in a browser, use the npm `dev` command
 ```
 
 
-To run the development project in a Tauri instance, use the npm `devtop` command
+To run the development project in an Electron window, use the npm `devtop` command.
+This starts the development server on port 3000 and closes it when Electron exits.
 ```bash
 > npm run devtop
 ```
@@ -76,7 +77,9 @@ To run the development project in a Tauri instance, use the npm `devtop` command
 ### Packaging
 
 
-You can package and distribute builds for the web or for desktop with the help of [Tauri](https://v2.tauri.app/).
+You can package and distribute builds for the web or for desktop with [Electron](https://www.electronjs.org/).
+Desktop builds bundle Chromium, so macOS WebGPU support does not depend on WKWebView.
+GPU features and limits still depend on Chromium, Metal, and the target hardware; Sundown checks its required capabilities at startup.
 
 
 To package for the web, just run the npm `build` command.
@@ -88,10 +91,15 @@ To package for the web, just run the npm `build` command.
 Then copy the resulting **index.html** file and **assets** and **engine** directories into your site's root.
 
 
-To build executable Tauri packages, use the provided npm `make` command. This will create executable outputs in a top level *executables* directory.
+To build an unpacked desktop app for the current platform, run `npm run buildtop`.
+To create installers (DMG/ZIP on macOS, NSIS on Windows, AppImage on Linux), use the npm `make` command.
+Both commands write their outputs to the top-level *executables* directory.
 ```bash
 > npm run make
 ```
+
+Build on the target OS for distribution. Public macOS releases also require Apple code signing and notarization; configure electron-builder signing credentials in your release environment.
+The desktop renderer is sandboxed with Node integration disabled. It uses the same browser WebGPU API as the web build, without a native rendering IPC bridge.
 
 
 ### Contributing

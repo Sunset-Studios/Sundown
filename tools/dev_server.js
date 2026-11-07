@@ -314,6 +314,11 @@ async function stream_scene_package(req, res) {
 
 async function create_dev_server() {
   const app = express();
+  app.use((req, res, next) => {
+    res.set("Cross-Origin-Opener-Policy", "same-origin");
+    res.set("Cross-Origin-Embedder-Policy", "require-corp");
+    next();
+  });
 
   // Register binary uploads before Vite so large request streams never pass
   // through development middleware or accumulate in an Express body buffer.
@@ -386,12 +391,17 @@ async function create_dev_server() {
   });
 
   const port = process.env.PORT || 3000;
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
+    process.send?.({ type: "listening", port: server.address().port });
     console.log(
       "\x1b[32mSundown Vite dev server running at \x1b[37mhttp://localhost:" +
         port +
         "\x1b[32m\x1b[0m"
     );
+  });
+  server.on("error", (server_error) => {
+    console.error("Failed to listen for dev requests:", server_error);
+    process.exit(1);
   });
 }
 
