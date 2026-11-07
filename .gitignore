@@ -3,8 +3,6 @@ node_modules
 executables/
 dist/
 out/
-tauri/target/
-tauri/gen
 
 **/fonts/**/*.json
 **/fonts/**/*.png
@@ -14,4 +12,3 @@ tauri/gen
 **/*.sbvh.bin
 **/*.cooked.json
 **/*.cooked.bin
-
