@@ -289,6 +289,8 @@ export class FragmentGpuBuffer {
 
     // track exact buffer segments (chunk + row range) needing CPU sync
     this.pending_sync_segments = [];
+    this.readback_sync_segments = [];
+    this.readback_in_progress = false;
 
     FragmentGpuBuffer.all_buffers.push(this);
   }
@@ -342,49 +344,90 @@ export class FragmentGpuBuffer {
    */
   async readback_buffers() {
     // Return early if no CPU readbacks or no pending segments
-    if (!this.cpu_readback) return;
+    if (
+      !this.cpu_readback ||
+      this.readback_in_progress ||
+      this.pending_sync_segments.length === 0
+    ) {
+      return;
+    }
 
     // Map the entire CPU buffer once for reading
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-    const cpu_buf = this.buffer.cpu_buffers[buffered_frame];
+    const source_buffer = this.buffer;
+    const cpu_buf = source_buffer.cpu_buffers[buffered_frame];
     if (cpu_buf.mapState !== unmapped_state) return;
 
-    await cpu_buf.mapAsync(GPUMapMode.READ);
-    const mapped_range = cpu_buf.getMappedRange();
+    // Reuse two lists so updates during mapAsync belong to the next readback,
+    // never to the older staging buffer currently being mapped.
+    const readback_segments = this.pending_sync_segments;
+    this.pending_sync_segments = this.readback_sync_segments;
+    this.readback_sync_segments = readback_segments;
+    this.readback_in_progress = true;
 
-    if (this.pending_sync_segments.length === 0) return;
+    try {
+      await cpu_buf.mapAsync(GPUMapMode.READ);
 
-    if (this.sync_target_accessor) {
-      for (const { chunk, base_row, row_count } of this.pending_sync_segments) {
-        const target_view = this.sync_target_accessor(chunk);
-        if (!target_view) continue;
+      // Resizing replaces the entire GPU allocation and schedules a full flush.
+      // Its old readback must not overwrite CPU state belonging to the new one.
+      if (this.buffer !== source_buffer) return;
 
-        const offset_bytes = base_row * this.byte_stride;
-        const slice = new Uint32Array(mapped_range, offset_bytes, row_count);
-        target_view.set(slice.subarray(0, Math.min(row_count, target_view.length)), 0);
+      const mapped_range = cpu_buf.getMappedRange();
+      for (let i = 0; i < readback_segments.length; i++) {
+        const segment = readback_segments[i];
+        const byte_offset = segment.base_row * this.byte_stride;
+        const byte_length = segment.row_count * this.byte_stride;
+        if (
+          !Number.isInteger(segment.base_row) ||
+          segment.base_row < 0 ||
+          !Number.isInteger(segment.row_count) ||
+          segment.row_count < 0 ||
+          byte_offset + byte_length > mapped_range.byteLength
+        ) {
+          throw new Error(
+            `Invalid readback segment for '${this.name}': base row ${segment.base_row}, ` +
+              `row count ${segment.row_count}, byte offset ${byte_offset}, ` +
+              `byte length ${byte_length}, mapped size ${mapped_range.byteLength} bytes.`
+          );
+        }
       }
-    } else {
-      const frag_id = this.fragment_class_ref.id;
-      const field_key = this.config_key_within_fragment;
-      const spec = this.fragment_class_ref.fields[field_key];
 
-      for (const { chunk, base_row, row_count } of this.pending_sync_segments) {
-        const frag_views = chunk.fragment_views[frag_id];
-        if (!frag_views) continue;
-        const target_view = frag_views[field_key];
-        if (!target_view) continue;
+      if (this.sync_target_accessor) {
+        for (const { chunk, base_row, row_count } of readback_segments) {
+          const target_view = this.sync_target_accessor(chunk);
+          if (!target_view) continue;
 
-        const offset_bytes = base_row * this.byte_stride;
-        const element_count = (row_count * this.byte_stride) / spec.ctor.BYTES_PER_ELEMENT;
-        const slice = new spec.ctor(mapped_range, offset_bytes, element_count);
-        target_view.set(slice.subarray(0, Math.min(element_count, target_view.length)), 0);
+          const offset_bytes = base_row * this.byte_stride;
+          const slice = new Uint32Array(mapped_range, offset_bytes, row_count);
+          target_view.set(slice.subarray(0, Math.min(row_count, target_view.length)), 0);
+        }
+      } else {
+        const frag_id = this.fragment_class_ref.id;
+        const field_key = this.config_key_within_fragment;
+        const spec = this.fragment_class_ref.fields[field_key];
+
+        for (const { chunk, base_row, row_count } of readback_segments) {
+          const frag_views = chunk.fragment_views[frag_id];
+          if (!frag_views) continue;
+          const target_view = frag_views[field_key];
+          if (!target_view) continue;
+
+          const offset_bytes = base_row * this.byte_stride;
+          const element_count = (row_count * this.byte_stride) / spec.ctor.BYTES_PER_ELEMENT;
+          const slice = new spec.ctor(mapped_range, offset_bytes, element_count);
+          target_view.set(slice.subarray(0, Math.min(element_count, target_view.length)), 0);
+        }
+      }
+    } catch (readback_error) {
+      throw Buffer.create_readback_error(cpu_buf, readback_error);
+    } finally {
+      // Never clear updates queued while this readback was awaiting its map.
+      readback_segments.length = 0;
+      this.readback_in_progress = false;
+      if (cpu_buf.mapState === "mapped") {
+        cpu_buf.unmap();
       }
     }
-
-    // Unmap and clear segments
-    cpu_buf.unmap();
-
-    this.pending_sync_segments.length = 0;
   }
 
   _resize_buffer(new_max_rows) {
@@ -403,6 +446,9 @@ export class FragmentGpuBuffer {
       dispatch: this.dispatch,
       cpu_readback: this.cpu_readback,
     });
+    // The replacement is repopulated by the full flush below. Pending ranges
+    // for its predecessor cannot be read from the new staging buffers yet.
+    this.pending_sync_segments.length = 0;
     // NOTE: Data from the old buffer is NOT automatically copied here.
     // If resizing needs to preserve existing data, a GPU copy operation
     // from old_buffer to the new this.buffer would be needed before

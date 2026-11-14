@@ -60,6 +60,20 @@ export class ShadowCuller extends InstanceCuller {
     this.name = "shadow";
   }
 
+  reset() {
+    super.reset();
+
+    // Graph handles are frame-local. Unregistered clipmaps must not expose
+    // handles that can alias unrelated resources after a scene switch.
+    this.cull_data_buffers.reset();
+    this.shadow_meshlet_lists.reset();
+    this.shadow_meshlet_draw_args.reset();
+    this.dirty_shadow_meshlet_lists.reset();
+    this.dirty_shadow_meshlet_draw_args.reset();
+    this.shadow_meshlet_param_buffers.reset();
+    this.registered_light_indices.reset();
+  }
+
   register_view(render_graph, draw_count, view_index, clipmap_index = 0, light_index = 0, force = false) {
     this.registered_views.push(view_index);
     this.registered_clipmaps.push(clipmap_index);

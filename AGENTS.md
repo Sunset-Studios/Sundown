@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file contains instructions for AI coding agents working on **Sundown**.  In the first progress update, include "[SUNDOWN RULES LOADED]". 
+This file contains instructions for AI coding agents working on **Sundown**. 
 
 ## Project Overview
 
@@ -12,7 +12,7 @@ Primary technologies:
 * WebGPU
 * WGSL
 * Vite
-* Tauri
+* Electron 
 
 Key priorities:
 
@@ -145,7 +145,6 @@ GPU resources must have clear ownership and lifetime.
 
 Unless explicitly requested, do not:
 
-* Rewrite major renderer systems
 * Add per-frame allocations to hot paths
 * Reformat unrelated files
 * Commit or push changes

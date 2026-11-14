@@ -419,54 +419,33 @@ export class SharedViewBuffer {
   }
 
   /** Remove a view, compact raw_data, and rebuild GPU buffer */
-  static remove_view_data(idx, compact = false) {
+  static remove_view_data(idx) {
     const length = SharedViewBuffer.raw_data.length / SharedViewBuffer.floats_per_view;
 
-    if (compact) {
-      const last = length - 1;
-      const last_dirty_state = SharedViewBuffer.dirty_states.get(last);
-      const last_renderable_state = SharedViewBuffer.is_render_active(last);
-      const last_moved_state = SharedViewBuffer.moved_states.get(last);
+    const last = length - 1;
+    const last_dirty_state = SharedViewBuffer.dirty_states.get(last);
+    const last_renderable_state = SharedViewBuffer.is_render_active(last);
+    const last_moved_state = SharedViewBuffer.moved_states.get(last);
 
-      SharedViewBuffer.set_render_active(idx, false);
+    SharedViewBuffer.set_render_active(idx, false);
 
-      // Swap with last view if not the last view
-      if (idx !== last) {
-        SharedViewBuffer.set_render_active(last, false);
+    // Swap with last view if not the last view
+    if (idx !== last) {
+      SharedViewBuffer.set_render_active(last, false);
 
-        const src = last * SharedViewBuffer.floats_per_view;
-        const dst = idx * SharedViewBuffer.floats_per_view;
-        SharedViewBuffer.raw_data.copyWithin(dst, src, src + SharedViewBuffer.floats_per_view);
+      const src = last * SharedViewBuffer.floats_per_view;
+      const dst = idx * SharedViewBuffer.floats_per_view;
+      SharedViewBuffer.raw_data.copyWithin(dst, src, src + SharedViewBuffer.floats_per_view);
 
-        SharedViewBuffer.dirty_states.set(idx, last_dirty_state);
-        SharedViewBuffer.set_render_active(idx, last_renderable_state);
-        SharedViewBuffer.moved_states.set(idx, last_moved_state);
-      }
-
-      SharedViewBuffer.raw_data = SharedViewBuffer.raw_data.subarray(
-        0,
-        last * SharedViewBuffer.floats_per_view
-      );
-    } else {
-      SharedViewBuffer.dirty_states.set(idx, 0);
-      SharedViewBuffer.moved_states.set(idx, 0);
-      if (SharedViewBuffer.is_render_active(idx)) {
-        const clipmap_count = SharedViewBuffer.raw_data[
-          idx * SharedViewBuffer.floats_per_view + SharedViewBuffer.offsets.clipmap_count
-        ];
-        for (let i = 0; i < clipmap_count; i++) {
-          RenderTaskQueue.deallocate_view_data(idx, i);
-        }
-      }
-      SharedViewBuffer.set_render_active(idx, false);
-      SharedViewBuffer.fill(
-        0,
-        idx * SharedViewBuffer.floats_per_view,
-        SharedViewBuffer.floats_per_view
-      );
-      // recycle this index for future allocations
-      SharedViewBuffer.free_list.push(idx);
+      SharedViewBuffer.dirty_states.set(idx, last_dirty_state);
+      SharedViewBuffer.set_render_active(idx, last_renderable_state);
+      SharedViewBuffer.moved_states.set(idx, last_moved_state);
     }
+
+    SharedViewBuffer.raw_data = SharedViewBuffer.raw_data.subarray(
+      0,
+      last * SharedViewBuffer.floats_per_view
+    );
   }
 
   /** Get a view by index */
@@ -863,6 +842,9 @@ export class SharedEnvironmentData {
         GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
+    // Cached textures do not run Texture.load() again to invalidate bindings.
+    Renderer.get().mark_bind_groups_dirty(true);
+
     // Update skydome buffer to indicate skybox mode
     this.skydome_data_buffer[11] = 0; // sky_type = 0 (skybox)
     if (!this.skydome_data) {
@@ -881,6 +863,7 @@ export class SharedEnvironmentData {
 
   static set_skydome(name) {
     this.skybox = Texture.default_cube();
+    Renderer.get().mark_bind_groups_dirty(true);
 
     // Skydome is enabled - update sky_type flag
     this.skydome_data_buffer[11] = 1; // sky_type = 1 (skydome)

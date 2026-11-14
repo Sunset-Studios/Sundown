@@ -5,6 +5,7 @@ import { Renderer } from "./renderer.js";
 import { ResourceCache } from "./resource_cache.js";
 import { CacheTypes } from "./renderer_types.js";
 import { global_dispatcher } from "../core/dispatcher.js";
+import { warn } from "../utility/logging.js";
 
 const unmapped_state = "unmapped";
 
@@ -100,23 +101,35 @@ export class Buffer {
         if (!old_cpu_buffer) {
           continue;
         }
-        Renderer.get().execution_queue.push_execution(
-          () => old_cpu_buffer.destroy(),
-          `buffer_cpu_${this.physical_id}_${i}_${performance.now()}`,
-          MAX_BUFFERED_FRAMES + 1
+        this._schedule_buffer_destruction(
+          old_cpu_buffer,
+          `buffer_cpu_${this.physical_id}_${i}_${performance.now()}`
         );
       }
     }
     if (this.buffer) {
       const old_buffer = this.buffer;
-      Renderer.get().execution_queue.push_execution(
-        () => old_buffer.destroy(),
-        `buffer_${this.physical_id}_${performance.now()}`,
-        MAX_BUFFERED_FRAMES + 1
+      this._schedule_buffer_destruction(
+        old_buffer,
+        `buffer_${this.physical_id}_${performance.now()}`
       );
     }
     this.cpu_buffers = null;
     this.buffer = null;
+  }
+
+  _schedule_buffer_destruction(buffer, execution_id) {
+    const execution_queue = Renderer.get().execution_queue;
+    const destroy_buffer = () => {
+      // Frame delays retire GPU commands, not asynchronous CPU mappings.
+      // Reuse this callback until the readback releases its mapped range.
+      if (buffer.mapState !== unmapped_state) {
+        execution_queue.push_execution(destroy_buffer, execution_id);
+        return;
+      }
+      buffer.destroy();
+    };
+    execution_queue.push_execution(destroy_buffer, execution_id, MAX_BUFFERED_FRAMES + 1);
   }
 
   write(data, offset = 0, size = null, data_offset = 0, data_type = Float32Array) {
@@ -183,10 +196,9 @@ export class Buffer {
     this.buffer = new_buffer;
     this.config.size = required_size;
     if (old_buffer) {
-      renderer.execution_queue.push_execution(
-        () => old_buffer.destroy(),
-        `buffer_resize_${this.physical_id}_${performance.now()}`,
-        MAX_BUFFERED_FRAMES + 1
+      this._schedule_buffer_destruction(
+        old_buffer,
+        `buffer_resize_${this.physical_id}_${performance.now()}`
       );
     }
     renderer.mark_bind_groups_dirty(true);
@@ -222,13 +234,27 @@ export class Buffer {
     if (!source_buffer || source_buffer.mapState !== unmapped_state) {
       return;
     }
-    await source_buffer.mapAsync(GPUMapMode.READ);
-    if (source_buffer) {
+    try {
+      await source_buffer.mapAsync(GPUMapMode.READ);
       const mapped_range = source_buffer.getMappedRange(offset, data_length);
       const view = new data_type(mapped_range);
       data.set(view, data_offset);
-      source_buffer.unmap();
+    } catch (readback_error) {
+      throw Buffer.create_readback_error(source_buffer, readback_error, offset, data_length);
+    } finally {
+      if (source_buffer.mapState === "mapped") {
+        source_buffer.unmap();
+      }
     }
+  }
+
+  static create_readback_error(buffer, cause, offset = 0, size = buffer.size) {
+    return new Error(
+      `GPU buffer readback failed for '${buffer.label}' ` +
+        `(buffer size ${buffer.size} bytes, usage ${buffer.usage}, map state ${buffer.mapState}, ` +
+        `read offset ${offset}, read size ${size} bytes): ${cause.message}`,
+      { cause }
+    );
   }
 
   sync(encoder) {

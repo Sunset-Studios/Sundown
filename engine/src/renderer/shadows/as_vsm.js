@@ -534,12 +534,6 @@ export class AdaptiveSparseVirtualShadowMaps {
     lru_buf_config.force = force_recreate;
     this.lru_buf = render_graph.create_buffer(lru_buf_config);
 
-    const light_uniforms = this._setup_light_draw_uniforms(
-      render_graph,
-      adjusted_light_count,
-      this.max_lods
-    );
-
     this.debug_transforms_buffer = transforms_buffer;
     this.debug_object_instances = object_instances;
     this.debug_entity_index_lookup = entity_index_lookup;
@@ -549,6 +543,12 @@ export class AdaptiveSparseVirtualShadowMaps {
     if (this.cached_light_count === 0) {
       return;
     }
+
+    const light_uniforms = this._setup_light_draw_uniforms(
+      render_graph,
+      adjusted_light_count,
+      this.max_lods
+    );
 
     // ────────────────────────────────────────────────────────────────
     // Clear Shadow Atlas Targets
@@ -791,13 +791,15 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     for (let light_idx = 0; light_idx < adjusted_light_count; light_idx++) {
       const view_index = this.active_view_indices[light_idx];
+      const view_data = SharedViewBuffer.get_view_data(view_index);
+      const clipmap_count = view_data.clipmap_count || 1;
 
-      for (let c = 0; c < this.max_lods; c++) {
-        const dirty_meshlet_list = this.shadow_culler.get_dirty_shadow_meshlet_list(view_index, c);
-        const dirty_meshlet_draw_args = this.shadow_culler.get_dirty_shadow_meshlet_draw_args(
-          view_index,
-          c
-        );
+      // Match culler registration: unused clipmaps have no current-frame buffers.
+      for (let c = 0; c < clipmap_count; c++) {
+        const dirty_meshlet_list =
+          this.shadow_culler.get_dirty_shadow_meshlet_list(view_index, c);
+        const dirty_meshlet_draw_args =
+          this.shadow_culler.get_dirty_shadow_meshlet_draw_args(view_index, c);
 
         if (!dirty_meshlet_list || !dirty_meshlet_draw_args) {
           continue;
@@ -824,13 +826,15 @@ export class AdaptiveSparseVirtualShadowMaps {
             outputs: [this.dummy_depth_image],
             shader_setup: render_shader_setup,
           },
-      (graph, frame_data) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            const dirty_meshlet_draw_args_phys = graph.get_physical_buffer(dirty_meshlet_draw_args);
+            const dirty_meshlet_draw_args_phys = graph.get_physical_buffer(
+              dirty_meshlet_draw_args,
+            );
             if (dirty_meshlet_draw_args_phys) {
               pass.pass.drawIndirect(dirty_meshlet_draw_args_phys.buffer, 0);
             }
-          }
+          },
         );
 
         render_graph.add_pass(
@@ -850,13 +854,18 @@ export class AdaptiveSparseVirtualShadowMaps {
             outputs: [this.shadow_atlas_buf],
             shader_setup: resolve_depth_to_atlas_shader_setup,
           },
-      (graph, frame_data) => {
+          (graph, frame_data) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            const dispatch_args = graph.get_physical_buffer(this.dirty_tile_dispatch_args);
+            const dispatch_args = graph.get_physical_buffer(
+              this.dirty_tile_dispatch_args,
+            );
             const shadow_idx = this.active_shadow_indices[light_idx];
             const slice_index = shadow_idx * this.max_lods + c;
-            pass.dispatch_indirect(dispatch_args, slice_index * 3 * Uint32Array.BYTES_PER_ELEMENT);
-          }
+            pass.dispatch_indirect(
+              dispatch_args,
+              slice_index * 3 * Uint32Array.BYTES_PER_ELEMENT,
+            );
+          },
         );
       }
     }

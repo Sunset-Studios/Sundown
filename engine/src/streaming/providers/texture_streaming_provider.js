@@ -403,6 +403,11 @@ export class TextureStreamingProvider extends StreamProvider {
           usage: texture_usage,
           dimension: texture_dimension_to_image_dimension(texture.config.dimension),
         });
+
+        // Publish the new image and its views together, before retiring the
+        // placeholder. Budgeted uploads can outlive the retirement frame delay.
+        texture._setup_views();
+        renderer.mark_bind_groups_dirty(true);
       }
 
       if (placeholder_image && placeholder_image !== texture.image) {
@@ -444,9 +449,6 @@ export class TextureStreamingProvider extends StreamProvider {
     const texture = request.target;
     const state = request.state;
 
-    if (!texture.config.pool_key) {
-      texture._setup_views();
-    }
     if (texture.config.material_notifier) {
       global_dispatcher.dispatch(texture.config.material_notifier, texture);
     }
