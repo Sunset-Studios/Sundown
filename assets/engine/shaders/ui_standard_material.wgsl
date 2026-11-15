@@ -1,5 +1,6 @@
 #define CUSTOM_DEPTH_VS
 #define CUSTOM_RASTER_VS
+#define CUSTOM_VERTEX_POSITION
 #define CUSTOM_DEPTH_FRAGMENT_MASK
 #define CUSTOM_RASTER_FRAGMENT_MASK
 #define CUSTOM_FORWARD_FRAGMENT
@@ -39,10 +40,7 @@ fn element_alpha(entity_id: u32, uv: vec2<f32>) -> f32 {
     let radius = min(element_rounding, min(half_size.x, half_size.y));
     let local_position = (uv - vec2<f32>(0.5)) * element_size;
     let corner_offset = abs(local_position) - (half_size - vec2<f32>(radius));
-    let signed_distance =
-        length(max(corner_offset, vec2<f32>(0.0))) +
-        min(max(corner_offset.x, corner_offset.y), 0.0) -
-        radius;
+    let signed_distance = length(max(corner_offset, vec2<f32>(0.0))) + min(max(corner_offset.x, corner_offset.y), 0.0) - radius;
     let antialias_width = max(fwidth(signed_distance), 0.001);
     return data.color.a * (1.0 - smoothstep(-antialias_width, antialias_width, signed_distance));
 }
@@ -59,9 +57,7 @@ fn element_coverage_mask(position: vec4<f32>, entity_id: u32, uv: vec2<f32>) -> 
 fn ui_3d_local_position(uv: vec2<f32>, entity_id: u32) -> vec4<f32> {
     let instance = ui_data[entity_id];
     return vec4<f32>(
-        instance.origin.xyz +
-        instance.x_axis.xyz * uv.x +
-        instance.y_axis.xyz * uv.y,
+        instance.origin.xyz + instance.x_axis.xyz * uv.x + instance.y_axis.xyz * uv.y,
         1.0
     );
 }
@@ -73,12 +69,11 @@ fn ui_3d_world_position(uv: vec2<f32>, entity_id: u32, entity_transform: EntityT
 #if MESHLET_DEPTH_PASS
 fn depth_vertex(v_out: ptr<function, DepthVertexOutput>) -> DepthVertexOutput {
     var output = *v_out;
-    if (output.entity_id == INVALID_IDX) {
+    if output.entity_id == INVALID_IDX {
         return output;
     }
     let view_index = u32(frame_info.view_index);
-    output.position = view_buffer[view_index].view_projection_matrix *
-        ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
+    output.position = view_buffer[view_index].view_projection_matrix * ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
     return output;
 }
 
@@ -90,12 +85,11 @@ fn depth_fragment_mask(input: DepthVertexOutput) -> f32 {
 #if MESHLET_RASTER_PASS
 fn raster_vertex(v_out: ptr<function, RasterVertexOutput>) -> RasterVertexOutput {
     var output = *v_out;
-    if (output.entity_id == INVALID_IDX) {
+    if output.entity_id == INVALID_IDX {
         return output;
     }
     let view_index = u32(frame_info.view_index);
-    output.position = view_buffer[view_index].view_projection_matrix *
-        ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
+    output.position = view_buffer[view_index].view_projection_matrix * ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
     return output;
 }
 
@@ -132,7 +126,7 @@ fn resolve_fragment(
     let normal = safe_normalize(cross(data.x_axis.xyz, data.y_axis.xyz));
 
     f_out.albedo = data.color;
-    f_out.albedo.a *= element_alpha(input.entity_id, input.uv);
+    f_out.albedo.a   *= element_alpha(input.entity_id, input.uv);
     f_out.smra = vec4<f32>(1.0, 0.5, 0.1, 1.0);
     f_out.normal = vec4<f32>(normal, 1.0);
     f_out.motion_emissive.a = data.params.z;

@@ -39,7 +39,7 @@ function reflect_resources(reflection) {
     }
   }
   return result;
-};
+}
 
 export class MaterialTemplate {
   static templates = new Map();
@@ -147,13 +147,17 @@ export class MaterialTemplate {
       if (family === MaterialFamilyType.Transparent) {
         forward_shader = ResourceCache.get().fetch(
           CacheTypes.SHADER,
-          Shader.create(shader_path, { ...defines, MESHLET_RASTER_PASS: true, MESHLET_FORWARD_PASS: true })
+          Shader.create(shader_path, {
+            ...defines,
+            MESHLET_RASTER_PASS: true,
+            MESHLET_FORWARD_PASS: true,
+          })
         );
       }
     }
 
     const template = new MaterialTemplate(
-      name, 
+      name,
       shader,
       depth_shader,
       resolve_shader,
@@ -186,29 +190,32 @@ export class MaterialTemplate {
     depth_stencil_options = {},
     pass_type = MaterialPassType.Raster
   ) {
-    const pass_suffix = pass_type === MaterialPassType.Depth
-      ? "_depth"
-      : pass_type === MaterialPassType.Resolve
-        ? "_resolve"
-        : pass_type === MaterialPassType.Forward
-          ? "_forward"
-          : "_raster";
+    const pass_suffix =
+      pass_type === MaterialPassType.Depth
+        ? "_depth"
+        : pass_type === MaterialPassType.Resolve
+          ? "_resolve"
+          : pass_type === MaterialPassType.Forward
+            ? "_forward"
+            : "_raster";
     const pipeline_name = `${this.name}${pass_suffix}`;
-    const shader_module = pass_type === MaterialPassType.Depth
-      ? this.depth_shader.module
-      : pass_type === MaterialPassType.Resolve
-        ? this.resolve_shader.module
-        : pass_type === MaterialPassType.Forward
-          ? this.forward_shader.module
-          : this.shader.module;
+    const shader_module =
+      pass_type === MaterialPassType.Depth
+        ? this.depth_shader.module
+        : pass_type === MaterialPassType.Resolve
+          ? this.resolve_shader.module
+          : pass_type === MaterialPassType.Forward
+            ? this.forward_shader.module
+            : this.shader.module;
     let all_bind_group_layouts = [...bind_group_layouts];
-    let ref = pass_type === MaterialPassType.Depth
-      ? this.depth_reflection
-      : pass_type === MaterialPassType.Resolve
-        ? this.resolve_reflection
-        : pass_type === MaterialPassType.Forward
-          ? this.forward_reflection
-          : this.base_reflection;
+    let ref =
+      pass_type === MaterialPassType.Depth
+        ? this.depth_reflection
+        : pass_type === MaterialPassType.Resolve
+          ? this.resolve_reflection
+          : pass_type === MaterialPassType.Forward
+            ? this.forward_reflection
+            : this.base_reflection;
 
     // Set material binding group inputs for groups not already covered by provided layouts
     const groups = ref.get_bind_groups();
@@ -269,7 +276,7 @@ export class MaterialTemplate {
 
               return {
                 binding: binding.binding,
-                visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+                visibility: binding.visibility ?? GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
                 ...binding_obj,
               };
             }),
@@ -282,9 +289,10 @@ export class MaterialTemplate {
     // Set material shader fragment output targets
     const fragment_outputs = ref.entry.fragment[0]?.outputs ?? [];
     const non_depth_attachments = output_targets.filter((target) => target.config.type !== "depth");
-    const output_attachments = fragment_outputs.length > 0 && non_depth_attachments.length > fragment_outputs.length
-      ? non_depth_attachments.slice(-fragment_outputs.length)
-      : non_depth_attachments;
+    const output_attachments =
+      fragment_outputs.length > 0 && non_depth_attachments.length > fragment_outputs.length
+        ? non_depth_attachments.slice(-fragment_outputs.length)
+        : non_depth_attachments;
 
     const targets = output_attachments.map((target, i) => {
       let t = {
@@ -476,7 +484,11 @@ export class Material {
       return;
     }
 
-    if (pass_type === MaterialPassType.Depth && (this.bind_group_update_flags & 1) !== 0 && this.depth_pipeline_state) {
+    if (
+      pass_type === MaterialPassType.Depth &&
+      (this.bind_group_update_flags & 1) !== 0 &&
+      this.depth_pipeline_state
+    ) {
       const entries = this._build_bind_group_entries(MaterialPassType.Depth);
       this.depth_bind_group = BindGroup.create(
         `${this.name}_depth`,
@@ -488,7 +500,11 @@ export class Material {
       this.bind_group_update_flags = this.bind_group_update_flags & ~1;
     }
 
-    if (pass_type === MaterialPassType.Raster && (this.bind_group_update_flags & 2) !== 0 && this.pipeline_state) {
+    if (
+      pass_type === MaterialPassType.Raster &&
+      (this.bind_group_update_flags & 2) !== 0 &&
+      this.pipeline_state
+    ) {
       const entries = this._build_bind_group_entries(MaterialPassType.Raster);
       this.bind_group = BindGroup.create(
         this.name,
@@ -500,7 +516,11 @@ export class Material {
       this.bind_group_update_flags = this.bind_group_update_flags & ~2;
     }
 
-    if (pass_type === MaterialPassType.Resolve && (this.bind_group_update_flags & 4) !== 0 && this.resolve_pipeline_state) {
+    if (
+      pass_type === MaterialPassType.Resolve &&
+      (this.bind_group_update_flags & 4) !== 0 &&
+      this.resolve_pipeline_state
+    ) {
       const entries = this._build_bind_group_entries(MaterialPassType.Resolve);
       this.resolve_bind_group = BindGroup.create(
         `${this.name}_resolve`,
@@ -512,7 +532,11 @@ export class Material {
       this.bind_group_update_flags = this.bind_group_update_flags & ~4;
     }
 
-    if (pass_type === MaterialPassType.Forward && (this.bind_group_update_flags & 8) !== 0 && this.forward_pipeline_state) {
+    if (
+      pass_type === MaterialPassType.Forward &&
+      (this.bind_group_update_flags & 8) !== 0 &&
+      this.forward_pipeline_state
+    ) {
       const entries = this._build_bind_group_entries(MaterialPassType.Forward);
       this.forward_bind_group = BindGroup.create(
         `${this.name}_forward`,
@@ -745,18 +769,12 @@ export class Material {
       );
       this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial", {
         family: MaterialFamilyType.Transparent,
-      }); 
+      });
       const default_ui_material_object = Material.get(this.#default_ui_material);
 
-      const ui_data_buffer = FragmentGpuBuffer.get_buffer(
-        UserInterfaceFragment,
-        "ui_data"
-      );
+      const ui_data_buffer = FragmentGpuBuffer.get_buffer(UserInterfaceFragment, "ui_data");
 
-      default_ui_material_object.set_storage_data(
-        "ui_data",
-        ui_data_buffer.buffer
-      );
+      default_ui_material_object.set_storage_data("ui_data", ui_data_buffer.buffer);
       default_ui_material_object.listen_for_storage_data("ui_data");
     }
     return this.#default_ui_material;

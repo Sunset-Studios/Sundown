@@ -1,5 +1,6 @@
 #define CUSTOM_DEPTH_VS
 #define CUSTOM_RASTER_VS
+#define CUSTOM_VERTEX_POSITION
 #define CUSTOM_DEPTH_FRAGMENT_MASK
 #define CUSTOM_RASTER_FRAGMENT_MASK
 #define CUSTOM_FORWARD_FRAGMENT
@@ -51,9 +52,7 @@ fn image_coverage_mask(position: vec4<f32>, entity_id: u32, uv: vec2<f32>) -> f3
 fn ui_3d_local_position(uv: vec2<f32>, entity_id: u32) -> vec4<f32> {
     let instance = ui_data[entity_id];
     return vec4<f32>(
-        instance.origin.xyz +
-        instance.x_axis.xyz * uv.x +
-        instance.y_axis.xyz * uv.y,
+        instance.origin.xyz + instance.x_axis.xyz * uv.x + instance.y_axis.xyz * uv.y,
         1.0
     );
 }
@@ -65,12 +64,11 @@ fn ui_3d_world_position(uv: vec2<f32>, entity_id: u32, entity_transform: EntityT
 #if MESHLET_DEPTH_PASS
 fn depth_vertex(v_out: ptr<function, DepthVertexOutput>) -> DepthVertexOutput {
     var output = *v_out;
-    if (output.entity_id == INVALID_IDX) {
+    if output.entity_id == INVALID_IDX {
         return output;
     }
     let view_index = u32(frame_info.view_index);
-    output.position = view_buffer[view_index].view_projection_matrix *
-        ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
+    output.position = view_buffer[view_index].view_projection_matrix * ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
     return output;
 }
 
@@ -82,12 +80,11 @@ fn depth_fragment_mask(input: DepthVertexOutput) -> f32 {
 #if MESHLET_RASTER_PASS
 fn raster_vertex(v_out: ptr<function, RasterVertexOutput>) -> RasterVertexOutput {
     var output = *v_out;
-    if (output.entity_id == INVALID_IDX) {
+    if output.entity_id == INVALID_IDX {
         return output;
     }
     let view_index = u32(frame_info.view_index);
-    output.position = view_buffer[view_index].view_projection_matrix *
-        ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
+    output.position = view_buffer[view_index].view_projection_matrix * ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
     return output;
 }
 

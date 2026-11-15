@@ -22,11 +22,12 @@ import { global_dispatcher } from "../core/dispatcher.js";
 import { profile_scope } from "../utility/performance.js";
 import ExecutionQueue from "../utility/execution_queue.js";
 import { GPUTimeQuery } from "./query.js";
-import { log, error } from "../utility/logging.js";
+import { log } from "../utility/logging.js";
 import { vec2 } from "gl-matrix";
 import { EngineCVars } from "../../config/cvars.js";
 import { reset_ui, flush_ui, panel, label, image, UIContext } from "../ui/2d/immediate.js";
 import { reset_ui_3d } from "../ui/3d/immediate.js";
+import { observe_gpu_device } from "../core/diagnostics.js";
 
 const frame_render_event_name = "frame_render";
 
@@ -176,10 +177,7 @@ export class Renderer {
       }
     }
 
-    // Use lost to handle lost devices
-    this.device.lost.then((info) => {
-      error(`WebGPU device was lost: ${info.message}`);
-    });
+    observe_gpu_device(this.device);
 
     this.context = this.canvas.getContext("webgpu");
     this.canvas_format = navigator.gpu.getPreferredCanvasFormat();

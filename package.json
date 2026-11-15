@@ -17,7 +17,10 @@
     "buildtop": "vite build && electron-builder --dir",
     "premake": "npm run cook",
     "make": "vite build && electron-builder",
-    "format:wgsl": "node tools/format_wgsl.js"
+    "format:wgsl": "node tools/format_wgsl.js",
+    "smoke": "node tools/smoke.js",
+    "test:smoke": "node --test tools/tests/smoke.test.js tools/tests/runtime_diagnostics.test.js tools/tests/sample_scenes.test.js tools/tests/smoke_lifecycle.test.js tools/tests/renderer_bindings.test.js",
+    "test:smoke:electron": "node --test tools/tests/smoke_electron.test.js"
   },
   "keywords": [
     "WebGPU",
@@ -62,6 +65,10 @@
     "files": [
       "desktop/main.js",
       "desktop/protocol.js",
+      "desktop/smoke.js",
+      "desktop/smoke_preload.cjs",
+      "engine/src/utility/diagnostics_report.js",
+      "tools/smoke/scene_report.js",
       "package.json"
     ],
     "extraResources": [

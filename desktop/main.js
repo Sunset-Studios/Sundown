@@ -1,10 +1,18 @@
-import { app, BrowserWindow, dialog, net, protocol } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol } from "electron";
 import path from "node:path";
 import { serve_asset } from "./protocol.js";
+import { SmokeSession } from "./smoke.js";
 
 const development = !app.isPackaged && process.argv.includes("--development");
-const app_url = development ? "http://localhost:3000/" : "sundown://app/";
+const smoke = process.argv.includes("--smoke");
+const smoke_options = smoke ? JSON.parse(process.env.SUNDOWN_SMOKE_OPTIONS || "{}") : null;
+const app_url = smoke
+  ? smoke_options.url || "sundown://app/?smoke=1&scene=SolarECSTestScene&frames=5"
+  : development
+    ? "http://localhost:3000/"
+    : "sundown://app/";
 let main_window = null;
+let smoke_session = null;
 
 // Preserve browser security boundaries while supporting modules, fetch and workers.
 protocol.registerSchemesAsPrivileged([
@@ -22,6 +30,12 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 async function create_window() {
+  const window_preferences = smoke
+    ? {
+        preload: path.join(app.getAppPath(), "desktop/smoke_preload.cjs"),
+        backgroundThrottling: false,
+      }
+    : {};
   main_window = new BrowserWindow({
     title: "Sundown Engine",
     width: 1280,
@@ -30,6 +44,7 @@ async function create_window() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      ...window_preferences,
     },
   });
 
@@ -44,6 +59,14 @@ async function create_window() {
   main_window.on("closed", () => {
     main_window = null;
   });
+  if (smoke) {
+    smoke_session = new SmokeSession(app, main_window, ipcMain, {
+      url: app_url,
+      output: smoke_options.output || path.resolve("diagnostics.json"),
+      timeout_ms: smoke_options.timeout_ms || 60000,
+      frames: smoke_options.frames || 5,
+    });
+  }
   await main_window.loadURL(app_url);
 }
 
@@ -72,7 +95,11 @@ app.on("window-all-closed", () => {
 });
 
 function report_startup_error(startup_error) {
+  if (smoke_session) {
+    smoke_session.fail("startup", startup_error.stack || startup_error.message);
+    return;
+  }
   console.error("Failed to start Sundown:", startup_error);
-  dialog.showErrorBox("Sundown failed to start", startup_error.message);
+  if (!smoke) dialog.showErrorBox("Sundown failed to start", startup_error.message);
   app.exit(1);
 }

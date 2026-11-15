@@ -13,10 +13,13 @@ import { StreamingSystem } from "../streaming/streaming_system.js";
 import { TextureStreamingProvider } from "../streaming/providers/texture_streaming_provider.js";
 
 import { ALL_FRAGMENT_CLASSES } from "./ecs/fragment_registry.js";
+import { install_diagnostics } from "./diagnostics.js";
 
 export class Simulator {
   async init(gpu_canvas_name, ui_canvas_name = null, options = {}) {
     application_state.is_running = true;
+
+    if (options.diagnostics) install_diagnostics();
 
     // Configure project context (if provided, otherwise use default project)
     ProjectContext.configure(options.project);
@@ -32,7 +35,7 @@ export class Simulator {
       const provider_options = provider_definition.options ?? {};
       streaming_system.register_provider(provider, provider_options);
     }
-    
+
     // Initialize renderer with document canvas
     const canvas = document.getElementById(gpu_canvas_name);
     const canvas_ui = ui_canvas_name ? document.getElementById(ui_canvas_name) : null;
@@ -41,7 +44,7 @@ export class Simulator {
       use_precision_float: options.use_precision_float ?? false,
       ...(options.renderer || {}),
     });
-    
+
     // Initialize entity manager
     EntityManager.setup(ALL_FRAGMENT_CLASSES);
 
@@ -65,9 +68,9 @@ export class Simulator {
         const renderer = Renderer.get();
 
         InputProvider.update(delta_time);
-        
+
         SimulationCore.update(delta_time);
-        
+
         renderer.render(delta_time);
       });
     }

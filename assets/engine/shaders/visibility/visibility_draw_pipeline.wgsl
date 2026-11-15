@@ -112,7 +112,7 @@ fn build_depth_vertex_output(vi: u32, ii: u32) -> DepthVertexOutput {
     }
 
     let object_instance_index = meshlet_object_index(visible_entry);
-    if (object_instances[object_instance_index].visibility_bucket != visibility_bucket_info.current_visibility_bucket) {
+    if object_instances[object_instance_index].visibility_bucket != visibility_bucket_info.current_visibility_bucket {
         return output;
     }
 
@@ -122,6 +122,9 @@ fn build_depth_vertex_output(vi: u32, ii: u32) -> DepthVertexOutput {
 
     let entity_row = get_entity_row(object_instances[object_instance_index].row);
     let entity_resolved = entity_index_lookup[entity_row];
+#ifndef CUSTOM_VERTEX_POSITION
+    // Custom-position materials supply world-space geometry themselves, avoiding
+    // redundant transforms and their vertex-stage storage-buffer dependencies.
     let transform = entity_transforms[entity_resolved].transform;
 
     let world_position = vec4<f32>(select(
@@ -134,6 +137,7 @@ fn build_depth_vertex_output(vi: u32, ii: u32) -> DepthVertexOutput {
     ).xyz, 1.0);
 
     output.position = view_buffer[u32(frame_info.view_index)].view_projection_matrix * world_position;
+#endif
 #ifndef OPAQUE_DEPTH_ONLY
     output.uv = vertex_uv(vertex_buffer[global_vertex_index]);
     output.entity_id = entity_resolved;
@@ -173,12 +177,12 @@ fn build_raster_vertex_output(vi: u32, ii: u32) -> RasterVertexOutput {
     output.meshlet_index = global_meshlet_index;
     output.triangle_index = triangle_index;
 
-    if (triangle_index >= meshlet.triangle_count) {
+    if triangle_index >= meshlet.triangle_count {
         return output;
     }
 
     let object_instance_index = meshlet_object_index(visible_entry);
-    if (object_instances[object_instance_index].visibility_bucket != visibility_bucket_info.current_visibility_bucket) {
+    if object_instances[object_instance_index].visibility_bucket != visibility_bucket_info.current_visibility_bucket {
         return output;
     }
 
@@ -188,9 +192,8 @@ fn build_raster_vertex_output(vi: u32, ii: u32) -> RasterVertexOutput {
 
     let entity_row = get_entity_row(object_instances[object_instance_index].row);
     let entity_resolved = entity_index_lookup[entity_row];
+#ifndef CUSTOM_VERTEX_POSITION
     let transform = entity_transforms[entity_resolved].transform;
-
-    let section_index = u32(max(vertex_section_index(vertex_buffer[global_vertex_index]), 0.0));
 
     let world_position = vec4<f32>(select(
         transform * vertex_position4(vertex_buffer[global_vertex_index]),
@@ -202,9 +205,10 @@ fn build_raster_vertex_output(vi: u32, ii: u32) -> RasterVertexOutput {
     ).xyz, 1.0);
 
     output.position = view_buffer[u32(frame_info.view_index)].view_projection_matrix * world_position;
+#endif
     output.uv = vertex_uv(vertex_buffer[global_vertex_index]);
     output.entity_id = entity_resolved;
-    output.section_index = section_index;
+    output.section_index = u32(max(vertex_section_index(vertex_buffer[global_vertex_index]), 0.0));
 
     output.barycentric = select(
         select(vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 1.0), corner_index == 1u),
@@ -239,7 +243,7 @@ fn vs(@builtin(vertex_index) vi: u32) -> ResolveVertexOutput {
 @fragment
 fn fs(input: DepthVertexOutput) {
     let mask = depth_fragment_mask(input);
-    if (mask <= 0.0) {
+    if mask <= 0.0 {
         discard;
     }
 }
@@ -250,7 +254,7 @@ fn fs(input: DepthVertexOutput) {
 @fragment
 fn fs(input: RasterVertexOutput) -> ForwardFragmentOutput {
     let mask = raster_fragment_mask(input);
-    if (mask <= 0.0) {
+    if mask <= 0.0 {
         discard;
     }
 
@@ -270,7 +274,7 @@ fn fs(input: RasterVertexOutput) -> ForwardFragmentOutput {
 @fragment
 fn fs(input: RasterVertexOutput) -> RasterFragmentOutput {
     let mask = raster_fragment_mask(input);
-    if (mask <= 0.0) {
+    if mask <= 0.0 {
         discard;
     }
 
@@ -297,12 +301,12 @@ fn resolve_visibility_fragment(input: ResolveVertexOutput) -> ResolveFragmentOut
     let pixel_coord = uv_to_coord(input.uv, resolution);
 
     let entity_id = textureLoad(visibility_entity_texture, pixel_coord, 0).x;
-    if (entity_id == INVALID_IDX) {
+    if entity_id == INVALID_IDX {
         discard;
     }
 
     let visibility_bucket = textureLoad(visibility_bucket_texture, pixel_coord, 0).x;
-    if (visibility_bucket != visibility_bucket_info.current_visibility_bucket) {
+    if visibility_bucket != visibility_bucket_info.current_visibility_bucket {
         discard;
     }
 
@@ -439,7 +443,7 @@ fn resolve_visibility_fragment(input: ResolveVertexOutput) -> ResolveFragmentOut
 #if TRANSPARENT
     let alpha = clamp(output.albedo.a, 0.0, 1.0);
     let ndc_depth = clamp(material_input.current_clip_pos.z / material_input.current_clip_pos.w, 0.0, 1.0);
-    let weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - ndc_depth * 0.9, 3.0), 1e-2, 3e3); 
+    let weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - ndc_depth * 0.9, 3.0), 1e-2, 3e3);
     output.albedo = vec4<f32>(output.albedo.rgb * alpha, alpha) * weight;
 #endif
 

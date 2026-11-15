@@ -4,6 +4,8 @@ export default defineConfig({
   base: "./",
   build: {
     outDir: "dist",
+    sourcemap: process.env.SUNDOWN_SMOKE_BUILD === "1",
+    minify: process.env.SUNDOWN_SMOKE_BUILD === "1" ? false : "esbuild",
     rollupOptions: {
       input: {
         main: "index.html",

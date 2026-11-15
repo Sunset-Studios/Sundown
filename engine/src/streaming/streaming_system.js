@@ -1,5 +1,6 @@
 import { SimulationLayer } from "../core/simulation_layer.js";
 import { StreamProvider, StreamRequestStatus, StreamUpdateStatus } from "./stream_provider.js";
+import { report_diagnostic } from "../core/diagnostics.js";
 
 function is_terminal_status(status) {
   return (
@@ -332,6 +333,14 @@ export class StreamingSystem extends SimulationLayer {
     } catch {
       // Preserve the error that caused the request to fail.
     }
+
+    report_diagnostic({
+      severity: "error",
+      category: "streaming",
+      message: error.message,
+      source: request.target?.config?.name ?? request.provider_type,
+      stack: error.stack,
+    });
 
     request.result = null;
     request.error = error;

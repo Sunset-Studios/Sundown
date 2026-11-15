@@ -24,6 +24,23 @@ Key priorities:
 
 ---
 
+## Agent Documentation
+
+Store detailed maintainer and agent-facing guides in `.agents/docs/`, not a
+top-level `docs/` directory. Keep them in readable Markdown so humans can use
+the same reference material. This directory is hidden; include hidden paths
+when searching documentation.
+
+Read the guides relevant to the current task rather than loading every document.
+Keep guides consistent with implementation changes, and add new guides to this
+index so agents can discover them without scanning the repository.
+
+| Guide | Read when |
+| --- | --- |
+| [Runtime smoke checks](.agents/docs/smoke.md) | Changing diagnostics, sample selection, smoke lifecycle, Electron integration, or diagnostic reports. |
+
+---
+
 ## Conventions 
 
 * Format all generated code for human readability, including shaders, scripts, and configuration. Use consistent indentation and line breaks, descriptive names, and concise documentation for non-obvious behavior; run the project formatter where available. For JS files or anything JS related, use the `prettier` dependency to auto-format.

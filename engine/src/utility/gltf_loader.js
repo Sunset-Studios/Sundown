@@ -1,6 +1,7 @@
 import { vec3, vec4, quat, mat4 } from "gl-matrix";
 import { log, error } from "./logging.js";
 import { deserialize_json } from "../streaming/streaming_io.js";
+import { begin_diagnostic_work, end_diagnostic_work } from "../core/diagnostics.js";
 
 var MinimalGLTFLoader = MinimalGLTFLoader || {};
 
@@ -934,7 +935,12 @@ glTFLoader.prototype._checkComplete = function () {
   if (this._loadDone && this._pendingTasks == this._finishedPendingTasks) {
     this._postprocess();
 
-    this.onload(this.glTF);
+    try {
+      this.onload(this.glTF);
+    } finally {
+      end_diagnostic_work(this.diagnostic_work);
+      this.diagnostic_work = null;
+    }
   }
 };
 
@@ -957,6 +963,7 @@ glTFLoader.prototype.load_GL_Avatar_Skin = function (
  */
 glTFLoader.prototype.load = function (uri, callback) {
   this._init();
+  this.diagnostic_work = begin_diagnostic_work(uri);
 
   this.onload =
     callback ||

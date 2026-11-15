@@ -1451,8 +1451,7 @@ export class RenderGraph {
   _setup_pass_bind_groups(pass) {
     const is_compute_pass =
       (pass.pass_config.flags & RenderPassFlags.Compute) !== RenderPassFlags.None;
-    const bind_group_cache_key =
-      pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
+    const bind_group_cache_key = pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
 
     const pass_binds = this.pass_cache.bind_groups.get(bind_group_cache_key) || {
       bind_groups: Array(this.max_bind_groups).fill(null),
@@ -1491,7 +1490,11 @@ export class RenderGraph {
         const binding = compute_reflection_groups[BindGroupType.Pass][i];
         if (!binding) continue;
         let binding_stage_mask = binding_stage_masks.get(binding.name) || 0;
-        binding_stage_masks.set(binding.name, binding_stage_mask | GPUShaderStage.COMPUTE);
+        binding_stage_masks.set(
+          binding.name,
+          binding_stage_mask |
+            ((binding.visibility ?? GPUShaderStage.COMPUTE) & GPUShaderStage.COMPUTE)
+        );
       }
     }
 
@@ -1500,7 +1503,11 @@ export class RenderGraph {
         const binding = fragment_reflection_groups[BindGroupType.Pass][i];
         if (!binding) continue;
         let binding_stage_mask = binding_stage_masks.get(binding.name) || 0;
-        binding_stage_masks.set(binding.name, binding_stage_mask | GPUShaderStage.FRAGMENT);
+        binding_stage_masks.set(
+          binding.name,
+          binding_stage_mask |
+            ((binding.visibility ?? GPUShaderStage.FRAGMENT) & GPUShaderStage.FRAGMENT)
+        );
       }
     }
     if (vertex_reflection_groups[BindGroupType.Pass]) {
@@ -1508,7 +1515,11 @@ export class RenderGraph {
         const binding = vertex_reflection_groups[BindGroupType.Pass][i];
         if (!binding) continue;
         let binding_stage_mask = binding_stage_masks.get(binding.name) || 0;
-        binding_stage_masks.set(binding.name, binding_stage_mask | GPUShaderStage.VERTEX);
+        binding_stage_masks.set(
+          binding.name,
+          binding_stage_mask |
+            ((binding.visibility ?? GPUShaderStage.VERTEX) & GPUShaderStage.VERTEX)
+        );
       }
     }
 
@@ -1628,7 +1639,7 @@ export class RenderGraph {
         layouts,
         BindGroupType.Pass,
         entries,
-        true, /* Rebuild the named group after dependency or reflection changes. */
+        true /* Rebuild the named group after dependency or reflection changes. */,
         bind_group_layout_name,
         pass.parameters.bind_group_cache_key != null
           ? this.pass_cache_pipeline_states_need_recreate
@@ -1655,8 +1666,7 @@ export class RenderGraph {
       return;
     }
 
-    const bind_group_cache_key =
-      pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
+    const bind_group_cache_key = pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
     const pass_binds = this.pass_cache.bind_groups.get(bind_group_cache_key);
     const shader_setup = pass.parameters.shader_setup;
 
@@ -1773,8 +1783,7 @@ export class RenderGraph {
    * Rebuilds the shared global bind group only when no cached group exists or writes are pending.
    */
   _setup_global_bind_group(pass) {
-    const bind_group_cache_key =
-      pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
+    const bind_group_cache_key = pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
     const pass_binds = this.pass_cache.bind_groups.get(bind_group_cache_key);
 
     pass_binds.bind_groups[BindGroupType.Global] = this.pass_cache.global_bind_group;
@@ -1872,8 +1881,7 @@ export class RenderGraph {
    */
   _bind_pass_bind_groups(pass) {
     const physical_pass = ResourceCache.get().fetch(CacheTypes.PASS, pass.physical_id);
-    const bind_group_cache_key =
-      pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
+    const bind_group_cache_key = pass.parameters.bind_group_cache_key ?? pass.pass_config.name;
     const pass_bind_groups = this.pass_cache.bind_groups.get(bind_group_cache_key);
 
     if (pass_bind_groups.bind_groups.length > 0) {

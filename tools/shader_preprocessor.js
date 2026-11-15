@@ -24,7 +24,7 @@ const __dirname = path.dirname(__filename);
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const ENGINE_SOURCE_ROOT = "engine/src";
-const GENERATOR_VERSION = 1;
+const GENERATOR_VERSION = 2;
 const compression_mode = "deflate";
 const source_file_extensions = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
 const project_root_patterns = [
@@ -38,10 +38,7 @@ const defines_regex = /#define\s+(\S+)(?:\s+(\S*))?$/gm;
 
 const precision_float_string = "precision_float";
 const has_precision_float_string = "HAS_PRECISION_FLOAT";
-const built_in_shader_define_keys = new Set([
-  precision_float_string,
-  has_precision_float_string,
-]);
+const built_in_shader_define_keys = new Set([precision_float_string, has_precision_float_string]);
 
 const f16_type_string = "f16";
 const f32_type_string = "f32";
@@ -56,8 +53,7 @@ const setup_define_assignment_regex =
   /([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][A-Za-z0-9_]*)*\.defines\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]+);/g;
 const generic_define_assignment_regex =
   /([A-Za-z_][A-Za-z0-9_]*)\s*\[\s*["'`]([A-Za-z_][A-Za-z0-9_]*)["'`]\s*\]\s*=\s*([^;]+);/g;
-const object_shader_path_regex =
-  /path\s*:\s*(["'`][^"'`\r\n]+\.wgsl["'`]|[A-Za-z_][A-Za-z0-9_]*)/g;
+const object_shader_path_regex = /path\s*:\s*(["'`][^"'`\r\n]+\.wgsl["'`]|[A-Za-z_][A-Za-z0-9_]*)/g;
 const defines_object_regex = /defines\s*:\s*\{/g;
 const spread_identifier_regex = /\.\.\.\s*([A-Za-z_][A-Za-z0-9_]*)/g;
 const material_template_create_call_regex = /MaterialTemplate\.create\s*\(/g;
@@ -691,12 +687,7 @@ function split_top_level_values(source) {
       continue;
     }
 
-    if (
-      character === "," &&
-      paren_depth === 0 &&
-      brace_depth === 0 &&
-      bracket_depth === 0
-    ) {
+    if (character === "," && paren_depth === 0 && brace_depth === 0 && bracket_depth === 0) {
       values.push(source.slice(start, i).trim());
       start = i + 1;
     }
@@ -934,11 +925,7 @@ function discover_material_template_usages(source, const_shader_paths) {
   return usages;
 }
 
-function discover_shader_create_variants(
-  source,
-  const_shader_paths,
-  optional_domains_by_variable
-) {
+function discover_shader_create_variants(source, const_shader_paths, optional_domains_by_variable) {
   const direct_variants = new Map();
   const generic_variants = [];
   const calls = extract_call_arguments(source, shader_create_call_regex);
@@ -1291,7 +1278,13 @@ function create_cook_settings(shader_root, source_roots) {
   };
 }
 
-function create_source_hash(settings, shader_root, shader_files, variants, include_resolution_roots) {
+function create_source_hash(
+  settings,
+  shader_root,
+  shader_files,
+  variants,
+  include_resolution_roots
+) {
   const hash = crypto.createHash("sha1");
   hash.update(JSON.stringify(settings));
 
@@ -1454,9 +1447,7 @@ function parse_and_strip_macros(code) {
     const line = lines[i];
     const trimmed = line.trimStart();
     if (trimmed.startsWith("#macro")) {
-      const match = trimmed.match(
-        /^#macro\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*$/
-      );
+      const match = trimmed.match(/^#macro\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*$/);
       if (match) {
         const name = match[1];
         const args = (match[2] || "")
@@ -1797,11 +1788,27 @@ function normalize_resource_type(resource_type) {
 }
 
 function normalize_bind_groups(reflection) {
+  // WebGPU counts every visible layout binding against stage limits, even when
+  // that stage never reads it. Preserve actual entry-point usage when cooking.
+  const visibility_by_binding = new Map();
+  for (const [stage, stage_mask] of [
+    ["vertex", 1],
+    ["fragment", 2],
+    ["compute", 4],
+  ]) {
+    for (const entry of reflection.entry[stage]) {
+      for (const resource of entry.resources) {
+        const key = `${resource.group}:${resource.binding}`;
+        visibility_by_binding.set(key, (visibility_by_binding.get(key) ?? 0) | stage_mask);
+      }
+    }
+  }
   return reflection.getBindGroups().map((group) =>
     group.map((binding) => ({
       binding: binding.binding,
       group: binding.group,
       name: binding.name ?? "",
+      visibility: visibility_by_binding.get(`${binding.group}:${binding.binding}`) ?? 0,
       access: binding.access ?? null,
       resourceType: normalize_resource_type(binding.resourceType),
       type: normalize_type(binding.type),
@@ -1820,7 +1827,7 @@ function normalize_entry_stage(entries = []) {
   }));
 }
 
-function reflect_shader(code) {
+export function reflect_shader(code) {
   const reflection = new WgslReflect(code);
   return {
     bind_groups: normalize_bind_groups(reflection),
@@ -1862,10 +1869,7 @@ function build_output(settings, shader_root, shader_files, variants, include_res
       const code_bytes = encoder.encode(code);
       const compressed_bytes = deflateSync(code_bytes);
       const reflection = reflect_shader(code);
-      const payload_hash = crypto
-        .createHash("sha1")
-        .update(code)
-        .digest("hex");
+      const payload_hash = crypto.createHash("sha1").update(code).digest("hex");
       let payload_info = payload_offsets.get(payload_hash);
       if (!payload_info) {
         payload_info = {
@@ -1990,4 +1994,6 @@ function main() {
   }
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main();
+}
