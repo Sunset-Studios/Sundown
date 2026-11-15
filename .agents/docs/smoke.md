@@ -9,6 +9,13 @@ Electron smoke sessions, or report formats. Paths below are repository-relative.
 Failures do not prevent subsequent scenes from running. The coding agent owns
 the inspect → targeted fix → rerun loop; the harness never edits code or retries.
 
+For an agent-driven repair loop, load the
+[smoke-repair skill](../skills/smoke-repair/SKILL.md). It defines the iteration
+budget, diagnostic triage, targeted-fix safeguards and verification criteria.
+For example: “Use smoke-repair for all samples, with at most three repair
+iterations,” or “Use smoke-repair for BVHScene, with `max_iterations=2`.” This
+budget is an agent instruction, not a harness CLI option.
+
 ```sh
 npm run smoke
 npm run smoke -- --list
@@ -73,8 +80,8 @@ fails through the deadline, never through an arbitrary successful sleep.
 
 ## Samples and the normal application
 
-Each scene is a separate module in `example/samples`; shared label rendering is in
-`world_label.js`. The registry is the single catalog used by the normal sample
+Each scene is a separate module in `example/samples`; shared label rendering uses
+`world_label` from `engine/src/ui/3d/common.js`. The registry is the single catalog used by the normal sample
 switcher and Node smoke launcher. Its lazy imports keep browser-only engine
 modules out of Node and load only selected scenes in smoke instances.
 

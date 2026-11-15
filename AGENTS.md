@@ -39,6 +39,16 @@ index so agents can discover them without scanning the repository.
 | --- | --- |
 | [Runtime smoke checks](.agents/docs/smoke.md) | Changing diagnostics, sample selection, smoke lifecycle, Electron integration, or diagnostic reports. |
 
+### Agent Skills
+
+Repository-local skills live in `.agents/skills/<skill-id>/SKILL.md`. Load the
+relevant skill when the user requests its workflow; keep procedural guidance in
+the skill and implementation reference material in `.agents/docs/`.
+
+| Skill | Use when |
+| --- | --- |
+| [smoke-repair](.agents/skills/smoke-repair/SKILL.md) | Running a bounded diagnose, targeted-fix, and smoke-verification loop for scene warnings or errors. |
+
 ---
 
 ## Conventions 
