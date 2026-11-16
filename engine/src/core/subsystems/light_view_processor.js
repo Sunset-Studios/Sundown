@@ -14,6 +14,7 @@ import { quat, vec4, vec3 } from "gl-matrix";
 
 export class LightViewProcessor extends SimulationLayer {
   entity_query = null;
+  allocated_views = new Set();
 
   init() {
     super.init();
@@ -22,6 +23,14 @@ export class LightViewProcessor extends SimulationLayer {
   }
 
   cleanup() {
+    // Light entities may already be destroyed, so release the views recorded at
+    // allocation time. Remove high indices first to keep the remaining ones valid.
+    const view_indices = Array.from(this.allocated_views).sort((a, b) => b - a);
+    for (let i = 0; i < view_indices.length; i++) {
+      SharedViewBuffer.remove_view_data(view_indices[i]);
+    }
+    this.allocated_views.clear();
+
     this.entity_query = null;
     super.cleanup();
   }
@@ -55,7 +64,12 @@ export class LightViewProcessor extends SimulationLayer {
         chunk.mark_dirty();
       }
 
-      if (!lights.view_index[slot] || lights.view_index[slot] < 0) {
+      // A recycled ECS slot can retain a view index from a previous owner.
+      // Allocate a new view when the stored index is empty or out of range.
+      const stored_view_index = lights.view_index[slot];
+      const has_stored_view =
+        stored_view_index > 0 && stored_view_index < SharedViewBuffer.get_view_data_count();
+      if (!has_stored_view) {
         const view = SharedViewBuffer.add_view_data();
         view.clipmap_count = shadows_enabled ? lights.shadow_clipmaps[slot] : 1;
         view.occlusion_enabled = 0;
@@ -115,6 +129,7 @@ export class LightViewProcessor extends SimulationLayer {
         }
 
         lights.view_index[slot] = view.get_index();
+        this.allocated_views.add(view.get_index());
 
         chunk.mark_dirty();
       } else {

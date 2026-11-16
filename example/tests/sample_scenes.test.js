@@ -3,8 +3,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { sample_scenes, select_sample_scenes } from "../../example/samples/registry.js";
-import { SmokeSuiteReport } from "../smoke/suite_report.js";
+import { sample_scenes, select_sample_scenes } from "../samples/registry.js";
+import { SmokeSuiteReport } from "../../tools/smoke/suite_report.js";
 
 test("all registered sample scenes are selected by default in interactive scene order", () => {
   assert.ok(sample_scenes.length > 0);
@@ -14,7 +14,7 @@ test("all registered sample scenes are selected by default in interactive scene 
     sample_scenes.map((sample) => sample.id)
   );
   assert.equal(sample_scenes[0].id, "SolarECSTestScene");
-  const sample_directory = new URL("../../example/samples/", import.meta.url);
+  const sample_directory = new URL("../samples/", import.meta.url);
   const exported_scenes = readdirSync(sample_directory)
     .filter((file) => file.endsWith(".js"))
     .flatMap((file) => {
@@ -36,10 +36,14 @@ test("scene filters accept comma lists, repeated flags, case and snake_case", ()
 });
 
 test("sample registry lists scenes without loading browser-only modules", () => {
-  const result = spawnSync(process.execPath, ["tools/smoke.js", "--list"], {
-    cwd: fileURLToPath(new URL("../../", import.meta.url)),
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    ["tools/smoke.js", "--catalog", "example/smoke.config.js", "--list"],
+    {
+      cwd: fileURLToPath(new URL("../../", import.meta.url)),
+      encoding: "utf8",
+    }
+  );
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(
     result.stdout.trim().split("\n"),
@@ -48,17 +52,11 @@ test("sample registry lists scenes without loading browser-only modules", () => 
 });
 
 test("every sample catalog entry has a separate exported scene module", () => {
-  const registry = readFileSync(
-    new URL("../../example/samples/registry.js", import.meta.url),
-    "utf8"
-  );
+  const registry = readFileSync(new URL("../samples/registry.js", import.meta.url), "utf8");
   const paths = [...registry.matchAll(/import\("(\.\/[^\"]+)"\)/g)].map((match) => match[1]);
   assert.equal(paths.length, sample_scenes.length);
   for (let index = 0; index < paths.length; index++) {
-    const source = readFileSync(
-      new URL(`../../example/samples/${paths[index]}`, import.meta.url),
-      "utf8"
-    );
+    const source = readFileSync(new URL(`../samples/${paths[index]}`, import.meta.url), "utf8");
     assert.ok(source.includes(`export class ${sample_scenes[index].id} extends Scene`));
     assert.ok(!source.includes("SmokeScene"));
   }

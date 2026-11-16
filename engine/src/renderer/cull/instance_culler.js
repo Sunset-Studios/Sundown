@@ -147,10 +147,14 @@ export class InstanceCuller {
     throw new Error("dispatch_culling must be implemented by subclass");
   }
 
-  // Resets the registered views and clipmaps
+  // Resets the registered views and clipmaps. Graph handles are frame-local, so
+  // stale per-view handles must not survive into a new frame or scene.
   reset() {
     this.registered_views.clear();
     this.registered_clipmaps.clear();
+    this.visible_buffers.reset();
+    this.indirect_draw_buffers.reset();
+    this.cull_data_buffers.reset();
   }
 
   // Calls reset_instances and then dispatch_culling

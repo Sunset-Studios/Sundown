@@ -1,13 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol } from "electron";
 import path from "node:path";
 import { serve_asset } from "./protocol.js";
-import { SmokeSession } from "./smoke.js";
+import { SmokeSequenceSession, SmokeSession } from "./smoke.js";
 
 const development = !app.isPackaged && process.argv.includes("--development");
 const smoke = process.argv.includes("--smoke");
 const smoke_options = smoke ? JSON.parse(process.env.SUNDOWN_SMOKE_OPTIONS || "{}") : null;
 const app_url = smoke
-  ? smoke_options.url || "sundown://app/?smoke=1&scene=SolarECSTestScene&frames=5"
+  ? smoke_options.url || "sundown://app/?smoke=1"
   : development
     ? "http://localhost:3000/"
     : "sundown://app/";
@@ -60,12 +60,18 @@ async function create_window() {
     main_window = null;
   });
   if (smoke) {
-    smoke_session = new SmokeSession(app, main_window, ipcMain, {
+    const session_options = {
       url: app_url,
       output: smoke_options.output || path.resolve("diagnostics.json"),
       timeout_ms: smoke_options.timeout_ms || 60000,
       frames: smoke_options.frames || 5,
-    });
+    };
+    smoke_session = smoke_options.scene_switching
+      ? new SmokeSequenceSession(app, main_window, ipcMain, {
+          ...session_options,
+          scenes: smoke_options.scenes,
+        })
+      : new SmokeSession(app, main_window, ipcMain, session_options);
   }
   await main_window.loadURL(app_url);
 }

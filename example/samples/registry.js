@@ -16,7 +16,6 @@ export const sample_scenes = [
   { id: "ShadowTestScene", load: () => import("./shadow_test_scene.js") },
   { id: "UI3DTestScene", load: () => import("./ui_3d_test_scene.js") },
   { id: "SponzaScene", load: () => import("./sponza_scene.js") },
-  { id: "BistroTestScene", load: () => import("./bistro_test_scene.js") },
   { id: "OfficeTestScene", load: () => import("./office_test_scene.js") },
   { id: "LivingRoomScene", load: () => import("./living_room_scene.js") },
   { id: "BackroomsScene", load: () => import("./backrooms_scene.js") },

@@ -23,19 +23,40 @@ import electron from "electron";
 const project_root = fileURLToPath(new URL("../../", import.meta.url));
 const fixture_script = `
 const parameters = new URLSearchParams(location.search);
-if (parameters.get("mode") === "diagnostics" || (parameters.get("mode") === "suite" && parameters.get("scene") === "BVHScene")) {
-  function warn() { console.warn("fixture warning"); }
-  warn();
-  warn();
-  window.sundown_smoke.send({ type: "diagnostic", diagnostic: {
-    severity: "error", category: "fixture-validation", message: "fixture GPU failure",
-    source: "fixture.wgsl", line: 17, column: 9, stack: "fixture stack"
-  } });
-}
-if (parameters.get("mode") !== "stall") {
-  window.sundown_smoke.send({ type: "complete", readiness: {
-    assets_ready: true, completed_frames: Number(parameters.get("completed_frames"))
-  } });
+if (parameters.get("switch") === "1") {
+  const scenes = parameters.getAll("scene");
+  let index = 0;
+  function begin() {
+    if (index >= scenes.length) {
+      setTimeout(() => window.sundown_smoke.send({ type: "suite-complete" }), 300);
+      return;
+    }
+    const scene = scenes[index++];
+    window.sundown_smoke.send({ type: "scene-begin", scene });
+    setTimeout(() => {
+      if (scene === "WarningScene") console.warn("fixture warning");
+      window.sundown_smoke.send({ type: "scene-complete", scene, readiness: {
+        assets_ready: true, completed_frames: Number(parameters.get("completed_frames"))
+      } });
+      setTimeout(begin, 50);
+    }, 10);
+  }
+  begin();
+} else {
+  if (parameters.get("mode") === "diagnostics" || (parameters.get("mode") === "suite" && parameters.get("scene") === "WarningScene")) {
+    function warn() { console.warn("fixture warning"); }
+    warn();
+    warn();
+    window.sundown_smoke.send({ type: "diagnostic", diagnostic: {
+      severity: "error", category: "fixture-validation", message: "fixture GPU failure",
+      source: "fixture.wgsl", line: 17, column: 9, stack: "fixture stack"
+    } });
+  }
+  if (parameters.get("mode") !== "stall") {
+    window.sundown_smoke.send({ type: "complete", readiness: {
+      assets_ready: true, completed_frames: Number(parameters.get("completed_frames"))
+    } });
+  }
 }
 `;
 
@@ -161,39 +182,53 @@ test(
   }
 );
 
-test(
-  "CLI saves only one report, embeds all scene diagnostics and cleans transport files",
-  { timeout: 20000 },
-  async (context) => {
-    const directory = mkdtempSync(path.join(tmpdir(), "sundown-single-report-test-"));
+for (const fixture of [
+  {
+    name: "CLI saves only one report, embeds all scene diagnostics and cleans transport files",
+    mode: "suite",
+    timeout_ms: 20000,
+    directory_prefix: "sundown-single-report-test-",
+    diagnostic: "fixture GPU failure",
+    scene_switching: false,
+  },
+  {
+    name: "CLI switches scenes in one Electron process and checkpoints each result",
+    mode: "sequence",
+    timeout_ms: 25000,
+    directory_prefix: "sundown-sequence-report-test-",
+    diagnostic: "fixture warning",
+    scene_switching: true,
+  },
+]) {
+  test(fixture.name, { timeout: fixture.timeout_ms }, async (context) => {
+    const directory = mkdtempSync(path.join(tmpdir(), fixture.directory_prefix));
     context.after(() => rmSync(directory, { recursive: true, force: true }));
     const output_directory = path.join(directory, "reports");
     const transport_root = path.join(directory, "transport");
     mkdirSync(transport_root);
     const output = path.join(output_directory, "suite.json");
     const origin = await start_fixture_server(context);
-    const child = spawn(
-      process.execPath,
-      [
-        path.join(project_root, "tools/smoke.js"),
-        "--no-build",
-        "--scene",
-        "SolarECSTestScene,BVHScene",
-        "--frames",
-        "7",
-        "--timeout",
-        "5000",
-        "--url",
-        `${origin}?mode=suite&completed_frames=7`,
-        "--output",
-        output,
-      ],
-      {
-        cwd: directory,
-        env: { ...process.env, TMPDIR: transport_root, TMP: transport_root, TEMP: transport_root },
-        stdio: ["ignore", "pipe", "pipe"],
-      }
+    const args = [path.join(project_root, "tools/smoke.js"), "--no-build"];
+    if (fixture.scene_switching) args.push("--scene-switching");
+    args.push(
+      "--catalog",
+      path.join(project_root, "tools/tests/fixtures/smoke_catalog.js"),
+      "--scene",
+      "FixtureScene,WarningScene",
+      "--frames",
+      "7",
+      "--timeout",
+      "5000",
+      "--url",
+      `${origin}?mode=${fixture.mode}&completed_frames=7`,
+      "--output",
+      output
     );
+    const child = spawn(process.execPath, args, {
+      cwd: directory,
+      env: { ...process.env, TMPDIR: transport_root, TMP: transport_root, TEMP: transport_root },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     context.after(() => {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     });
@@ -214,17 +249,20 @@ test(
     assert.equal(report.status, "failed");
     assert.deepEqual(
       report.scenes.map((scene) => scene.sample),
-      ["SolarECSTestScene", "BVHScene"]
+      ["FixtureScene", "WarningScene"]
     );
     assert.equal(report.scenes[0].status, "passed");
     assert.equal(report.scenes[1].status, "failed");
-    assert.ok(
-      report.scenes[1].diagnostics.some((entry) => entry.message === "fixture GPU failure")
-    );
+    assert.ok(report.scenes[1].diagnostics.some((entry) => entry.message === fixture.diagnostic));
+    if (fixture.scene_switching) {
+      // Both results come from the single shared Electron process.
+      assert.equal(report.scenes[0].process.exit_code, 1);
+      assert.equal(report.scenes[1].process.exit_code, 1);
+    }
     assert.deepEqual(readdirSync(output_directory), ["suite.json"]);
     assert.deepEqual(
       readdirSync(transport_root).filter((name) => name.startsWith("sundown-smoke-")),
       []
     );
-  }
-);
+  });
+}

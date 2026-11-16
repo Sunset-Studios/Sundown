@@ -204,6 +204,10 @@ export class ShadowCuller extends InstanceCuller {
           view_index,
           clipmap_index
         );
+        // A view that the previous culler did not render this frame has no
+        // visibility buffer to classify.
+        if (visible_buf_no_occlusion === undefined) continue;
+
         const draw_cull_data = this.cull_data_buffers.get(view_index, clipmap_index);
 
         render_graph.add_pass(

@@ -780,6 +780,15 @@ export class RenderGraph {
   }
 
   /**
+   * Returns the scene namespace used for scene-scoped resources.
+   *
+   * @returns {string|number} Scene identifier.
+   */
+  get_scene_id() {
+    return this.registry.current_scene_id;
+  }
+
+  /**
    * Queues ordered global-bind-group entries for the next physical pass setup.
    *
    * Entry order is binding order. Supplying overwrite replaces any writes already queued.

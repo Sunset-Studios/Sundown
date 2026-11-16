@@ -604,7 +604,12 @@ export class Renderer {
    * @param {number} scene_id - The scene ID
    */
   set_scene_id(scene_id) {
+    if (this.render_graph.get_scene_id() === scene_id) return;
+
     this.render_graph.set_scene_id(scene_id);
+    // Scene switches replace lights, views and scene-scoped resources. Invalidate
+    // persistent strategy state so the next frame rebuilds it for the new scene.
+    if (this.render_strategy) this.refresh_render_graph();
   }
 
   /**

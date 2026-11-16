@@ -19,7 +19,9 @@
     "make": "vite build && electron-builder",
     "format:wgsl": "node tools/format_wgsl.js",
     "smoke": "node tools/smoke.js",
-    "test:smoke": "node --test tools/tests/smoke.test.js tools/tests/runtime_diagnostics.test.js tools/tests/sample_scenes.test.js tools/tests/smoke_lifecycle.test.js tools/tests/renderer_bindings.test.js",
+    "smoke:example": "node tools/smoke.js --catalog example/smoke.config.js",
+    "test:example": "node --test example/tests/*.test.js",
+    "test:smoke": "node --test tools/tests/allocator.test.js tools/tests/smoke.test.js tools/tests/runtime_diagnostics.test.js tools/tests/smoke_catalog.test.js tools/tests/smoke_lifecycle.test.js tools/tests/renderer_bindings.test.js",
     "test:smoke:electron": "node --test tools/tests/smoke_electron.test.js"
   },
   "keywords": [

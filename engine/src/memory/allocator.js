@@ -785,42 +785,34 @@ class FreeListAllocator {
      * @private
      */
     _shrink(new_capacity) {
-        // Create new arrays with reduced capacity
-        const new_buffer = new Array(new_capacity);
-        const new_free_list = [];
-        
-        // Track which objects are still in use
-        const in_use = new Set();
-        for (let i = 0; i < this.buffer.length; i++) {
+        const old_buffer = this.buffer;
+
+        // Track which objects are still in use.
+        const in_use_indices = [];
+        for (let i = 0; i < old_buffer.length; i++) {
             if (!this.free_list.includes(i)) {
-                in_use.add(i);
+                in_use_indices.push(i);
             }
         }
-        
-        // Copy only the objects still in use
-        let new_index = 0;
-        for (let old_index = 0; old_index < this.buffer.length; old_index++) {
-            if (in_use.has(old_index)) {
-                if (new_index < new_capacity) {
-                    new_buffer[new_index] = this.buffer[old_index];
-                    new_index++;
-                } else {
-                    // If we can't fit all used objects, abort shrinking
-                    return;
-                }
-            }
+
+        // If we can't fit all used objects, abort shrinking.
+        if (in_use_indices.length > new_capacity) {
+            return;
         }
-        
-        // Fill remaining slots and populate free list
-        this.#template = this.buffer[0]; // Use existing object as template
-        this._initialize_buffer(new_index, new_capacity);
-        
-        for (let i = new_index; i < new_capacity; i++) {
-            new_free_list.push(i);
+
+        // Compact live objects and initialize the remaining slots in the new
+        // buffer. Initializing before assigning would leave undefined entries
+        // that allocate() could later hand to callers.
+        this.buffer = new Array(new_capacity);
+        for (let i = 0; i < in_use_indices.length; i++) {
+            this.buffer[i] = old_buffer[in_use_indices[i]];
         }
-        
-        this.buffer = new_buffer;
-        this.free_list = new_free_list;
+        this._initialize_buffer(in_use_indices.length, new_capacity);
+
+        this.free_list = [];
+        for (let i = in_use_indices.length; i < new_capacity; i++) {
+            this.free_list.push(i);
+        }
     }
 
     /**

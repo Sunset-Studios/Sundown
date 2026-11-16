@@ -65,10 +65,14 @@ export class Scene extends SimulationLayer {
     this.scene_data_loader = null;
     this.scene_data_ready = Promise.resolve(null);
 
-    SharedViewBuffer.remove_view_data(this.context.current_view);
-    this.context.current_view = null;
-
+    // Subsystems release their own light views first, keeping this camera view
+    // alive while their cleanup runs.
+    const current_view = this.context.current_view;
     this.teardown_default_subsystems();
+    if (current_view !== null && current_view !== undefined) {
+      SharedViewBuffer.remove_view_data(current_view);
+    }
+    this.context.current_view = null;
 
     super.cleanup();
   }

@@ -8,7 +8,7 @@ import application_state from "../../engine/src/core/application_state.js";
 import { report_diagnostic } from "../../engine/src/core/diagnostics.js";
 
 export class SmokeTest {
-  constructor(renderer, frames, assets_ready, runtime) {
+  constructor(renderer, frames, assets_ready, runtime, stop_application_on_complete = true) {
     if (!Number.isSafeInteger(frames) || frames < 1) {
       throw new Error("Smoke frames must be a positive integer");
     }
@@ -22,6 +22,7 @@ export class SmokeTest {
     this.runtime = runtime;
     this.assets_ready = assets_ready;
     this.required_frames = frames;
+    this.stop_application_on_complete = stop_application_on_complete;
     this.completed_frames = 0;
     this.scene_data_ready = false;
     this.scene = null;
@@ -50,9 +51,9 @@ export class SmokeTest {
   }
 
   frame_completed() {
-    if (this.runtime.finished) {
-      this.renderer.remove_post_render(this.frame_completed);
-      application_state.is_running = false;
+    if (this.runtime.scene_finished) {
+      this.dispose();
+      if (this.stop_application_on_complete) application_state.is_running = false;
       return;
     }
     if (!this.scene_data_ready || !this.assets_ready()) {
@@ -60,8 +61,15 @@ export class SmokeTest {
       return;
     }
     if (++this.completed_frames < this.required_frames) return;
-    this.renderer.remove_post_render(this.frame_completed);
-    application_state.is_running = false;
+    this.dispose();
+    if (this.stop_application_on_complete) application_state.is_running = false;
     void this.runtime.complete(this.completed_frames);
+  }
+
+  /** Detaches this scene's frame counter so a sequence can activate another scene. */
+  dispose() {
+    if (!this.scene) return;
+    this.renderer.remove_post_render(this.frame_completed);
+    this.scene = null;
   }
 }

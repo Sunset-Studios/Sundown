@@ -6,8 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { DiagnosticsReport } from "../../engine/src/utility/diagnostics_report.js";
 import { SmokeSceneReport } from "../smoke/scene_report.js";
-import { finalize_scene_launch } from "../smoke/launch_report.js";
-import { SmokeSession } from "../../desktop/smoke.js";
+import { finalize_scene_launch, finalize_sequence_scene } from "../smoke/launch_report.js";
+import { SmokeSequenceSession, SmokeSession } from "../../desktop/smoke.js";
 
 test("diagnostics aggregate by severity, category, message and source location", () => {
   const report = new DiagnosticsReport("test", "scene");
@@ -134,6 +134,48 @@ test("launcher explains missing, incomplete and inconsistent results", () => {
     assert.equal(result.process.stderr, "process detail", failure);
   }
 });
+
+function create_sequence_runner(
+  context,
+  scenes = ["BVHScene", "UI3DTestScene"],
+  timeout_ms = 2000
+) {
+  const directory = mkdtempSync(path.join(tmpdir(), "sundown-smoke-sequence-test-"));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const output = path.join(directory, "sequence.json");
+  const window = new EventEmitter();
+  window.webContents = new EventEmitter();
+  window.webContents.mainFrame = {};
+  const ipc_main = new EventEmitter();
+  const exit_codes = [];
+  let resolve_exit;
+  const exited = new Promise((resolve) => {
+    resolve_exit = resolve;
+  });
+  const session = new SmokeSequenceSession(
+    {
+      exit(code) {
+        exit_codes.push(code);
+        resolve_exit(code);
+      },
+    },
+    window,
+    ipc_main,
+    {
+      output,
+      scenes,
+      frames: 3,
+      timeout_ms,
+      url: "sundown://app/?smoke=1&switch=1",
+    }
+  );
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  return { session, window, ipc_main, event, exited, exit_codes, output };
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 function create_runner(context, timeout_ms = 2000, ipc_main = new EventEmitter()) {
   const directory = mkdtempSync(path.join(tmpdir(), "sundown-smoke-test-"));
@@ -273,3 +315,143 @@ for (const failure of ["timeout", "navigation", "renderer-crash", "window-closed
     assert.equal(report.diagnostics[0].category, failure);
   });
 }
+
+function complete_scene(runner, scene, completed_frames = 3) {
+  runner.ipc_main.emit("sundown:smoke", runner.event, { type: "scene-begin", scene });
+  runner.ipc_main.emit("sundown:smoke", runner.event, {
+    type: "scene-complete",
+    scene,
+    readiness: { assets_ready: true, completed_frames },
+  });
+}
+
+test("SmokeSequenceSession records one passed report per scene and exits cleanly", async (context) => {
+  const runner = create_sequence_runner(context);
+  complete_scene(runner, "BVHScene");
+  await wait(350);
+  complete_scene(runner, "UI3DTestScene");
+  await wait(350);
+  runner.ipc_main.emit("sundown:smoke", runner.event, { type: "suite-complete" });
+
+  assert.equal(await runner.exited, 0);
+  const checkpoint = JSON.parse(readFileSync(runner.output));
+  assert.deepEqual(checkpoint.selected_scenes, ["BVHScene", "UI3DTestScene"]);
+  assert.equal(checkpoint.finished, true);
+  assert.equal(checkpoint.aborted, false);
+  assert.deepEqual(
+    checkpoint.scenes.map((scene) => [scene.scene, scene.status]),
+    [
+      ["BVHScene", "passed"],
+      ["UI3DTestScene", "passed"],
+    ]
+  );
+  assert.equal(runner.ipc_main.listenerCount("sundown:smoke"), 0);
+  assert.equal(runner.window.eventNames().length, 0);
+  assert.equal(runner.window.webContents.eventNames().length, 0);
+});
+
+test("SmokeSequenceSession attributes early console output and continues after a failed scene", async (context) => {
+  const runner = create_sequence_runner(context);
+  runner.window.webContents.emit("console-message", {
+    level: "warning",
+    message: "startup warning",
+    sourceId: "early.js",
+    lineNumber: 4,
+  });
+  complete_scene(runner, "BVHScene");
+  await wait(350);
+  complete_scene(runner, "UI3DTestScene");
+  await wait(350);
+  runner.ipc_main.emit("sundown:smoke", runner.event, { type: "suite-complete" });
+
+  assert.equal(await runner.exited, 1);
+  const checkpoint = JSON.parse(readFileSync(runner.output));
+  assert.equal(checkpoint.scenes[0].status, "failed");
+  assert.equal(checkpoint.scenes[0].diagnostics[0].message, "startup warning");
+  assert.equal(checkpoint.scenes[0].diagnostics[0].source, "early.js");
+  assert.equal(checkpoint.scenes[1].status, "passed");
+});
+
+test("SmokeSequenceSession aborts a sequence that begins out of order", async (context) => {
+  const runner = create_sequence_runner(context);
+  runner.ipc_main.emit("sundown:smoke", runner.event, {
+    type: "scene-begin",
+    scene: "UI3DTestScene",
+  });
+
+  assert.equal(await runner.exited, 1);
+  const checkpoint = JSON.parse(readFileSync(runner.output));
+  assert.equal(checkpoint.aborted, true);
+  assert.equal(checkpoint.scenes.length, 1);
+  assert.equal(checkpoint.scenes[0].scene, "BVHScene");
+  assert.match(checkpoint.scenes[0].diagnostics[0].message, /expected order/);
+});
+
+test("sequence results accept complete scenes without trusting the shared exit code", () => {
+  const report = new SmokeSceneReport("electron", "BVHScene");
+  report.finish({ assets_ready: true, completed_frames: 3 });
+  const result = finalize_sequence_scene(report, report.toJSON(), {
+    frames: 3,
+    output: "/reports/sequence.json",
+    process: { code: 1, signal: null, stdout: "renderer output", stderr: "process detail" },
+  });
+  assert.equal(result.status, "passed");
+  assert.equal(result.process.exit_code, 1);
+  assert.equal(result.process.stderr, "process detail");
+});
+
+test("sequence results preserve partial diagnostics and explain missing scenes", () => {
+  const report = new SmokeSceneReport("electron", "UI3DTestScene");
+  const partial = report.toJSON();
+  partial.diagnostics = [
+    { severity: "error", message: "actual cause", source: "renderer.js", line: 42, count: 8 },
+  ];
+  const failed = finalize_sequence_scene(report, partial, {
+    frames: 3,
+    output: "/reports/sequence.json",
+    timed_out: true,
+    process: { code: null, signal: "SIGKILL" },
+  });
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.diagnostics[0].message, "actual cause");
+  assert.equal(failed.diagnostics[0].count, 8);
+  assert.match(failed.diagnostics[1].message, /suite deadline/);
+  assert.equal(failed.diagnostics[1].source, "/reports/sequence.json");
+  assert.equal(failed.process.signal, "SIGKILL");
+
+  const missing = finalize_sequence_scene(new SmokeSceneReport("electron", "BVHScene"), null, {
+    frames: 3,
+    output: "/reports/sequence.json",
+    aborted: true,
+    process: { code: 1, signal: null },
+  });
+  assert.equal(missing.status, "failed");
+  assert.match(missing.diagnostics[0].message, /aborted/);
+});
+
+test("launch failures preserve diagnostic text and partial report metadata in both modes", () => {
+  for (const sequence of [false, true]) {
+    const report = new SmokeSceneReport("electron", "BVHScene");
+    const saved = report.toJSON();
+    saved.started_at = "2026-01-01T00:00:00.000Z";
+    saved.diagnostics = [{ severity: "error", message: "original failure", count: 2 }];
+    const process_result = { code: null, signal: "SIGKILL", stderr: "process detail" };
+    const options = { output: "/reports/sequence.json", frames: 3, timed_out: true };
+    const result = sequence
+      ? finalize_sequence_scene(report, saved, { ...options, process: process_result })
+      : finalize_scene_launch(report, saved, process_result, options);
+    const failure = sequence
+      ? "Smoke sequence exceeded the suite deadline before this scene finished (status: running). Expected result"
+      : "Electron exceeded the smoke deadline. Expected report";
+
+    assert.equal(result.status, "failed");
+    assert.equal(result.started_at, saved.started_at);
+    assert.deepEqual(result.diagnostics[0], saved.diagnostics[0]);
+    assert.equal(result.diagnostics[1].category, "timeout");
+    assert.equal(
+      result.diagnostics[1].message,
+      `${failure}: ${options.output}. Exit code: null; signal: SIGKILL.`
+    );
+    assert.equal(result.process.stderr, "process detail");
+  }
+});
