@@ -111,6 +111,14 @@ fails through the deadline, never through an arbitrary successful sleep.
 
 ## Application integration and production forks
 
+`npm run app:init -- --name my-app` generates a single-scene application with
+isolated smoke integration, selects its HTML entry point and adds a `smoke:app`
+shortcut. Use `--dry-run` to preview its changes. Conflicts fail instead of
+overwriting app files. The optional `--remove-example` flag deletes `example/`
+and `assets/example/` and removes the sample npm scripts during initial setup.
+Templates live under
+`tools/templates/application/` and do not depend on the optional sample app.
+
 `engine/`, `desktop/` and the generic `tools/` tests do not import the sample app.
 A production fork can remove the sample directory and its convenience npm scripts.
 Replace the script entry in the root `index.html` with the production entry point;
