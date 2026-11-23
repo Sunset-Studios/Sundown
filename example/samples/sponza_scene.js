@@ -73,7 +73,7 @@ export class SponzaScene extends Scene {
     this.entities.push(ground_entity);
 
     const root_entity = this.load_gltf_scene(
-      "engine/models/sponza/Sponza.gltf",
+      "example/models/sponza/Sponza.gltf",
       [0, 2.5, 0],
       [0, 0, 0, 1],
       [2.0, 2.0, 2.0]

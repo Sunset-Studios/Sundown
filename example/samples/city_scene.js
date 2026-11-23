@@ -55,7 +55,7 @@ export class CityScene extends Scene {
     // Load City GLTF Model
     // ─────────────────────────────────────────────────────────────────────────
     let city_root = this.load_gltf_scene(
-      "engine/models/city/City.gltf",
+      "example/models/city/City.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
       [2, 2, 2]

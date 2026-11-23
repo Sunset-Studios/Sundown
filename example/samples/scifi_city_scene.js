@@ -87,7 +87,7 @@ export class SciFiCityScene extends Scene {
     // Load SciFi City GLTF Model
     // ─────────────────────────────────────────────────────────────────────────
     let scifi_city_root = this.load_gltf_scene(
-      "engine/models/scifi-city/CityScene.gltf",
+      "example/models/scifi-city/CityScene.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
       [2, 2, 2]

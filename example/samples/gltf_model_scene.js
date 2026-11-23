@@ -48,7 +48,7 @@ export class GLTFModelScene extends Scene {
     light_fragment_view.is_primary_sun = 1;
 
     // Load a GLTF model (e.g., barrel)
-    const model_mesh = Mesh.from_gltf("engine/models/barrel/Barrel.gltf");
+    const model_mesh = Mesh.from_gltf("example/models/barrel/Barrel.gltf");
 
     // Spawn three barrels at positions offset by 15 units on x-axis
     const barrel_positions = [

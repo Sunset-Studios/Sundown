@@ -46,7 +46,7 @@ export class OfficeTestScene extends Scene {
     light_fragment_view.shadow_clipmaps = 8;
 
     const office_root = this.load_gltf_scene(
-      "engine/models/office/office.gltf",
+      "example/models/office/office.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
       [1, 1, 1]

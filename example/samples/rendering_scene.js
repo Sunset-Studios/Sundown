@@ -64,7 +64,7 @@ export class RenderingScene extends Scene {
     {
       let dirt_albedo = {
         name: "dirt_albedo",
-        paths: ["engine/textures/voxel/dirt_albedo.ktx2"],
+        paths: ["example/textures/voxel/dirt_albedo.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -75,7 +75,7 @@ export class RenderingScene extends Scene {
       };
       let dirt_roughness = {
         name: "dirt_roughness",
-        paths: ["engine/textures/voxel/dirt_roughness.ktx2"],
+        paths: ["example/textures/voxel/dirt_roughness.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:

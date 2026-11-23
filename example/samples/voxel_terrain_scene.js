@@ -51,7 +51,7 @@ export class VoxelTerrainScene extends Scene {
     {
       let dirt_albedo = {
         name: "dirt_albedo",
-        paths: ["engine/textures/voxel/dirt_albedo.ktx2"],
+        paths: ["example/textures/voxel/dirt_albedo.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:

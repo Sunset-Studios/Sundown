@@ -72,7 +72,7 @@ export class LivingRoomScene extends Scene {
     // Load Living Room GLTF Model - Instanced 100x in a 10x10 grid
     // ─────────────────────────────────────────────────────────────────────────
     const living_room_entity = this.load_gltf_scene(
-      "engine/models/living_room/living_room.gltf",
+      "example/models/living_room/living_room.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
       [1, 1, 1]

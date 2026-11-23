@@ -55,7 +55,7 @@ export class TexturesScene extends Scene {
     {
       let floor_albedo = {
         name: "floor_albedo",
-        paths: ["engine/textures/rubber_floor/Diffuse.ktx2"],
+        paths: ["example/textures/rubber_floor/Diffuse.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -66,7 +66,7 @@ export class TexturesScene extends Scene {
       };
       let floor_normal = {
         name: "floor_normal",
-        paths: ["engine/textures/rubber_floor/Normal.ktx2"],
+        paths: ["example/textures/rubber_floor/Normal.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -77,7 +77,7 @@ export class TexturesScene extends Scene {
       };
       let floor_roughness = {
         name: "floor_roughness",
-        paths: ["engine/textures/rubber_floor/ARM.ktx2"],
+        paths: ["example/textures/rubber_floor/ARM.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -102,7 +102,7 @@ export class TexturesScene extends Scene {
     {
       let wall_albedo = {
         name: "wall_albedo",
-        paths: ["engine/textures/wall/wall_albedo.ktx2"],
+        paths: ["example/textures/wall/wall_albedo.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -113,7 +113,7 @@ export class TexturesScene extends Scene {
       };
       let wall_normal = {
         name: "wall_normal",
-        paths: ["engine/textures/wall/wall_normal.ktx2"],
+        paths: ["example/textures/wall/wall_normal.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -124,7 +124,7 @@ export class TexturesScene extends Scene {
       };
       let wall_roughness = {
         name: "wall_roughness",
-        paths: ["engine/textures/wall/wall_roughness.ktx2"],
+        paths: ["example/textures/wall/wall_roughness.ktx2"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -135,7 +135,7 @@ export class TexturesScene extends Scene {
       };
       let wall_ao = {
         name: "wall_ao",
-        paths: ["engine/textures/wall/wall_ao.ktx2"],
+        paths: ["example/textures/wall/wall_ao.ktx2"],
         name: "wall_ao",
         format: "rgba8unorm",
         dimension: "2d",
@@ -235,7 +235,7 @@ export class TexturesScene extends Scene {
   }
 
   setup_barrels() {
-    const barrel_mesh = Mesh.from_gltf("engine/models/barrel/Barrel.gltf");
+    const barrel_mesh = Mesh.from_gltf("example/models/barrel/Barrel.gltf");
 
     const num_barrels = 500;
     const barrel_spawn_range = 1000; // spread barrels across the entire ground plane

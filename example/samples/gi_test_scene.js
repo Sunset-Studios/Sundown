@@ -56,7 +56,7 @@ export class GITestScene extends Scene {
     // Load worn panel textures for metallic floor
     let floor_albedo = {
       name: "floor_albedo",
-      paths: ["engine/textures/rubber_floor/Diffuse.ktx2"],
+      paths: ["example/textures/rubber_floor/Diffuse.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -67,7 +67,7 @@ export class GITestScene extends Scene {
     };
     let floor_normal = {
       name: "floor_normal",
-      paths: ["engine/textures/rubber_floor/Normal.ktx2"],
+      paths: ["example/textures/rubber_floor/Normal.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -78,7 +78,7 @@ export class GITestScene extends Scene {
     };
     let floor_arm_metallic = {
       name: "floor_metallic",
-      paths: ["engine/textures/rubber_floor/ARM.ktx2"],
+      paths: ["example/textures/rubber_floor/ARM.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -89,7 +89,7 @@ export class GITestScene extends Scene {
     };
     let floor_arm_roughness = {
       name: "floor_roughness",
-      paths: ["engine/textures/rubber_floor/ARM.ktx2"],
+      paths: ["example/textures/rubber_floor/ARM.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -100,7 +100,7 @@ export class GITestScene extends Scene {
     };
     let floor_arm_ao = {
       name: "floor_ao",
-      paths: ["engine/textures/rubber_floor/ARM.ktx2"],
+      paths: ["example/textures/rubber_floor/ARM.ktx2"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -457,7 +457,7 @@ export class GITestScene extends Scene {
 
     // Load and place the station behind the three Cornell boxes.
     let station_root = this.load_gltf_scene(
-      "engine/models/station/station.gltf",
+      "example/models/station/station.gltf",
       [0, scene_y_offset, -45],
       [0, 0, 0, 1],
       [1.5, 1.5, 1.5]
