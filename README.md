@@ -73,6 +73,10 @@ This starts the development server on port 3000 and closes it when Electron exit
 > npm run devtop
 ```
 
+For a tray-first desktop launch, run `npm run devtop -- --tray`. On macOS and
+Windows, click the tray icon to open a Sundown-rendered panel and right-click
+for **Quit**. On Linux, choose **Open panel** or **Quit** from the tray menu.
+See the [desktop tray guide](.agents/docs/desktop-tray.md) to ship your own tray app.
 
 ### Packaging
 

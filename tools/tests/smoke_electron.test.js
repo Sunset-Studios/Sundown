@@ -86,7 +86,7 @@ async function start_fixture_server(context) {
   return `http://127.0.0.1:${server.address().port}/`;
 }
 
-async function run_fixture(context, mode, completed_frames = 7, timeout_ms = 5000) {
+async function run_fixture(context, mode, completed_frames = 7, timeout_ms = 5000, flags = []) {
   const directory = mkdtempSync(path.join(tmpdir(), "sundown-electron-test-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
   const default_output = path.join(directory, "diagnostics.json");
@@ -100,7 +100,7 @@ async function run_fixture(context, mode, completed_frames = 7, timeout_ms = 500
     SUNDOWN_SMOKE_OPTIONS: JSON.stringify({ url, output, frames: 7, timeout_ms }),
   };
   delete environment.ELECTRON_RUN_AS_NODE;
-  const child = spawn(electron, [project_root, "--smoke"], {
+  const child = spawn(electron, [project_root, "--smoke", ...flags], {
     cwd: directory,
     env: environment,
     stdio: ["ignore", "pipe", "pipe"],
@@ -131,10 +131,10 @@ async function run_fixture(context, mode, completed_frames = 7, timeout_ms = 500
 }
 
 test(
-  "Electron main honors a custom report path and completes via the preload bridge",
+  "Electron smoke takes precedence over tray mode and completes via the preload bridge",
   { timeout: 15000 },
   async (context) => {
-    const { report, result, logs } = await run_fixture(context, "quiet");
+    const { report, result, logs } = await run_fixture(context, "quiet", 7, 5000, ["--tray"]);
     assert.equal(result.code, 0, logs);
     assert.equal(report.status, "passed");
     assert.deepEqual(report.readiness, { assets_ready: true, completed_frames: 7 });

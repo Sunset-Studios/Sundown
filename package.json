@@ -23,6 +23,7 @@
     "smoke:example": "node tools/smoke.js --catalog example/smoke.config.js",
     "test:app-init": "node --test tools/tests/setup_app.test.js",
     "test:example": "node --test example/tests/*.test.js",
+    "test:tray": "node --test tools/tests/tray_bounds.test.js",
     "test:smoke": "node --test tools/tests/allocator.test.js tools/tests/smoke.test.js tools/tests/runtime_diagnostics.test.js tools/tests/smoke_catalog.test.js tools/tests/smoke_lifecycle.test.js tools/tests/renderer_bindings.test.js",
     "test:smoke:electron": "node --test tools/tests/smoke_electron.test.js"
   },
@@ -67,10 +68,15 @@
       "buildResources": "desktop/icons"
     },
     "files": [
+      "desktop/config.js",
+      "desktop/icons/icon.png",
       "desktop/main.js",
       "desktop/protocol.js",
       "desktop/smoke.js",
       "desktop/smoke_preload.cjs",
+      "desktop/tray.js",
+      "desktop/tray_bounds.js",
+      "desktop/window.js",
       "engine/src/utility/diagnostics_report.js",
       "tools/smoke/scene_report.js",
       "package.json"

@@ -23,7 +23,7 @@ server.once("message", (message) => {
   if (message.type !== "listening" || stopping) return;
   const environment = { ...process.env };
   delete environment.ELECTRON_RUN_AS_NODE;
-  desktop = spawn(electron, [".", "--development"], {
+  desktop = spawn(electron, [".", "--development", ...process.argv.slice(2)], {
     cwd: project_root,
     env: environment,
     stdio: "inherit",

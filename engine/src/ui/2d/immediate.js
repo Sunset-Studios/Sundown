@@ -739,8 +739,8 @@ export function flush_ui(ctx) {
     }
     UIContext.draw_commands.length = 0;
 
-    const renderer = Renderer.get();
-    reset_ui(renderer.canvas_ui?.width ?? 0, renderer.canvas_ui?.height ?? 0);
+    const canvas = Renderer.get()?.canvas_ui ?? ctx.canvas;
+    reset_ui(canvas.width, canvas.height);
   });
 }
 

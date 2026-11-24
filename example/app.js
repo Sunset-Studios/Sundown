@@ -57,6 +57,12 @@ async function run_smoke_sequence(switcher, selected, runtime, start_rendering) 
 }
 
 async function main() {
+  if (!is_smoke_test() && new URLSearchParams(location.search).get("tray") === "1") {
+    const { mount_tray_panel } = await import("./tray_panel.js");
+    mount_tray_panel();
+    return;
+  }
+
   const simulator = await Simulator.create("gpu-canvas", "ui-canvas", {
     project: {
       name: "example",

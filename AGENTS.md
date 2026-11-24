@@ -38,6 +38,7 @@ index so agents can discover them without scanning the repository.
 | Guide | Read when |
 | --- | --- |
 | [Runtime smoke checks](.agents/docs/smoke.md) | Changing diagnostics, application smoke catalogs, smoke lifecycle, Electron integration, or diagnostic reports. |
+| [Desktop tray mode](.agents/docs/desktop-tray.md) | Changing tray launch configuration, popup windows, or the tray example. |
 
 ### Agent Skills
 
