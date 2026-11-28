@@ -13,3 +13,5 @@ diagnostics.json
 **/*.sbvh.bin
 **/*.cooked.json
 **/*.cooked.bin
+
+.DS_Store

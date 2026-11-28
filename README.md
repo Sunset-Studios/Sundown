@@ -1,6 +1,103 @@
 # Sundown Engine 🕹️
 
-#### An extendible WebGPU game and simulation engine for fun, games and research.
+An extensible WebGPU game and simulation engine for fun, games, and research.
+
+## Quick start
+
+Install a current LTS release of [Node.js](https://nodejs.org/) with npm and use a
+machine with hardware WebGPU support. Run all commands from the repository root.
+
+```sh
+git clone https://github.com/Sunset-Studio/Sundown.git
+cd Sundown
+npm install
+```
+
+### Start your own application
+
+```sh
+npm run app:init -- --name my-game --dry-run
+npm run app:init -- --name my-game
+npm run dev
+```
+
+The dry run is an optional preview. Setup creates `app/app.js`, a lit cube and sky
+in `app/main_scene.js`, a smoke catalog in `app/smoke.config.js`, and an
+`assets/app/` directory for your assets. It switches `index.html` from the sample
+app to your starter and adds `npm run smoke:app`. It keeps the samples by default
+and refuses to overwrite existing starter paths or an existing `smoke:app` script.
+`--name` sets the engine project name (default: `my-app`), not packaging metadata
+or window titles. Start the name with a lowercase letter and use only lowercase
+letters, digits, and hyphens.
+
+Open the local URL printed by `npm run dev` to see the starter. To run it in
+Electron instead, stop the browser dev server and run `npm run devtop`.
+
+```sh
+npm run smoke:app -- --list
+npm run smoke:app
+```
+
+The first command lists `MainScene`. The second cooks assets, builds the app, and
+runs that scene in Electron. A successful run exits with code `0` and writes
+`diagnostics.json` with `status: "passed"`, ready assets, and at least five
+completed GPU frames. Runtime warnings or errors fail the run. The starter
+supports isolated smoke runs, not `--scene-switching`.
+
+To omit the samples from your fork at setup time, preview with
+`npm run app:init -- --name my-game --remove-example --dry-run`. Running without
+`--dry-run` **deletes `example/` and `assets/example/`, including local changes**,
+and removes the sample test scripts. If you've already initialized your app, don't
+rerun setup; see the [full starter guide](example/README.md#start-your-own-application)
+for customization and manual sample removal.
+
+### Try the sample application
+
+On a fresh checkout, skip `app:init` and run `npm run dev` for the browser or
+`npm run devtop` for an Electron window. The default entry point is `example/app.js`.
+To try the tray-first sample, run `npm run devtop -- --tray`, then click the tray
+icon on macOS or Windows, or choose **Open panel** from the tray menu on Linux.
+See the [desktop tray guide](.agents/docs/desktop-tray.md) to ship your own tray app.
+
+```sh
+npm run smoke:example -- --list
+npm run smoke:example -- --scene-switching
+```
+
+The sample suite supports both isolated runs and scene switching in one Electron
+process. See the [sample guide](example/README.md) for sample-specific commands and
+the [smoke testing guide](.agents/docs/smoke.md) for custom catalogs, scene filters,
+and report details.
+
+## Features
+
+- **WebGPU rendering:** GPU resource abstractions, a render graph for graphics and
+  compute passes, a compute task queue, and a configurable post-processing stack.
+- **GPU-driven geometry:** entity-based instancing and automatic draw batching,
+  meshlet culling, a visibility-buffer deferred renderer, and mesh LOD generation.
+- **Materials and assets:** built-in PBR shaders, custom shader materials,
+  pseudo-bindless texture pools and material tables, glTF scene loading, and KTX2
+  texture cooking and streaming.
+- **Lighting and ray tracing:** Adaptive Sparse Virtual Shadow Maps (AS-VSM),
+  Surface Cache GI (SCGI), probe-based Dynamic Diffuse GI (DDGI), and experimental
+  baked GI with streamed SVLM tiles. A multi-bounce compute reference path tracer,
+  dynamic scene TLAS, and per-mesh triangle BLAS support software ray tracing and
+  ray casting.
+- **Simulation and UI:** modular simulation layers, the TypedArray-backed Solar
+  archetype/chunk ECS, context-based input, immediate-mode screen-space and
+  world-space UI, and MSDF text.
+- **Developer tools:** starter app scaffolding, GPU timing and memory views, BVH and
+  mesh LOD inspection, and a WGSL formatter.
+- **Smoke testing:** application-owned scene catalogs, isolated Electron runs or
+  optional in-process scene switching, asset and GPU-frame readiness checks, and
+  per-scene runtime diagnostics in `diagnostics.json`.
+- **Desktop:** sandboxed Electron builds with standard windowed and optional
+  tray-first launch modes.
+- **Machine learning experiments:** layer-based subnet graphs with backpropagation,
+  built-in activations and loss functions, the Adam optimizer, and `MasterMind`
+  for coordinating live training and optional weight sharing across models.
+
+## Showcase
 
 ![sundown_demo](https://github.com/user-attachments/assets/fb001dca-66dd-4ba5-b307-428cad52e441)
 
@@ -14,99 +111,24 @@ https://github.com/user-attachments/assets/3671857c-6eab-422b-81d8-8d6095874c5a
 
 https://github.com/user-attachments/assets/2925ccb8-4484-48e6-a049-143ed0b5c944
 
-Some of the current (code) features include:
+## Packaging
 
-* ⚡ WebGPU renderable abstractions
-* ⚡ Flexible render graph for crafting render and compute pipelines
-* ⚡ Simple, expressive, shader-based material system for crafting custom materials
-* ⚡ Layered Gameplay simulation architecture for adding layered, modular functionality
-* ⚡ Archetype-chunk ECS system for more efficient processing, using a fragment framework and TypedArrays
-* ⚡ Simple, context-based input system, allowing you to set up different input schemes and contexts
-* ⚡ Built-in PBR shaders
-* ⚡ Entity-first instancing
-* ⚡ Auto mesh instancing and draw batching of meshes using a specialized mesh task queue
-* ⚡ Compute task queue for easily submitting compute shader work
-* ⚡ MSDF text rendering
-* ⚡ Configurable post-process stack
-* ⚡ Immediate mode screen-space UI
-* ⚡ Sparse Virtual Shadow Maps 
-* ⚡ Dynamic TLAS BVH tree acceleration structure for physics, ray tracing and ray casting
-* ⚡ Per-mesh triangle BLAS BVH for software ray tracing
-* ⚡ Pseudo-bindless texture pools and material tables 
-* ⚡ Software (Compute) reference path tracer with multi-bounce support
-* ⚡ 2 out of the box GI solutions: SCGI (Surface Cache GI) and DDGI (Probe-based Dynammic Diffuse GI)
-* ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs, running frames and more.
+| Command | Output |
+| --- | --- |
+| `npm run build` | Web build in `dist/` |
+| `npm run buildtop` | Unpacked Electron app in `executables/` |
+| `npm run make` | Desktop packages in `executables/`: DMG and ZIP on macOS, NSIS installer on Windows, AppImage on Linux |
 
-Sundown also includes a simple but capable ML framework for running real-time AI experiments:
-* ⚡ Simple gradient tape for backprop based learning
-* ⚡ High-level, layer-based DAG subnet API for composing models from smaller subnetworks
-* ⚡ Expanding library of activation functions, loss functions, optimizers and configurable layers
-* ⚡ MasterMind class for orchestrating weight sharing, adaptation and real-time retraining of multiple models
+For web deployment, serve the entire contents of `dist/` over HTTPS and configure
+the cross-origin isolation headers used in [`vite.config.mjs`](vite.config.mjs).
 
-### Installation
+Desktop builds bundle [Electron](https://www.electronjs.org/) and use Chromium's
+WebGPU implementation, not WKWebView. Sundown checks required GPU capabilities at
+startup. The desktop renderer is sandboxed with Node integration disabled and uses
+the same WebGPU API as the web build. Build on the target OS for distribution;
+configure electron-builder for Apple code signing and notarization for public
+macOS releases.
 
-
-Make sure you have the latest version of [NodeJS](https://nodejs.org/en) installed. Clone this repository and make sure to `npm install` to get all the package dependencies.
-
-
-```bash
-> git clone git@github.com:Sunset-Studio/Sundown.git
-> cd Sundown
-> npm install
-```
-
-### Running
-
-
-With the project cloned and all package dependencies installed, you're ready to run the project. There is an example **app.js** that is included from the top-level **index.html** file. Feel free to replace this with your own experiments or entry points.
-
-
-To run the development project in a browser, use the npm `dev` command
-```bash
-> npm run dev
-```
-
-
-To run the development project in an Electron window, use the npm `devtop` command.
-This starts the development server on port 3000 and closes it when Electron exits.
-```bash
-> npm run devtop
-```
-
-For a tray-first desktop launch, run `npm run devtop -- --tray`. On macOS and
-Windows, click the tray icon to open a Sundown-rendered panel and right-click
-for **Quit**. On Linux, choose **Open panel** or **Quit** from the tray menu.
-See the [desktop tray guide](.agents/docs/desktop-tray.md) to ship your own tray app.
-
-### Packaging
-
-
-You can package and distribute builds for the web or for desktop with [Electron](https://www.electronjs.org/).
-Desktop builds bundle Chromium, so macOS WebGPU support does not depend on WKWebView.
-GPU features and limits still depend on Chromium, Metal, and the target hardware; Sundown checks its required capabilities at startup.
-
-
-To package for the web, just run the npm `build` command.
-```bash
-> npm run build
-```
-
-
-Then copy the resulting **index.html** file and **assets** and **engine** directories into your site's root.
-
-
-To build an unpacked desktop app for the current platform, run `npm run buildtop`.
-To create installers (DMG/ZIP on macOS, NSIS on Windows, AppImage on Linux), use the npm `make` command.
-Both commands write their outputs to the top-level *executables* directory.
-```bash
-> npm run make
-```
-
-Build on the target OS for distribution. Public macOS releases also require Apple code signing and notarization; configure electron-builder signing credentials in your release environment.
-The desktop renderer is sandboxed with Node integration disabled. It uses the same browser WebGPU API as the web build, without a native rendering IPC bridge.
-
-
-### Contributing
-
+## Contributing
 
 Sundown is available for free under the MIT license. You can use and modify the engine for individual or commercial use (a reference or mention is still appreciated!) If you want to contribute features or fixes, please fork this repository and submit PRs. I am a one man team but will check any promising PRs as soon as I can. If you want to become a regular contributor feel free to DM me on [X](https://x.com/SunsetLearn) or shoot me an email at adrians.sanchez@sunsetlearn.com.

@@ -24,6 +24,16 @@ Key priorities:
 
 ---
 
+## Project README
+
+Update the root [README.md](README.md) in the same change whenever you add,
+substantially change, or remove a major feature, or change how users set up a
+project. Keep the feature summary and quick-start instructions accurate. Include
+enough detail for new users to get started, but keep the README compact and easy
+to scan. Link to dedicated guides for advanced workflows and reference details.
+
+---
+
 ## Agent Documentation
 
 Store detailed maintainer and agent-facing guides in `.agents/docs/`, not a
